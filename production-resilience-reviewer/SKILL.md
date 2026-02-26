@@ -7,11 +7,12 @@ description: >
   or reliability. Also trigger when the user asks about: error handling quality, retry logic,
   circuit breakers, timeout strategies, graceful degradation, observability, rate limiting,
   backpressure, dependency failure analysis, SLA impact, cascading failure risk, on-call
-  debuggability, rollout safety, migration risk, rollback strategy, deploy risk, or when they
-  say things like "is this production-ready?", "review this for ops", "what could go wrong?",
-  "will this survive real traffic?", "review like a senior engineer", or "what would break at
-  scale?". Trigger aggressively — if there's code and the user wants a quality review, this
-  skill applies.
+  debuggability, rollout safety, migration risk, rollback strategy, deploy risk, RPO/RTO,
+  AZ/region fault tolerance, backup/restore drills, security abuse paths, quota exhaustion,
+  or when they say things like "is this production-ready?", "review this for ops", "what could
+  go wrong?", "will this survive real traffic?", "review like a senior engineer", or "what
+  would break at scale?". Trigger aggressively — if there's code and the user wants a quality
+  review, this skill applies.
 ---
 
 # Production Resilience Reviewer
@@ -72,7 +73,7 @@ If the user does not specify a mode, choose one based on risk and complexity.
 
 ---
 
-## Review Framework: The Eight Failure Lenses
+## Review Framework: The Eleven Failure Lenses
 
 For every piece of code under review, systematically apply each of these lenses. Not all
 lenses apply to all code — use judgment, but err on the side of coverage.
@@ -334,6 +335,92 @@ Validation: mixed-version deploy test + rollback test; Monitoring: compare metri
 
 ---
 
+### Lens 9: Fault Domains & Disaster Recovery
+
+> "What happens if an AZ, region, or control-plane dependency is down?"
+
+- Map fault domains explicitly:
+  - Which dependencies are zonal, regional, global, or control-plane bound?
+  - Which paths are single-region by design, and what is the blast radius?
+  - Does the service degrade or fail hard when one domain is unavailable?
+- Confirm recovery objectives and execution:
+  - Are **RPO/RTO** explicitly defined for this workload?
+  - Are backup/restore paths tested for correctness and recovery time?
+  - Are replay/reconciliation workflows tested after restore or failover?
+  - Can failover/rollback run from documented runbooks without manual heroics?
+- Flag critical paths with undefined RPO/RTO as **P1-HIGH**
+- Flag untested backup/restore for money/auth/critical state as **P0-CRITICAL**
+- Flag failover plans that rely on tribal knowledge as **P1-HIGH**
+
+For a deeper checklist (fault domains, DR drills, and failover runbooks), see:
+- `references/checklist-disaster-recovery.md`
+
+**Example (condensed):**
+```
+[DR] Single-region primary DB + untested restore path on checkout.
+Risk: region outage or restore corruption can exceed SLA and lose recent orders.
+Fix: define RPO=5m/RTO=30m, rehearse restore+replay quarterly, automate failover decision gates.
+```
+
+---
+
+### Lens 10: Security & Abuse as Reliability
+
+> "What happens when hostile traffic targets weak spots?"
+
+- Treat security controls as uptime controls:
+  - Can auth/authz fail open during cache/IdP outages?
+  - Are secrets and credentials scoped, rotated, and abuse-detectable?
+  - Can bots bypass rate limits (IP rotation, header spoofing, endpoint skew)?
+  - Can one tenant/user exhaust shared resources and degrade others?
+- Review degradation behavior under security control failures:
+  - Default deny vs default allow?
+  - Emergency controls: kill switch, traffic shaping, tenant isolation?
+  - Runbooks for credential leak, key revocation, and abuse spikes?
+- Flag auth fail-open behavior on sensitive actions as **P0-CRITICAL**
+- Flag missing abuse throttles on public mutating endpoints as **P1-HIGH**
+
+For a deeper checklist (auth failure modes, abuse controls, incident response), see:
+- `references/checklist-security-abuse-reliability.md`
+
+**Example (condensed):**
+```
+[SECURITY] Auth cache miss falls back to "allow" on payment-refund endpoint.
+Risk: attacker can force cache churn and execute unauthorized refunds.
+Fix: fail closed, add scoped service tokens, and enforce per-actor + global abuse budgets.
+```
+
+---
+
+### Lens 11: Quota & Limit Exhaustion
+
+> "What happens when quotas, pools, or budgets are exhausted?"
+
+- Inventory hard limits across dependencies and infrastructure:
+  - Cloud API quotas (KMS, Secrets, object storage, queue ops)
+  - DB/storage/IOPS/socket/file descriptor limits
+  - Third-party API rate limits and daily spend caps
+  - Internal cost guardrails (per-tenant budget, retry budget, batch caps)
+- Verify exhaustion behavior:
+  - Is quota pressure visible before hard failure?
+  - Does the system shed/degrade gracefully (queue, partial response, 429)?
+  - Are there emergency controls to stop runaway spend or retry storms?
+  - Is there capacity headroom policy + automated limit increase process?
+- Flag no safeguards for quota-induced hard failures as **P1-HIGH**
+- Flag missing cost/runaway protection on high-volume mutating paths as **P1-HIGH**
+
+For a deeper checklist (quota inventory, guardrails, and degradation plans), see:
+- `references/checklist-quota-limit-exhaustion.md`
+
+**Example (condensed):**
+```
+[QUOTA] Queue publish API has no quota telemetry; retries continue on 429.
+Risk: quota exhaustion causes cascading failures and runaway retry spend.
+Fix: add quota utilization alerts, retry budgets, and degraded queue-and-reconcile mode.
+```
+
+---
+
 ## Applicability Guidance (Avoid Overfitting the Framework)
 
 Apply the lenses that matter for the code under review. Do not force irrelevant concerns.
@@ -490,9 +577,11 @@ For deep-dive checklists by specific concern area, read:
 - `references/checklist-data.md` — Data consistency, caching, and freshness patterns
 - `references/checklist-observability.md` — Metrics, logging, alerting, and dashboarding patterns
 - `references/checklist-change-management.md` — Rollout, migration, and rollback safety patterns (Lens 8 deep-dive)
+- `references/checklist-disaster-recovery.md` — Fault domains, RPO/RTO, backup/restore, failover and replay safety (Lens 9 deep-dive)
+- `references/checklist-security-abuse-reliability.md` — Auth failure modes, abuse resistance, and secure degradation patterns (Lens 10 deep-dive)
+- `references/checklist-quota-limit-exhaustion.md` — Quota inventory, resource exhaustion, and cost/rate guardrails (Lens 11 deep-dive)
 - `references/severity-calibration.md` — Full severity/context matrix and adjustment rules
 - `references/validation-monitoring-patterns.md` — Validation and monitoring patterns by failure type
 
 Read these reference files when the review requires deeper analysis in a specific area,
 or when the user asks for more detailed guidance on a particular lens.
-
