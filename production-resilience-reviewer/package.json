@@ -1,6 +1,6 @@
 {
   "name": "production-resilience-reviewer",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Senior-level production resilience and failure-mode review for code, services, and system designs.",
   "keywords": [
     "production-readiness",

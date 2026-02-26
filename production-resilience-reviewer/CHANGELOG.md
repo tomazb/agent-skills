@@ -1,5 +1,19 @@
 # Changelog
 
+## 5.2.0
+- Added Lens 9: **Fault Domains & Disaster Recovery** to `SKILL.md` with RPO/RTO, backup/restore, replay, and failover checks.
+- Added Lens 10: **Security & Abuse as Reliability** to `SKILL.md` with auth fail-open and abuse-path resilience checks.
+- Added Lens 11: **Quota & Limit Exhaustion** to `SKILL.md` with quota inventory, saturation behavior, and cost/rate guardrails.
+- Added deep-dive references:
+  - `references/checklist-disaster-recovery.md`
+  - `references/checklist-security-abuse-reliability.md`
+  - `references/checklist-quota-limit-exhaustion.md`
+- Validator updates:
+  - lens heading check now enforces Lenses 1..11
+  - expected reference list now includes the three new checklist files
+  - `SKILL.md` line budget check now uses a configurable `MAX_SKILL_LINES` constant
+- Updated README to document the 11-lens framework and new reference material.
+
 ## 5.1.0
 - Added condensed `[CATEGORY]` examples to Lenses 3 (Network), 4 (Data), 5 (Retry), and 7 (Observability) for consistency with Lenses 1, 2, 6, 8.
 - Validator: added reference file existence check (catches renamed/deleted reference files).

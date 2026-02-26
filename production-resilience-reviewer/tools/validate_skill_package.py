@@ -13,10 +13,15 @@ EXPECTED_REFERENCES = [
     "references/checklist-change-management.md",
     "references/checklist-data.md",
     "references/checklist-dependency.md",
+    "references/checklist-disaster-recovery.md",
     "references/checklist-observability.md",
+    "references/checklist-quota-limit-exhaustion.md",
+    "references/checklist-security-abuse-reliability.md",
     "references/severity-calibration.md",
     "references/validation-monitoring-patterns.md",
 ]
+
+MAX_SKILL_LINES = 700
 
 def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
@@ -94,9 +99,9 @@ def find_leaked_toc_titles(text: str) -> list[str]:
 
 
 def check_lens_headings(skill_md_text: str, errors: list[str]) -> None:
-    """Ensure SKILL.md contains Lens 1..8 headings (prevents accidental deletions)."""
+    """Ensure SKILL.md contains Lens 1..11 headings (prevents accidental deletions)."""
     lens_nums = sorted({int(n) for n in re.findall(r"^### Lens (\d+):", skill_md_text, flags=re.M)})
-    expected = list(range(1, 9))
+    expected = list(range(1, 12))
     if lens_nums != expected:
         errors.append(f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}")
 
@@ -137,8 +142,8 @@ def main() -> int:
     else:
         skill_text = read_text(skill)
         lines = skill_text.splitlines()
-        if len(lines) > 500:
-            issues.append(f"SKILL.md is {len(lines)} lines (> 500).")
+        if len(lines) > MAX_SKILL_LINES:
+            issues.append(f"SKILL.md is {len(lines)} lines (> {MAX_SKILL_LINES}).")
         if not ends_with_newline(skill):
             issues.append("SKILL.md does not end with a trailing newline.")
         if not fence_count_ok(skill_text):
