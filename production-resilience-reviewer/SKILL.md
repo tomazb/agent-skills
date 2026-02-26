@@ -339,21 +339,11 @@ Validation: mixed-version deploy test + rollback test; Monitoring: compare metri
 
 > "What happens if an AZ, region, or control-plane dependency is down?"
 
-- Map fault domains explicitly:
-  - Which dependencies are zonal, regional, global, or control-plane bound?
-  - Which paths are single-region by design, and what is the blast radius?
-  - Does the service degrade or fail hard when one domain is unavailable?
-- Confirm recovery objectives and execution:
-  - Are **RPO/RTO** explicitly defined for this workload?
-  - Are backup/restore paths tested for correctness and recovery time?
-  - Are replay/reconciliation workflows tested after restore or failover?
-  - Can failover/rollback run from documented runbooks without manual heroics?
-- Flag critical paths with undefined RPO/RTO as **P1-HIGH**
-- Flag untested backup/restore for money/auth/critical state as **P0-CRITICAL**
-- Flag failover plans that rely on tribal knowledge as **P1-HIGH**
+- Map fault domains (zonal, regional, global, control-plane dependencies)
+- Confirm recovery objectives: RPO/RTO defined? Backup/restore tested? Replay tested? Runbooks exist?
+- Flag undefined RPO/RTO as **P1-HIGH**; untested backup/restore for money/auth as **P0-CRITICAL**
 
-For a deeper checklist (fault domains, DR drills, and failover runbooks), see:
-- `references/checklist-disaster-recovery.md`
+See `references/checklist-disaster-recovery.md` for detailed guidance.
 
 **Example (condensed):**
 ```
@@ -368,20 +358,11 @@ Fix: define RPO=5m/RTO=30m, rehearse restore+replay quarterly, automate failover
 
 > "What happens when hostile traffic targets weak spots?"
 
-- Treat security controls as uptime controls:
-  - Can auth/authz fail open during cache/IdP outages?
-  - Are secrets and credentials scoped, rotated, and abuse-detectable?
-  - Can bots bypass rate limits (IP rotation, header spoofing, endpoint skew)?
-  - Can one tenant/user exhaust shared resources and degrade others?
-- Review degradation behavior under security control failures:
-  - Default deny vs default allow?
-  - Emergency controls: kill switch, traffic shaping, tenant isolation?
-  - Runbooks for credential leak, key revocation, and abuse spikes?
-- Flag auth fail-open behavior on sensitive actions as **P0-CRITICAL**
-- Flag missing abuse throttles on public mutating endpoints as **P1-HIGH**
+- Treat security controls as uptime controls: Can auth fail open? Can bots bypass rate limits? Can one tenant exhaust shared resources?
+- Review degradation: Default deny vs allow? Emergency controls? Runbooks for leaks/abuse?
+- Flag auth fail-open on sensitive actions as **P0-CRITICAL**; missing abuse throttles as **P1-HIGH**
 
-For a deeper checklist (auth failure modes, abuse controls, incident response), see:
-- `references/checklist-security-abuse-reliability.md`
+See `references/checklist-security-abuse-reliability.md` for detailed guidance.
 
 **Example (condensed):**
 ```
@@ -396,21 +377,11 @@ Fix: fail closed, add scoped service tokens, and enforce per-actor + global abus
 
 > "What happens when quotas, pools, or budgets are exhausted?"
 
-- Inventory hard limits across dependencies and infrastructure:
-  - Cloud API quotas (KMS, Secrets, object storage, queue ops)
-  - DB/storage/IOPS/socket/file descriptor limits
-  - Third-party API rate limits and daily spend caps
-  - Internal cost guardrails (per-tenant budget, retry budget, batch caps)
-- Verify exhaustion behavior:
-  - Is quota pressure visible before hard failure?
-  - Does the system shed/degrade gracefully (queue, partial response, 429)?
-  - Are there emergency controls to stop runaway spend or retry storms?
-  - Is there capacity headroom policy + automated limit increase process?
-- Flag no safeguards for quota-induced hard failures as **P1-HIGH**
-- Flag missing cost/runaway protection on high-volume mutating paths as **P1-HIGH**
+- Inventory hard limits: Cloud API quotas, DB/storage/IOPS limits, third-party rate limits, cost guardrails
+- Verify exhaustion behavior: Quota pressure visible? Graceful degradation? Emergency controls? Headroom policy?
+- Flag missing safeguards for quota failures as **P1-HIGH**; missing cost protection on mutating paths as **P1-HIGH**
 
-For a deeper checklist (quota inventory, guardrails, and degradation plans), see:
-- `references/checklist-quota-limit-exhaustion.md`
+See `references/checklist-quota-limit-exhaustion.md` for detailed guidance.
 
 **Example (condensed):**
 ```
@@ -421,167 +392,70 @@ Fix: add quota utilization alerts, retry budgets, and degraded queue-and-reconci
 
 ---
 
-## Applicability Guidance (Avoid Overfitting the Framework)
+## Applicability Guidance
 
-Apply the lenses that matter for the code under review. Do not force irrelevant concerns.
-A pure utility function does not need retry analysis. A one-off migration needs data integrity,
-not long-term dashboards. When something is not applicable, say so briefly and move on.
+Apply relevant lenses only. Pure utility functions don't need retry analysis. One-off migrations need data integrity, not dashboards. When a lens doesn't apply, say so briefly.
 
 ---
 
-## Severity Calibration (Use Context, Not Just Code Smells)
+## Severity Calibration
 
-Calibrate using **impact × likelihood × blast radius × detectability**. Adjust based on
-context (user impact, mutating vs read-only, data sensitivity, frequency, recoverability).
-See `references/severity-calibration.md` for the full matrix and adjustment rules.
-Core principle: missing timeouts/error handling are **strong warning signals**, not automatic
-severity assignments. A tiny script and a checkout flow do not get the same severity.
+Calibrate using **impact × likelihood × blast radius × detectability**. Adjust for context (user impact, mutating vs read-only, data sensitivity, frequency). Missing timeouts/error handling are **strong signals**, not automatic assignments. See `references/severity-calibration.md` for full matrix.
 
 ---
 
-## Required Finding Template (Now includes Validation + Monitoring)
+## Required Finding Template
 
-For every **P0** and **P1** finding, include all of the following. For **P2/P3**, include at
-least evidence + recommendation, and add validation/monitoring when relevant.
+For **P0/P1** findings, include: Finding, Evidence, Why it matters, Recommendation, Validation, Monitoring, Priority. For **P2/P3**, include at least evidence + recommendation.
 
 ```
-[Category / Lens]
-Finding: <specific issue>
-Evidence: <code path / snippet / behavior>
-Why it matters: <user impact, blast radius, incident risk>
-Recommendation: <concrete fix, not generic advice>
-Validation: <tests / failure injection / load test / rollback rehearsal to prove fix works>
-Monitoring: <metrics/logs/traces/alerts/dashboard checks to verify behavior in production>
-Priority: <P0/P1/P2/P3>
+[Category/Lens] Finding | Evidence | Why it matters | Recommendation | Validation | Monitoring | Priority
 ```
 
-### Validation & Monitoring guidance (what to ask for)
-
-Use the example validation tests, fault-injection ideas, rollout rehearsal patterns, and
-monitoring expectations in:
-- `references/validation-monitoring-patterns.md`
-
-When relevant, tailor validation/monitoring to the lens (dependency, data, observability,
-change management) rather than pasting generic checks.
+Tailor validation/monitoring to the lens. See `references/validation-monitoring-patterns.md` for examples.
 
 ---
 
 ## Output Format
 
-Select **Quick Review Mode** or **Full Review Mode** and use the corresponding structure.
+**Quick Mode**: Verdict, risk level, top 3-5 findings (ranked), validation checklist, monitoring plan, quick wins.
 
-### Quick Review Mode Output
-
-```
-## Review Summary (Quick Mode)
-
-**Verdict**: [PRODUCTION-READY | NEEDS-WORK | NOT-READY]
-**Risk Level**: [LOW | MEDIUM | HIGH | CRITICAL]
-**Context Assumptions**: [what you assumed about traffic, criticality, deployment context]
-
-### Top Findings (ranked)
-- [P0/P1/P2] <finding> — <why it matters> — <recommended fix>
-
-### Validation Before Shipping
-- [specific tests / simulations to run]
-
-### Monitoring After Deploy
-- [metrics / alerts / logs / dashboard checks]
-
-### Quick Wins (< 30 min)
-- [small fixes with big resilience payoff]
-
-### What's Already Good
-- [positive reinforcement]
-```
-
-### Full Review Mode Output
-
-```
-## Review Summary (Full Mode)
-
-**Verdict**: [PRODUCTION-READY | NEEDS-WORK | NOT-READY]
-**Risk Level**: [LOW | MEDIUM | HIGH | CRITICAL]
-**Estimated effort to fix**: [hours/days estimate]
-**Context Assumptions**: [traffic, criticality, environment, deployment model]
-
-### Critical Findings (P0)
-[List with specific code references and fix recommendations]
-
-### High Priority (P1)
-[List with specific code references and fix recommendations]
-
-### Medium Priority (P2)
-[List with specific code references and fix recommendations]
-
-### Low Priority (P3)
-[Nice-to-haves, style improvements, future hardening]
-
-### What's Already Good
-[Acknowledge what was done well — positive reinforcement matters]
-
-## Detailed Analysis by Lens
-[Analyze each applicable lens; mark non-applicable lenses briefly]
-
-## Validation Plan (Pre-Deploy / Pre-Merge)
-[Tests, simulations, load/fault injection, rollback rehearsal, acceptance criteria]
-
-## Monitoring Plan (Post-Deploy)
-[Metrics, alerts, dashboards, logs/traces, rollout checkpoints, success criteria]
-
-## Recommended Fix Order
-[Numbered list: what to fix first and why, considering both risk and effort]
-
-## Quick Wins
-[Things that take < 30 minutes but meaningfully improve resilience]
-```
+**Full Mode**: Verdict, risk level, findings by priority (P0/P1/P2/P3), detailed lens analysis, validation plan, monitoring plan, recommended fix order, quick wins.
 
 ---
 
 ## Review Calibration
 
-Calibrate severity like a senior engineer who has been paged at 3 AM:
+- **P0**: Data loss, financial errors, security breaches, critical path outages. Fix before shipping.
+- **P1**: Degraded service, poor UX, difficult incident response. Fix within sprint.
+- **P2**: Resilience debt, operational toil. Schedule it.
+- **P3**: Polish, minor hardening.
 
-- **P0-CRITICAL**: Data loss, financial errors, security breaches, or full outages on critical paths. Fix before shipping.
-- **P1-HIGH**: Degraded service, poor UX, or difficult incident response under real traffic. Fix within the sprint.
-- **P2-MEDIUM**: Resilience debt that will bite eventually, operational toil. Schedule it.
-- **P3-LOW**: Polish, conventions, minor hardening.
-
-Do NOT inflate severity to seem thorough. Do NOT understate risk because the code "works
-locally" — production failures come from traffic, latency, retries, deploys, and partial outages.
+Calibrate like a senior engineer paged at 3 AM. Do NOT inflate severity or understate risk.
 
 ---
 
 ## Special Considerations for AI-Generated Code
 
-AI-generated code has consistent blind spots. Pay extra attention to:
+AI code has consistent blind spots. Assume these exist and check explicitly:
 
-1. **Happy-path bias**: Error paths are afterthoughts or missing entirely.
-2. **Placeholder error handling**: `try/catch` that logs and re-throws without context, or swallows exceptions.
-3. **Missing timeouts**: No explicit timeouts on HTTP clients, DB queries, or connections.
-4. **Hardcoded configuration**: Connection strings, retry counts, pool sizes baked into code.
-5. **Unbounded operations**: Loops over external data without size limits, unlimited concurrency.
-6. **Missing idempotency**: Retry-safe operations that are not actually idempotent.
-7. **No observability**: Zero metrics, minimal logging, no health checks.
-8. **Unsafe rollout assumptions**: Schema/contract changes without compatibility planning or rollback.
-
-When reviewing AI-generated code, **assume these issues exist** and look for them explicitly.
+1. **Happy-path bias** — Error paths missing or incomplete
+2. **Placeholder error handling** — Generic try/catch or swallowed exceptions
+3. **Missing timeouts** — No explicit timeouts on network/DB calls
+4. **Hardcoded config** — Connection strings, limits baked into code
+5. **Unbounded operations** — Loops/concurrency without size caps
+6. **Missing idempotency** — Retry-unsafe mutating operations
+7. **No observability** — Zero metrics, minimal logging
+8. **Unsafe rollouts** — Schema changes without compatibility or rollback plan
 
 ---
 
 ## Additional References
 
-For deep-dive checklists by specific concern area, read:
+Deep-dive checklists in `references/`:
+- `checklist-dependency.md`, `checklist-data.md`, `checklist-observability.md`
+- `checklist-change-management.md` (Lens 8), `checklist-disaster-recovery.md` (Lens 9)
+- `checklist-security-abuse-reliability.md` (Lens 10), `checklist-quota-limit-exhaustion.md` (Lens 11)
+- `severity-calibration.md`, `validation-monitoring-patterns.md`
 
-- `references/checklist-dependency.md` — Extended dependency failure patterns & mitigations
-- `references/checklist-data.md` — Data consistency, caching, and freshness patterns
-- `references/checklist-observability.md` — Metrics, logging, alerting, and dashboarding patterns
-- `references/checklist-change-management.md` — Rollout, migration, and rollback safety patterns (Lens 8 deep-dive)
-- `references/checklist-disaster-recovery.md` — Fault domains, RPO/RTO, backup/restore, failover and replay safety (Lens 9 deep-dive)
-- `references/checklist-security-abuse-reliability.md` — Auth failure modes, abuse resistance, and secure degradation patterns (Lens 10 deep-dive)
-- `references/checklist-quota-limit-exhaustion.md` — Quota inventory, resource exhaustion, and cost/rate guardrails (Lens 11 deep-dive)
-- `references/severity-calibration.md` — Full severity/context matrix and adjustment rules
-- `references/validation-monitoring-patterns.md` — Validation and monitoring patterns by failure type
-
-Read these reference files when the review requires deeper analysis in a specific area,
-or when the user asks for more detailed guidance on a particular lens.
+Consult when deeper analysis is needed or user requests detailed guidance on a specific lens.
