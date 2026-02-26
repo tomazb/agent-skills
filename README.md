@@ -10,11 +10,11 @@ Senior-level production resilience and failure-mode review for code, services, a
 
 **Key capabilities:**
 
-- Reviews code through **eight failure lenses**: dependency failure, load & concurrency, network & latency, data freshness & consistency, retry & backpressure, debuggability, observability & alerting, and change management & rollback safety
+- Reviews code through **eleven failure lenses**: dependency failure, load & concurrency, network & latency, data freshness & consistency, retry & backpressure, debuggability, observability & alerting, change management & rollback safety, fault domains & disaster recovery, security & abuse as reliability, and quota & limit exhaustion
 - Calibrates severity using impact, likelihood, blast radius, and detectability
 - Provides two review modes: **Quick** (top risks, fast pass) and **Full** (deep analysis with validation and monitoring plans)
 - Includes specialized detection of common AI-generated code blind spots
-- Ships with reference checklists for dependency patterns, data consistency, observability, change management, severity calibration, and validation/monitoring patterns
+- Ships with reference checklists for dependency patterns, data consistency, observability, change management, disaster recovery, security/abuse resilience, quota exhaustion, severity calibration, and validation/monitoring patterns
 
 ## Skill Structure
 
