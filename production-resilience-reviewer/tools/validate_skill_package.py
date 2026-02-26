@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
 NUM_HEADER_RE = re.compile(r"^##\s+(\d+)\.\s+")
 FENCE_RE = re.compile(r"^\s*```")
 ORDERED_LINE_RE = re.compile(r"^(\d+)\.\s+\S")
+
+EXPECTED_REFERENCES = [
+    "references/checklist-change-management.md",
+    "references/checklist-data.md",
+    "references/checklist-dependency.md",
+    "references/checklist-observability.md",
+    "references/severity-calibration.md",
+    "references/validation-monitoring-patterns.md",
+]
 
 def read_text(p: Path) -> str:
     return p.read_text(encoding="utf-8", errors="replace")
@@ -65,26 +75,56 @@ def find_leaked_toc_titles(text: str) -> list[str]:
                 issues.append(
                     f"Possible leaked TOC title under numbered header at line {i+1}: '{s}'"
                 )
-                # Also check the following line, in case multiple leaked entries were pasted.
-                nxt2 = next_nonempty(j)
-                if nxt2:
-                    _, s2 = nxt2
-                    ml2 = ORDERED_LINE_RE.match(s2)
-                    if ml2 and int(ml2.group(1)) >= header_num + 1:
+                # Scan all consecutive leaked entries, not just the first two.
+                scan_idx = j
+                while True:
+                    nxt_scan = next_nonempty(scan_idx)
+                    if not nxt_scan:
+                        break
+                    scan_idx, s_scan = nxt_scan
+                    ml_scan = ORDERED_LINE_RE.match(s_scan)
+                    if ml_scan and int(ml_scan.group(1)) >= header_num + 1:
                         issues.append(
-                            f"Possible leaked TOC title under numbered header at line {i+1}: '{s2}'"
+                            f"Possible leaked TOC title under numbered header at line {i+1}: '{s_scan}'"
                         )
+                    else:
+                        break
     return issues
 
 
 
 def check_lens_headings(skill_md_text: str, errors: list[str]) -> None:
     """Ensure SKILL.md contains Lens 1..8 headings (prevents accidental deletions)."""
-    import re
     lens_nums = sorted({int(n) for n in re.findall(r"^### Lens (\d+):", skill_md_text, flags=re.M)})
     expected = list(range(1, 9))
     if lens_nums != expected:
         errors.append(f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}")
+
+
+def check_expected_references(root: Path, errors: list[str]) -> None:
+    """Ensure all expected reference files exist."""
+    for ref in EXPECTED_REFERENCES:
+        if not (root / ref).exists():
+            errors.append(f"Missing expected reference file: {ref}")
+
+
+def check_version_sync(root: Path, errors: list[str]) -> None:
+    """Ensure VERSION file and package.json version field are in sync."""
+    version_file = root / "VERSION"
+    pkg_file = root / "package.json"
+    if not version_file.exists() or not pkg_file.exists():
+        return  # existence checked elsewhere or not applicable
+    file_version = read_text(version_file).strip()
+    try:
+        pkg = json.loads(read_text(pkg_file))
+    except json.JSONDecodeError:
+        errors.append("package.json is not valid JSON.")
+        return
+    pkg_version = pkg.get("version", "")
+    if pkg_version and pkg_version != file_version:
+        errors.append(
+            f"VERSION ({file_version}) and package.json version ({pkg_version}) are out of sync."
+        )
 
 
 def main() -> int:
@@ -95,14 +135,19 @@ def main() -> int:
     if not skill.exists():
         issues.append("Missing SKILL.md at package root.")
     else:
-        lines = read_text(skill).splitlines()
+        skill_text = read_text(skill)
+        lines = skill_text.splitlines()
         if len(lines) > 500:
             issues.append(f"SKILL.md is {len(lines)} lines (> 500).")
         if not ends_with_newline(skill):
             issues.append("SKILL.md does not end with a trailing newline.")
-        if not fence_count_ok(read_text(skill)):
+        if not fence_count_ok(skill_text):
             issues.append("SKILL.md has an odd number of ``` fences (likely an unclosed code block).")
-        issues.extend([f"SKILL.md: {msg}" for msg in find_leaked_toc_titles(read_text(skill))])
+        check_lens_headings(skill_text, issues)
+        issues.extend([f"SKILL.md: {msg}" for msg in find_leaked_toc_titles(skill_text)])
+
+    check_expected_references(root, issues)
+    check_version_sync(root, issues)
 
     md_files = list(root.rglob("*.md"))
     for p in md_files:

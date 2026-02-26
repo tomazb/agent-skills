@@ -152,6 +152,18 @@ function; dependency lens not applicable").
 - Flag timeout values that are too generous (> 30s for user-facing paths) as **P2-MEDIUM**
   unless justified
 
+**Example (condensed):**
+```
+[NETWORK] GET /api/recommendations → ML scoring service
+  Risk: no explicit read timeout; slow model inference (p99 ~8s) holds connection pool slot,
+        cascading to upstream 504s under load
+  Recommendation: set connect=1s + read=5s timeouts; propagate deadline from caller;
+                  shed load if remaining budget < read timeout
+  Validation: inject 10s latency; verify caller times out cleanly and pool recovers
+  Monitoring: dependency_latency_p99, upstream_timeout_count, connection_pool_in_use
+  Priority: P1-HIGH (cascade risk on user-facing hot path)
+```
+
 ---
 
 ### Lens 4: Data Freshness & Consistency
@@ -168,6 +180,18 @@ function; dependency lens not applicable").
 - Check for race conditions between concurrent writes
 - Check mutation idempotency and deduplication for queue/async consumers
 - Flag stale data that affects money, access control, or safety as **P0-CRITICAL**
+
+**Example (condensed):**
+```
+[DATA] Product price cache (Redis, TTL 10min)
+  Risk: stale price served after flash-sale update; no cache invalidation on price change;
+        thundering herd on popular SKU expiry
+  Recommendation: event-driven invalidation on price write; request coalescing for cache miss;
+                  stale-while-revalidate for non-financial display contexts
+  Validation: update price, verify cache reflects within SLA; simulate cold-cache stampede
+  Monitoring: cache_hit_rate, price_staleness_seconds, cache_miss_spike_count
+  Priority: P1-HIGH (incorrect charge risk if stale price reaches checkout)
+```
 
 ---
 
@@ -194,6 +218,18 @@ function; dependency lens not applicable").
   - Consumer lag and replay safety
 - Flag retry without idempotency on mutating operations as **P0-CRITICAL**
 - Flag retry amplification chains as **P1-HIGH**
+
+**Example (condensed):**
+```
+[RETRY] POST /orders → inventory service → warehouse API (3-deep retry chain)
+  Risk: each layer retries 3×; 1 warehouse timeout → 9 inventory calls → 27 order-service
+        attempts; no idempotency key on warehouse deduct → possible double-deduction
+  Recommendation: retry only at outermost layer; add idempotency key to warehouse call;
+                  circuit breaker between inventory and warehouse; DLQ for exhausted retries
+  Validation: inject warehouse timeout; prove no duplicate deductions and retry count is bounded
+  Monitoring: retry_attempts_total{layer}, retry_exhausted_total, circuit_breaker_state
+  Priority: P0-CRITICAL (retry amplification + missing idempotency on mutating path)
+```
 
 ---
 
@@ -224,8 +260,6 @@ GOOD: "PaymentService.charge failed: Stripe returned 429 (rate limited) for
 
 ---
 
-
-
 ### Lens 7: Observability & Alerting
 
 > "What metrics do I need to understand this in production?"
@@ -244,6 +278,18 @@ GOOD: "PaymentService.charge failed: Stripe returned 429 (rate limited) for
   - Multi-window burn-rate alerting for critical SLOs (where applicable)
 - Flag services with no observability as **P1-HIGH**
 - Flag high-cardinality metric labels as **P2-MEDIUM**
+
+**Example (condensed):**
+```
+[OBSERVABILITY] User-facing /checkout endpoint
+  Risk: no RED metrics, no business KPI (order success rate), error logs are unstructured
+        text with no correlation ID; on-call cannot triage without reading code
+  Recommendation: add request rate/error/duration histogram; emit order_success_total counter;
+                  structured JSON logs with correlation_id; SLO burn-rate alert
+  Validation: synthetic error → verify alert fires and log contains correlation_id
+  Monitoring: checkout_request_duration_seconds, order_success_total, slo_burn_rate
+  Priority: P1-HIGH (blind to failures on revenue-critical path)
+```
 
 ---
 
@@ -291,30 +337,18 @@ Validation: mixed-version deploy test + rollback test; Monitoring: compare metri
 ## Applicability Guidance (Avoid Overfitting the Framework)
 
 Apply the lenses that matter for the code under review. Do not force irrelevant concerns.
-
-Examples:
-- A pure deterministic utility function likely does **not** need dependency, retry, or
-  observability analysis (unless it is CPU/memory heavy or safety-critical)
-- A one-off internal migration script may need strong data integrity review, but less emphasis
-  on long-term dashboards
-- A read-only admin tool may have lower blast radius than a customer-facing payment path
-
-When something is not applicable, say so briefly and move on.
+A pure utility function does not need retry analysis. A one-off migration needs data integrity,
+not long-term dashboards. When something is not applicable, say so briefly and move on.
 
 ---
 
 ## Severity Calibration (Use Context, Not Just Code Smells)
 
-Calibrate severity using **impact × likelihood × blast radius × detectability**. Start from the
-technical failure mode, then adjust based on context (user impact, mutating vs read-only path,
-data sensitivity, frequency, recoverability, change scope, and detectability).
-
-Use the practical adjustment rules and full matrix in:
-- `references/severity-calibration.md` — baseline severities, context matrix, and adjustment rules
-
-Keep the core principle: missing timeouts/error handling are **strong warning signals**, not
-automatic severity assignments on every code sample. A tiny script and a checkout flow do not
-get the same severity for the same code smell.
+Calibrate using **impact × likelihood × blast radius × detectability**. Adjust based on
+context (user impact, mutating vs read-only, data sensitivity, frequency, recoverability).
+See `references/severity-calibration.md` for the full matrix and adjustment rules.
+Core principle: missing timeouts/error handling are **strong warning signals**, not automatic
+severity assignments. A tiny script and a checkout flow do not get the same severity.
 
 ---
 
@@ -419,22 +453,15 @@ Select **Quick Review Mode** or **Full Review Mode** and use the corresponding s
 
 ## Review Calibration
 
-Calibrate your severity like a senior engineer who has been paged at 3 AM:
+Calibrate severity like a senior engineer who has been paged at 3 AM:
 
-- **P0-CRITICAL**: Will cause data loss, financial errors, security breaches, unsafe access,
-  or full outages on critical paths. Fix before shipping.
-- **P1-HIGH**: Will cause degraded service, poor user experience, or difficult incident
-  response under real traffic. Fix within the sprint.
-- **P2-MEDIUM**: Creates resilience debt that will bite eventually, increases operational
-  toil, or violates best practices in a meaningful way. Schedule it.
-- **P3-LOW**: Polish, conventions, minor hardening, future-proofing.
+- **P0-CRITICAL**: Data loss, financial errors, security breaches, or full outages on critical paths. Fix before shipping.
+- **P1-HIGH**: Degraded service, poor UX, or difficult incident response under real traffic. Fix within the sprint.
+- **P2-MEDIUM**: Resilience debt that will bite eventually, operational toil. Schedule it.
+- **P3-LOW**: Polish, conventions, minor hardening.
 
-Do NOT inflate severity to seem thorough. A function that reads a config file does not need
-a circuit breaker. A pure computation does not need retry logic. Apply the lenses that
-*actually matter* for the code under review.
-
-Also do NOT understate risk because the code "works locally". Production failures are often
-caused by traffic, latency, retries, deploys, and partial outages — not syntax.
+Do NOT inflate severity to seem thorough. Do NOT understate risk because the code "works
+locally" — production failures come from traffic, latency, retries, deploys, and partial outages.
 
 ---
 
@@ -442,20 +469,14 @@ caused by traffic, latency, retries, deploys, and partial outages — not syntax
 
 AI-generated code has consistent blind spots. Pay extra attention to:
 
-1. **Happy-path bias**: AI tends to generate code that works perfectly when all inputs are
-   valid and all services are up. The error paths are often afterthoughts or missing entirely.
-2. **Placeholder error handling**: `try/catch` blocks that log and re-throw without adding
-   context, or worse, swallow exceptions entirely.
-3. **Missing timeouts**: AI rarely adds explicit timeouts to HTTP clients, database queries,
-   or connection attempts.
-4. **Hardcoded configuration**: Connection strings, retry counts, timeout values, and pool
-   sizes baked into code instead of externalized.
-5. **Unbounded operations**: Loops over external data without size limits, unbounded query
-   results, unlimited concurrent operations.
+1. **Happy-path bias**: Error paths are afterthoughts or missing entirely.
+2. **Placeholder error handling**: `try/catch` that logs and re-throws without context, or swallows exceptions.
+3. **Missing timeouts**: No explicit timeouts on HTTP clients, DB queries, or connections.
+4. **Hardcoded configuration**: Connection strings, retry counts, pool sizes baked into code.
+5. **Unbounded operations**: Loops over external data without size limits, unlimited concurrency.
 6. **Missing idempotency**: Retry-safe operations that are not actually idempotent.
 7. **No observability**: Zero metrics, minimal logging, no health checks.
-8. **Unsafe rollout assumptions**: Schema or contract changes without compatibility planning,
-   feature flags, or rollback strategy.
+8. **Unsafe rollout assumptions**: Schema/contract changes without compatibility planning or rollback.
 
 When reviewing AI-generated code, **assume these issues exist** and look for them explicitly.
 
