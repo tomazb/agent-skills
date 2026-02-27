@@ -1,18 +1,12 @@
 ---
 name: production-resilience-reviewer
 description: >
-  Senior-level production resilience and failure-mode review for any code, function, service,
-  or system design — especially AI-generated code. Use this skill whenever the user asks you
-  to review code for production readiness, resilience, failure modes, operational concerns,
-  or reliability. Also trigger when the user asks about: error handling quality, retry logic,
-  circuit breakers, timeout strategies, graceful degradation, observability, rate limiting,
-  backpressure, dependency failure analysis, SLA impact, cascading failure risk, on-call
-  debuggability, rollout safety, migration risk, rollback strategy, deploy risk, RPO/RTO,
-  AZ/region fault tolerance, backup/restore drills, security abuse paths, quota exhaustion,
-  or when they say things like "is this production-ready?", "review this for ops", "what could
-  go wrong?", "will this survive real traffic?", "review like a senior engineer", or "what
-  would break at scale?". Trigger aggressively — if there's code and the user wants a quality
-  review, this skill applies.
+  Senior-level production resilience and failure-mode review for code, functions, services,
+  and system designs (especially AI-generated code). Trigger for production-readiness and
+  reliability requests, including error handling, retries, timeouts, circuit breakers, graceful
+  degradation, observability, rate limiting, backpressure, dependency failure analysis,
+  deploy/rollback safety, migration risk, RPO/RTO, AZ/region fault tolerance, security abuse
+  paths, and quota exhaustion.
 ---
 
 # Production Resilience Reviewer
@@ -136,7 +130,6 @@ function; dependency lens not applicable").
 ---
 
 ### Lens 3: Network & Latency
-
 
 > "What happens if the network is slow?"
 
@@ -339,8 +332,21 @@ Validation: mixed-version deploy test + rollback test; Monitoring: compare metri
 
 > "What happens if an AZ, region, or control-plane dependency is down?"
 
-- Map fault domains (zonal, regional, global, control-plane dependencies)
-- Confirm recovery objectives: RPO/RTO defined? Backup/restore tested? Replay tested? Runbooks exist?
+- Map fault domains explicitly (zonal, regional, global, and control-plane dependencies)
+- Validate dependency placement:
+  - Are primary and standby resources in separate fault domains?
+  - Are DNS, KMS, IAM, and deployment control planes treated as dependencies?
+- Confirm recovery objectives:
+  - Is RPO/RTO defined per critical workflow (not just globally)?
+  - Are objectives tied to customer/financial impact and contractual SLA?
+- Verify recovery drill evidence:
+  - Backup + restore tested on production-like data
+  - Replay/reconciliation tested for in-flight operations
+  - Runbooks include ownership, decision criteria, and communication paths
+- Review failover/failback safety:
+  - Clear trigger conditions and abort criteria
+  - Split-brain prevention and write-fencing
+  - Data divergence detection and reconciliation plan
 - Flag undefined RPO/RTO as **P1-HIGH**; untested backup/restore for money/auth as **P0-CRITICAL**
 
 See `references/checklist-disaster-recovery.md` for detailed guidance.
@@ -358,8 +364,21 @@ Fix: define RPO=5m/RTO=30m, rehearse restore+replay quarterly, automate failover
 
 > "What happens when hostile traffic targets weak spots?"
 
-- Treat security controls as uptime controls: Can auth fail open? Can bots bypass rate limits? Can one tenant exhaust shared resources?
-- Review degradation: Default deny vs allow? Emergency controls? Runbooks for leaks/abuse?
+- Treat security controls as uptime controls:
+  - Can auth/authz fail open?
+  - Can bots bypass rate limits?
+  - Can one tenant or actor exhaust shared resources?
+- Evaluate authentication and authorization failure modes:
+  - Cache/middleware failures default to deny on sensitive paths
+  - Token/introspection/key-rotation failures have explicit fallback behavior
+- Validate abuse throttling and isolation:
+  - Per-actor, per-tenant, and global rate limits
+  - Resource isolation to prevent cross-tenant blast radius
+  - Detection for low-and-slow and burst abuse patterns
+- Review degradation and emergency controls:
+  - Emergency deny/kill switches and scoped feature disabling
+  - Runbooks for active abuse incidents and key leaks
+  - Alerting that distinguishes abuse from organic traffic spikes
 - Flag auth fail-open on sensitive actions as **P0-CRITICAL**; missing abuse throttles as **P1-HIGH**
 
 See `references/checklist-security-abuse-reliability.md` for detailed guidance.
@@ -377,8 +396,23 @@ Fix: fail closed, add scoped service tokens, and enforce per-actor + global abus
 
 > "What happens when quotas, pools, or budgets are exhausted?"
 
-- Inventory hard limits: Cloud API quotas, DB/storage/IOPS limits, third-party rate limits, cost guardrails
-- Verify exhaustion behavior: Quota pressure visible? Graceful degradation? Emergency controls? Headroom policy?
+- Inventory hard limits:
+  - Cloud/provider API quotas
+  - DB/storage/IOPS connection limits
+  - Third-party rate limits
+  - Cost budgets and spending guardrails
+- Verify visibility and early warning:
+  - Utilization metrics and alerts before hard failure
+  - Error classification for 429/limit breaches vs generic failures
+  - Forecasting for growth events and seasonal spikes
+- Review exhaustion behavior:
+  - Graceful degradation paths for read/write operations
+  - Admission control/load shedding policies
+  - Retry budgets to prevent quota-thrashing loops
+- Confirm emergency controls and headroom policy:
+  - Manual/automated quota increase path with ownership
+  - Feature-level throttles for high-cost operations
+  - Minimum headroom targets for critical dependencies
 - Flag missing safeguards for quota failures as **P1-HIGH**; missing cost protection on mutating paths as **P1-HIGH**
 
 See `references/checklist-quota-limit-exhaustion.md` for detailed guidance.

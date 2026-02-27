@@ -1,5 +1,23 @@
 # Changelog
 
+## 5.3.0
+- Validator hardening and maintainability:
+  - Refactored validator checks to use consistent list-returning interfaces.
+  - Added `validate_root()` orchestration helper for cleaner composition and testing.
+  - Prevented duplicate `SKILL.md` markdown checks by excluding it from the generic markdown scan loop.
+  - Clarified leaked-TOC scanning variable names and scan flow.
+  - Added lens-heading spacing validation (exactly one blank line after each `### Lens N` heading).
+  - Added CHANGELOG/version alignment validation (`CHANGELOG.md` must include a heading matching `VERSION`).
+- Added automated validator regression tests under `tests/` (line budget, code fences, leaked TOC detection, lens headings, references, version sync, duplicate-check regression).
+- Expanded Lenses 9-11 in `SKILL.md` with richer inline guidance while keeping deep-dive reference links.
+- Simplified `SKILL.md` frontmatter description wording for easier maintenance.
+- Improved wrapper utility:
+  - `tools/validate_skill_package.sh` now verifies Python availability/version and runs via deterministic script path.
+- Added `tools/bump_version.py` to sync `VERSION`, `package.json`, and README current-version metadata in one command.
+- Updated `README.md`:
+  - removed hardcoded version number from the package-structure tree
+  - documented validator tests and centralized version bump workflow
+
 ## 5.2.0
 - Added Lens 9: **Fault Domains & Disaster Recovery** to `SKILL.md` with RPO/RTO, backup/restore, replay, and failover checks.
 - Added Lens 10: **Security & Abuse as Reliability** to `SKILL.md` with auth fail-open and abuse-path resilience checks.
