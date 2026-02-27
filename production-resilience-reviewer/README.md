@@ -81,7 +81,7 @@ production-resilience-reviewer/
 ├── SKILL.md                # Core skill definition and instructions
 ├── README.md               # This file
 ├── package.json            # Package metadata
-├── VERSION                 # Current version (5.2.0)
+├── VERSION                 # Current version
 ├── CHANGELOG.md            # Version history
 ├── references/             # Deep-dive reference materials
 │   ├── checklist-dependency.md
@@ -94,6 +94,7 @@ production-resilience-reviewer/
 │   ├── severity-calibration.md
 │   └── validation-monitoring-patterns.md
 └── tools/                  # Validation and utilities
+    ├── bump_version.py
     ├── validate_skill_package.py
     └── validate_skill_package.sh
 ```
@@ -138,20 +139,43 @@ Run the validation tool to check package integrity:
 
 ```bash
 bash tools/validate_skill_package.sh
+# or:
+python3 tools/validate_skill_package.py
+```
+
+Run validator regression tests:
+
+```bash
+pytest -q
 ```
 
 The validator checks:
 - SKILL.md structure (all eleven lenses present)
 - Reference file existence
-- Version synchronization (VERSION ↔ package.json)
-- Markdown formatting (trailing newlines, balanced code fences)
+- Version synchronization (VERSION ↔ package.json and VERSION ↔ CHANGELOG heading)
+- Markdown formatting (trailing newlines, balanced code fences, lens heading spacing)
 - Leaked TOC detection
+
+---
+
+## Version Management
+
+Update all version surfaces in one command:
+
+```bash
+python3 tools/bump_version.py <new-version>
+```
+
+This updates:
+- `VERSION`
+- `package.json`
+- `README.md` "Current version" line
 
 ---
 
 ## Version History
 
-Current version: **5.2.0**
+Current version: **5.3.0**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 

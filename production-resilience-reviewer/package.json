@@ -1,7 +1,12 @@
 {
   "name": "production-resilience-reviewer",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "description": "Senior-level production resilience and failure-mode review for code, services, and system designs.",
+  "scripts": {
+    "validate": "python3 tools/validate_skill_package.py",
+    "test": "pytest -q",
+    "bump:version": "python3 tools/bump_version.py"
+  },
   "keywords": [
     "production-readiness",
     "resilience",
