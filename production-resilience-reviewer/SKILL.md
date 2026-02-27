@@ -1,12 +1,10 @@
 ---
 name: production-resilience-reviewer
 description: >
-  Senior-level production resilience and failure-mode review for code, functions, services,
-  and system designs (especially AI-generated code). Trigger for production-readiness and
-  reliability requests, including error handling, retries, timeouts, circuit breakers, graceful
-  degradation, observability, rate limiting, backpressure, dependency failure analysis,
-  deploy/rollback safety, migration risk, RPO/RTO, AZ/region fault tolerance, security abuse
-  paths, and quota exhaustion.
+  Use when reviewing production readiness, resilience, failure modes, or reliability of code,
+  services, or system designs. Trigger for requests about error handling, retries, timeouts,
+  circuit breakers, graceful degradation, observability, DR/RPO/RTO, abuse resilience, quota
+  exhaustion, or AI-generated code risk checks.
 ---
 
 # Production Resilience Reviewer
@@ -322,7 +320,8 @@ For a deeper checklist (rollouts, migrations, rollback playbooks), see:
 **Example (condensed):**
 ```
 [CHANGE] Mixed-version rollout + schema/data change on a critical path.
-Fix: expand/contract, dual-read/write where needed, feature flag + kill switch, rollback rehearsal.
+Risk: incompatible deploy or partial migration can force rollback with data divergence.
+Recommendation: use expand/contract, dual-read/write where needed, and feature flag + kill switch.
 Validation: mixed-version deploy test + rollback test; Monitoring: compare metrics + stuck/failed ops + rollout guardrails.
 ```
 
@@ -413,7 +412,7 @@ Fix: fail closed, add scoped service tokens, and enforce per-actor + global abus
   - Manual/automated quota increase path with ownership
   - Feature-level throttles for high-cost operations
   - Minimum headroom targets for critical dependencies
-- Flag missing safeguards for quota failures as **P1-HIGH**; missing cost protection on mutating paths as **P1-HIGH**
+- Flag missing safeguards for quota failures or cost protection on mutating paths as **P1-HIGH**
 
 See `references/checklist-quota-limit-exhaustion.md` for detailed guidance.
 
@@ -430,11 +429,24 @@ Fix: add quota utilization alerts, retry budgets, and degraded queue-and-reconci
 
 Apply relevant lenses only. Pure utility functions don't need retry analysis. One-off migrations need data integrity, not dashboards. When a lens doesn't apply, say so briefly.
 
+Skip this skill for:
+- Non-production artifacts
+- Throwaway prototypes
+- One-off scripts with no SLA or user impact
+
 ---
 
 ## Severity Calibration
 
 Calibrate using **impact × likelihood × blast radius × detectability**. Adjust for context (user impact, mutating vs read-only, data sensitivity, frequency). Missing timeouts/error handling are **strong signals**, not automatic assignments. See `references/severity-calibration.md` for full matrix.
+
+Use these priority definitions:
+- **P0**: Data loss, financial errors, security breaches, critical path outages. Fix before shipping.
+- **P1**: Degraded service, poor UX, difficult incident response. Fix within sprint.
+- **P2**: Resilience debt, operational toil. Schedule it.
+- **P3**: Polish, minor hardening.
+
+Calibrate like a senior engineer paged at 3 AM. Do NOT inflate severity or understate risk.
 
 ---
 
@@ -456,16 +468,7 @@ Tailor validation/monitoring to the lens. See `references/validation-monitoring-
 
 **Full Mode**: Verdict, risk level, findings by priority (P0/P1/P2/P3), detailed lens analysis, validation plan, monitoring plan, recommended fix order, quick wins.
 
----
-
-## Review Calibration
-
-- **P0**: Data loss, financial errors, security breaches, critical path outages. Fix before shipping.
-- **P1**: Degraded service, poor UX, difficult incident response. Fix within sprint.
-- **P2**: Resilience debt, operational toil. Schedule it.
-- **P3**: Polish, minor hardening.
-
-Calibrate like a senior engineer paged at 3 AM. Do NOT inflate severity or understate risk.
+Quick wins = low-effort, high-impact fixes that can be completed in the same session (for example, add explicit timeouts or correlation IDs).
 
 ---
 
