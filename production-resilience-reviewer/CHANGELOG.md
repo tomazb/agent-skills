@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.3.1
+- Improved skill triggering and applicability guidance:
+  - Refactored `SKILL.md` frontmatter description to start with "Use when..." and emphasize trigger conditions.
+  - Added explicit "Skip this skill for" exclusions (non-production artifacts, throwaway prototypes, one-off no-SLA scripts).
+- Removed calibration ambiguity in `SKILL.md`:
+  - Merged `Review Calibration` guidance into `Severity Calibration`.
+  - Kept impact/likelihood/blast-radius/detectability method and embedded P0-P3 definitions in one section.
+- Tightened consistency and output clarity:
+  - Consolidated Lens 11 duplicated `P1-HIGH` wording into a single rule.
+  - Aligned Lens 8 condensed example wording with the standard finding style (`Risk`/`Recommendation`).
+  - Defined `quick wins` in Output Format as low-effort, high-impact same-session fixes.
+- Synced package README usage guidance with SKILL trigger/exclusion semantics.
+
 ## 5.3.0
 - Validator hardening and maintainability:
   - Refactored validator checks to use consistent list-returning interfaces.

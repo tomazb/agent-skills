@@ -121,13 +121,17 @@ These references are consulted when deeper analysis is needed for specific failu
 
 ## Usage
 
-AI coding agents automatically trigger this skill when users request:
-- Production readiness reviews
-- Resilience or failure mode analysis
-- Operational concern reviews
-- Questions about error handling, timeouts, retry logic, observability, etc.
-- Questions about DR/failover, RPO/RTO, abuse resilience, or quota exhaustion
+AI coding agents should trigger this skill when users request:
+- Production-readiness, resilience, or failure-mode review of code/services/designs
+- Reliability analysis for error handling, retries, timeouts, circuit breakers, graceful degradation, or observability
+- Operational risk review around deploy/rollback safety, DR (RPO/RTO), abuse resilience, or quota exhaustion
+- Extra scrutiny of AI-generated code for common resilience blind spots
 - Phrases like "is this production-ready?", "review like a senior engineer", "what could go wrong?"
+
+Skip this skill for:
+- Non-production artifacts
+- Throwaway prototypes
+- One-off scripts with no SLA or user impact
 
 See `SKILL.md` for complete agent instructions and the full review framework.
 
@@ -175,7 +179,7 @@ This updates:
 
 ## Version History
 
-Current version: **5.3.0**
+Current version: **5.3.1**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
