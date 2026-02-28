@@ -93,6 +93,12 @@ production-resilience-reviewer/
 │   ├── checklist-quota-limit-exhaustion.md
 │   ├── severity-calibration.md
 │   └── validation-monitoring-patterns.md
+├── tests/                  # Copilot CLI testing guide and fixtures
+│   ├── README.md           # Step-by-step testing instructions
+│   └── fixtures/           # Sample code with known resilience gaps
+│       ├── payment-service.py
+│       ├── user-profile.js
+│       └── order-processor.py
 └── tools/                  # Validation and utilities
     ├── validate_skill_package.py
     └── validate_skill_package.sh
@@ -129,6 +135,40 @@ AI coding agents automatically trigger this skill when users request:
 - Phrases like "is this production-ready?", "review like a senior engineer", "what could go wrong?"
 
 See `SKILL.md` for complete agent instructions and the full review framework.
+
+---
+
+## Testing in Copilot CLI
+
+See [`tests/README.md`](tests/README.md) for step-by-step instructions on how to
+install the skill, verify it is loaded, and run it against the provided fixture
+files to confirm it is working correctly.
+
+**Quick-start:**
+
+1. Copy `SKILL.md` to a skills directory Copilot knows about:
+
+   ```bash
+   mkdir -p ~/.copilot/skills/production-resilience-reviewer
+   cp SKILL.md ~/.copilot/skills/production-resilience-reviewer/SKILL.md
+   ```
+
+2. Confirm the skill is loaded:
+
+   ```
+   /skills list
+   ```
+
+3. Invoke the skill with any of the prompts below and verify it produces
+   prioritized findings with evidence, recommendations, validation steps,
+   and monitoring suggestions:
+
+   - _"Review this code for production readiness"_
+   - _"What could go wrong with this in production?"_
+   - _"Review like a senior engineer"_
+   - _"Use the /production-resilience-reviewer skill to review ..."_
+
+Sample fixture code and a full testing checklist are in [`tests/`](tests/).
 
 ---
 
