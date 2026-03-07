@@ -354,7 +354,7 @@ See `references/checklist-disaster-recovery.md` for detailed guidance.
 ```
 [DR] Single-region primary DB + untested restore path on checkout.
 Risk: region outage or restore corruption can exceed SLA and lose recent orders.
-Fix: define RPO=5m/RTO=30m, rehearse restore+replay quarterly, automate failover decision gates.
+Recommendation: define RPO=5m/RTO=30m, rehearse restore+replay quarterly, automate failover decision gates.
 ```
 
 ---
@@ -386,7 +386,7 @@ See `references/checklist-security-abuse-reliability.md` for detailed guidance.
 ```
 [SECURITY] Auth cache miss falls back to "allow" on payment-refund endpoint.
 Risk: attacker can force cache churn and execute unauthorized refunds.
-Fix: fail closed, add scoped service tokens, and enforce per-actor + global abuse budgets.
+Recommendation: fail closed, add scoped service tokens, and enforce per-actor + global abuse budgets.
 ```
 
 ---
@@ -420,7 +420,7 @@ See `references/checklist-quota-limit-exhaustion.md` for detailed guidance.
 ```
 [QUOTA] Queue publish API has no quota telemetry; retries continue on 429.
 Risk: quota exhaustion causes cascading failures and runaway retry spend.
-Fix: add quota utilization alerts, retry budgets, and degraded queue-and-reconcile mode.
+Recommendation: add quota utilization alerts, retry budgets, and degraded queue-and-reconcile mode.
 ```
 
 ---
@@ -440,7 +440,8 @@ Skip this skill for:
 
 Calibrate using **impact × likelihood × blast radius × detectability**. Adjust for context (user impact, mutating vs read-only, data sensitivity, frequency). Missing timeouts/error handling are **strong signals**, not automatic assignments. See `references/severity-calibration.md` for full matrix.
 
-Use these priority definitions:
+**Priority definitions:**
+
 - **P0**: Data loss, financial errors, security breaches, critical path outages. Fix before shipping.
 - **P1**: Degraded service, poor UX, difficult incident response. Fix within sprint.
 - **P2**: Resilience debt, operational toil. Schedule it.

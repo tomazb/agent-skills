@@ -1,7 +1,7 @@
 {
   "name": "production-resilience-reviewer",
-  "version": "5.3.1",
-  "description": "Senior-level production resilience and failure-mode review for code, services, and system designs.",
+  "version": "5.3.2",
+  "description": "Production resilience and failure-mode review for code, services, and system designs \u2014 especially AI-generated code.",
   "scripts": {
     "validate": "python3 tools/validate_skill_package.py",
     "test": "pytest -q",

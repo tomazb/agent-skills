@@ -126,7 +126,6 @@ AI coding agents should trigger this skill when users request:
 - Reliability analysis for error handling, retries, timeouts, circuit breakers, graceful degradation, or observability
 - Operational risk review around deploy/rollback safety, DR (RPO/RTO), abuse resilience, or quota exhaustion
 - Extra scrutiny of AI-generated code for common resilience blind spots
-- Phrases like "is this production-ready?", "review like a senior engineer", "what could go wrong?"
 
 Skip this skill for:
 - Non-production artifacts
@@ -179,11 +178,13 @@ This updates:
 
 ## Version History
 
-Current version: **5.3.1**
+Current version: **5.3.2**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 Recent highlights:
+- **5.3.1** - Aligned lens example style (Risk/Recommendation), refined trigger guidance, consolidated severity calibration
+- **5.3.0** - Validator refactor with regression tests, version bump tooling, expanded Lenses 9-11 guidance
 - **5.2.0** - Added Lenses 9-11 (Disaster Recovery, Security/Abuse Reliability, Quota Exhaustion) and deep-dive references
 - **5.1.0** - Added condensed examples across all lenses; enhanced validation
 - **5.0.0** - Restored Load & Concurrency as first-class lens
