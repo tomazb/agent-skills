@@ -1,5 +1,12 @@
 # Changelog
 
+## 5.3.2
+- Fixed `Fix:` → `Recommendation:` in Lens 9, 10, 11 condensed examples to match Lens 8 style (review finding).
+- Removed orphaned trigger phrases from `README.md` that no longer appeared in `SKILL.md` frontmatter.
+- Added 5.3.0 and 5.3.1 to `README.md` "Recent highlights" section.
+- Synced `package.json` description with current trigger-oriented wording.
+- Improved scanability of Severity Calibration section (added sub-heading for priority definitions).
+
 ## 5.3.1
 - Improved skill triggering and applicability guidance:
   - Refactored `SKILL.md` frontmatter description to start with "Use when..." and emphasize trigger conditions.
