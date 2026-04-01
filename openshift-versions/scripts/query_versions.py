@@ -21,7 +21,9 @@ Authenticated queries:
 
 import argparse
 import json
+import re
 import sys
+import time
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -37,14 +39,83 @@ DEFAULT_FLOOR_MINOR = 12
 DEFAULT_CEILING_MINOR = 99
 DEFAULT_MAJOR = 4
 CHANNELS = ["stable", "fast", "candidate", "eus"]
+CHANNEL_RE = re.compile(r"^(stable|fast|candidate|eus)-\d+\.\d+$")
+MAX_RETRIES = 3
+RETRY_BASE_DELAY_SECONDS = 0.5
+
+
+def is_connection_error_message(message: str) -> bool:
+    """Return True when a RuntimeError message represents a network failure."""
+    lowered = message.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "connection error",
+            "name or service not known",
+            "name resolution",
+            "temporary failure",
+            "timed out",
+            "connection refused",
+        )
+    )
+
+
+def is_not_found_error_message(message: str) -> bool:
+    """Treat HTTP 404 as an empty channel/version result during discovery."""
+    return message.lower().startswith("http 404:")
+
+
+def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Validate cross-argument constraints after argparse parsing."""
+    if args.major < 1 or args.major > 20:
+        parser.error("--major must be between 1 and 20")
+
+    if args.floor < 0:
+        parser.error("--floor must be 0 or greater")
+    if args.ceiling < args.floor:
+        parser.error("--ceiling must be greater than or equal to --floor")
+
+    if args.page < 1:
+        parser.error("--page must be 1 or greater")
+    if args.size < 1 or args.size > 100:
+        parser.error("--size must be between 1 and 100")
+    if args.retry_count < 0:
+        parser.error("--retry-count must be 0 or greater")
+    if args.retry_base_delay <= 0:
+        parser.error("--retry-base-delay must be greater than 0")
+
+    if args.token is not None and not args.token.strip():
+        parser.error("--token cannot be empty")
+
+    if args.channel and not CHANNEL_RE.match(args.channel):
+        parser.error("--channel must match {type}-{major}.{minor}, e.g. stable-4.18")
+
+    if args.discover or args.all_latest:
+        if "," in args.channel_type:
+            parser.error("--channel-type must be a single value for --discover/--all-latest")
+        if args.channel_type not in CHANNELS:
+            parser.error(f"--channel-type must be one of: {', '.join(CHANNELS)}")
+
+    if args.upgrade_path:
+        channel_types = [channel.strip() for channel in args.channel_type.split(",") if channel.strip()]
+        if not channel_types:
+            parser.error("--channel-type must include at least one channel for --upgrade-path")
+        invalid = [channel for channel in channel_types if channel not in CHANNELS]
+        if invalid:
+            parser.error(
+                f"invalid --channel-type value(s) for --upgrade-path: {', '.join(invalid)}"
+            )
+
 
 
 def make_request(
     endpoint: str,
     params: Optional[dict] = None,
-    token: Optional[str] = None
+    token: Optional[str] = None,
+    max_retries: int = MAX_RETRIES,
+    retry_base_delay: float = RETRY_BASE_DELAY_SECONDS,
 ) -> dict:
-    """Make request to OCM API."""
+    """Make request to OCM API with bounded retries for transient failures."""
     url = f"{BASE_URL}{endpoint}"
 
     if params:
@@ -61,39 +132,91 @@ def make_request(
 
     request = urllib.request.Request(url, headers=headers, method="GET")
 
-    try:
-        with urllib.request.urlopen(request, timeout=30) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        error_body = e.read().decode("utf-8") if e.fp else ""
-        raise RuntimeError(f"HTTP {e.code}: {e.reason}\n{error_body}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"Connection error: {e.reason}") from e
+    retries = max(0, max_retries)
+    attempts = retries + 1
+
+    for attempt in range(1, attempts + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=30) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except urllib.error.HTTPError as e:
+            if e.code == 429 and attempt <= retries:
+                retry_after = e.headers.get("Retry-After") if e.headers else None
+                delay = retry_base_delay * (2 ** (attempt - 1))
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        pass
+                time.sleep(delay)
+                continue
+
+            if 500 <= e.code <= 599 and attempt <= retries:
+                time.sleep(retry_base_delay * (2 ** (attempt - 1)))
+                continue
+
+            error_body = e.read().decode("utf-8") if e.fp else ""
+            raise RuntimeError(f"HTTP {e.code}: {e.reason}\n{error_body}") from e
+        except urllib.error.URLError as e:
+            if attempt <= retries:
+                time.sleep(retry_base_delay * (2 ** (attempt - 1)))
+                continue
+            raise RuntimeError(f"Connection error: {e.reason}") from e
+
+    raise RuntimeError("Unexpected request failure after retries")
 
 
-def get_graph_versions(channel: str, arch: str = "amd64") -> dict:
+def get_graph_versions(
+    channel: str,
+    arch: str = "amd64",
+    max_retries: int = MAX_RETRIES,
+    retry_base_delay: float = RETRY_BASE_DELAY_SECONDS,
+) -> dict:
     """Get versions from the public upgrades graph endpoint."""
     params = {"channel": channel, "arch": arch}
-    return make_request(GRAPH_ENDPOINT, params)
+    return make_request(
+        GRAPH_ENDPOINT,
+        params,
+        max_retries=max_retries,
+        retry_base_delay=retry_base_delay,
+    )
 
 
 def list_versions(
     token: str,
     search: Optional[str] = None,
     page: int = 1,
-    size: int = 100
+    size: int = 100,
+    max_retries: int = MAX_RETRIES,
+    retry_base_delay: float = RETRY_BASE_DELAY_SECONDS,
 ) -> dict:
     """List versions from authenticated clusters_mgmt endpoint."""
     params = {"page": page, "size": size}
     if search:
         params["search"] = search
-    return make_request(VERSIONS_ENDPOINT, params, token)
+    return make_request(
+        VERSIONS_ENDPOINT,
+        params,
+        token,
+        max_retries=max_retries,
+        retry_base_delay=retry_base_delay,
+    )
 
 
-def get_version(token: str, version_id: str) -> dict:
+def get_version(
+    token: str,
+    version_id: str,
+    max_retries: int = MAX_RETRIES,
+    retry_base_delay: float = RETRY_BASE_DELAY_SECONDS,
+) -> dict:
     """Get specific version details from authenticated endpoint."""
     endpoint = f"{VERSIONS_ENDPOINT}/{version_id}"
-    return make_request(endpoint, token=token)
+    return make_request(
+        endpoint,
+        token=token,
+        max_retries=max_retries,
+        retry_base_delay=retry_base_delay,
+    )
 
 
 def build_search_query(
@@ -168,6 +291,7 @@ def discover_active_minors(
     major: int = DEFAULT_MAJOR,
     floor_minor: int = DEFAULT_FLOOR_MINOR,
     ceiling_minor: int = DEFAULT_CEILING_MINOR,
+    graph_fetcher=get_graph_versions,
 ) -> list:
     """
     Probe channel_type-{major}.{minor} for minor in [floor..ceiling].
@@ -185,7 +309,7 @@ def discover_active_minors(
         channel = f"{channel_type}-{major}.{minor}"
         total_probed += 1
         try:
-            data = get_graph_versions(channel, arch)
+            data = graph_fetcher(channel, arch)
             nodes = data.get("nodes", [])
             versions = sorted(
                 [n["version"] for n in nodes if n.get("version")],
@@ -203,13 +327,17 @@ def discover_active_minors(
             else:
                 consecutive_empty += 1
         except RuntimeError as e:
-            consecutive_empty += 1
             err_msg = str(e)
-            # Distinguish connectivity failures from HTTP 404s
-            if "Connection error" in err_msg or "Name or service not known" in err_msg \
-               or "name resolution" in err_msg or "timed out" in err_msg:
+            if is_connection_error_message(err_msg):
                 connection_errors += 1
                 last_conn_error = err_msg
+                continue
+            if is_not_found_error_message(err_msg):
+                consecutive_empty += 1
+                if consecutive_empty >= 3:
+                    break
+                continue
+            raise
 
         if consecutive_empty >= 3:
             break
@@ -229,12 +357,17 @@ def discover_active_minors(
 # Upgrade paths: parse graph edges
 # ---------------------------------------------------------------------------
 
-def get_upgrade_targets(channel: str, from_version: str, arch: str = "amd64") -> list:
+def get_upgrade_targets(
+    channel: str,
+    from_version: str,
+    arch: str = "amd64",
+    graph_fetcher=get_graph_versions,
+) -> list:
     """
     Given a channel and a source version, return all versions reachable
     in one hop via the graph edges.
     """
-    data = get_graph_versions(channel, arch)
+    data = graph_fetcher(channel, arch)
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
 
@@ -264,6 +397,7 @@ def find_upgrade_paths(
     from_version: str,
     arch: str = "amd64",
     channel_types: Optional[list] = None,
+    upgrade_target_fetcher=get_upgrade_targets,
 ) -> dict:
     """
     For a given source version, check all relevant channels for upgrade targets.
@@ -288,29 +422,37 @@ def find_upgrade_paths(
         channel = f"{ct}-{major}.{minor}"
         total_probed += 1
         try:
-            targets = get_upgrade_targets(channel, from_version, arch)
+            targets = upgrade_target_fetcher(channel, from_version, arch)
             if targets:
                 results[channel] = targets
         except RuntimeError as e:
             err_msg = str(e)
-            if "Connection error" in err_msg or "name resolution" in err_msg \
-               or "timed out" in err_msg:
+            if is_connection_error_message(err_msg):
                 connection_errors += 1
                 last_conn_error = err_msg
+                continue
+            if is_not_found_error_message(err_msg):
+                pass
+            else:
+                raise
 
         # Check next minor channel (cross-minor upgrades)
         next_channel = f"{ct}-{major}.{minor + 1}"
         total_probed += 1
         try:
-            targets = get_upgrade_targets(next_channel, from_version, arch)
+            targets = upgrade_target_fetcher(next_channel, from_version, arch)
             if targets:
                 results[next_channel] = targets
         except RuntimeError as e:
             err_msg = str(e)
-            if "Connection error" in err_msg or "name resolution" in err_msg \
-               or "timed out" in err_msg:
+            if is_connection_error_message(err_msg):
                 connection_errors += 1
                 last_conn_error = err_msg
+                continue
+            if is_not_found_error_message(err_msg):
+                pass
+            else:
+                raise
 
     if total_probed > 0 and connection_errors == total_probed:
         raise RuntimeError(
@@ -467,8 +609,24 @@ Authenticated queries:
         default=100,
         help="Page size (default: 100, max: 100)"
     )
+    parser.add_argument(
+        "--retry-count",
+        type=int,
+        default=MAX_RETRIES,
+        help=f"Retry attempts for transient failures (default: {MAX_RETRIES})"
+    )
+    parser.add_argument(
+        "--retry-base-delay",
+        type=float,
+        default=RETRY_BASE_DELAY_SECONDS,
+        help=(
+            f"Base delay in seconds for exponential retry backoff "
+            f"(default: {RETRY_BASE_DELAY_SECONDS})"
+        )
+    )
 
     args = parser.parse_args()
+    validate_args(args, parser)
 
     try:
         # ---- Discovery mode ----
@@ -479,6 +637,12 @@ Authenticated queries:
                 major=args.major,
                 floor_minor=args.floor,
                 ceiling_minor=args.ceiling,
+                graph_fetcher=lambda channel, arch: get_graph_versions(
+                    channel,
+                    arch,
+                    max_retries=args.retry_count,
+                    retry_base_delay=args.retry_base_delay,
+                ),
             )
 
             if args.output_json:
@@ -514,6 +678,17 @@ Authenticated queries:
                 from_version=args.upgrade_path,
                 arch=args.arch,
                 channel_types=channel_types,
+                upgrade_target_fetcher=lambda channel, from_version, arch: get_upgrade_targets(
+                    channel,
+                    from_version,
+                    arch,
+                    graph_fetcher=lambda c, a: get_graph_versions(
+                        c,
+                        a,
+                        max_retries=args.retry_count,
+                        retry_base_delay=args.retry_base_delay,
+                    ),
+                ),
             )
 
             if args.output_json:
@@ -533,7 +708,12 @@ Authenticated queries:
 
         # ---- Public graph endpoint (channel query) ----
         elif args.channel:
-            result = get_graph_versions(args.channel, args.arch)
+            result = get_graph_versions(
+                args.channel,
+                args.arch,
+                max_retries=args.retry_count,
+                retry_base_delay=args.retry_base_delay,
+            )
 
             if args.output_json:
                 print(json.dumps(result, indent=2))
@@ -559,7 +739,12 @@ Authenticated queries:
         # ---- Authenticated endpoint ----
         elif args.token:
             if args.version:
-                result = get_version(args.token, args.version)
+                result = get_version(
+                    args.token,
+                    args.version,
+                    max_retries=args.retry_count,
+                    retry_base_delay=args.retry_base_delay,
+                )
                 if args.output_json:
                     print(json.dumps(result, indent=2))
                 else:
@@ -577,7 +762,9 @@ Authenticated queries:
                     args.token,
                     search=search_query,
                     page=args.page,
-                    size=min(args.size, 100)
+                    size=min(args.size, 100),
+                    max_retries=args.retry_count,
+                    retry_base_delay=args.retry_base_delay,
                 )
 
                 if args.output_json:
