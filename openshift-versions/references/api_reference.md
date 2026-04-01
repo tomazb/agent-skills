@@ -7,6 +7,8 @@
 | Base URL | `https://api.openshift.com` |
 | Content Type | `application/json` |
 
+Use `SKILL.md` for task-oriented workflows and operator guidance. This reference keeps the detailed endpoint schema, filtering syntax, and response behavior.
+
 ## Public Endpoint (No Authentication)
 
 ### Upgrades Graph
@@ -100,6 +102,18 @@ GET /api/clusters_mgmt/v1/versions
 | `size` | integer | Items per page (default: 100, max: 100) |
 | `search` | string | SQL-like search filter |
 | `order` | string | Sort order (e.g., `raw_id desc`) |
+
+**Pagination notes:**
+- `page` is 1-based
+- `size` greater than 100 is rejected by the local CLI validator before the request is sent
+- The response includes `total`, `page`, and `size` so callers can compute remaining pages
+
+**Pagination example:**
+
+```bash
+curl -s -H "Authorization: Bearer $OCM_TOKEN" \
+  "https://api.openshift.com/api/clusters_mgmt/v1/versions?page=2&size=50" | jq '.'
+```
 
 **Response Schema:**
 
@@ -228,6 +242,7 @@ Token characteristics:
 - Access tokens expire (typically 15 minutes)
 - Offline tokens have longer validity
 - Use `ocm login` CLI for automatic token management
+- The public upgrade graph often reflects newly published payloads before `clusters_mgmt` exposes the same version metadata
 
 ## Error Responses
 
@@ -257,6 +272,20 @@ Error response format:
 The API implements rate limiting. When exceeded:
 - HTTP 429 response returned
 - `Retry-After` header indicates wait time
+- The local script retries 429 responses with bounded exponential backoff and then surfaces a RuntimeError if retries are exhausted
+
+## Local Client Retry Behavior
+
+The local query script includes bounded retries for transient failures:
+- HTTP 429 (rate limiting)
+- HTTP 5xx server errors
+- URL connection errors (for example timeouts and temporary DNS/connectivity failures)
+
+Behavior details:
+- Default retries: 3 (4 total attempts)
+- Backoff: exponential from a short base delay
+- `Retry-After` is honored for 429 when present
+- CLI knobs: `--retry-count` and `--retry-base-delay`
 
 ## Related Endpoints
 

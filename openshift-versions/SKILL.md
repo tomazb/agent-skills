@@ -16,6 +16,20 @@ Query OpenShift Container Platform versions from Red Hat's public APIs.
 2. Then drill into specific channels or upgrade paths based on the results
 3. Use `{MAJOR}.{MINOR}` placeholders when explaining commands to the user — fill them in from discovery output
 
+## Choose Your Endpoint
+
+**Public (no auth required):**
+- Latest patch discovery via `--all-latest`
+- Upgrade-path validation via `--upgrade-path`
+- Real-time patch availability, which often appears here before the authenticated endpoint
+- CI/CD and automation contexts where you do not want to manage tokens
+
+**Authenticated (requires OCM token):**
+- EOL dates and lifecycle metadata
+- ROSA and HCP eligibility checks
+- Marketplace availability and deployment flags
+- Full version inventory with filtering and pagination
+
 ## API Endpoints
 
 | Endpoint | Auth | Use Case |
@@ -153,6 +167,47 @@ All modes accept `--json` for machine-parseable output and `--arch` to specify a
 | Channel Query | `--channel CH` | No | List/latest versions in a specific channel |
 | Authenticated | `--token TOK` | Yes | Detailed metadata, filters for ROSA/HCP/EOL |
 
+### Output Formats
+
+All modes support `--json` for machine-readable output.
+
+```bash
+# Discover active minors as JSON
+python3 scripts/query_versions.py --discover --json
+
+# Parse upgrade-path output with jq
+python3 scripts/query_versions.py --upgrade-path 4.15.10 --json | jq '.'
+```
+
+### Pagination (Authenticated Endpoint Only)
+
+When using `--token`, the authenticated endpoint returns paginated results with a maximum `--size` of 100.
+
+```bash
+# First page (default)
+python3 scripts/query_versions.py --token "$OCM_TOKEN" --enabled
+
+# Explicit page and size
+python3 scripts/query_versions.py --token "$OCM_TOKEN" --enabled --page 2 --size 50
+```
+
+Only authenticated queries use `--page` and `--size`. Discovery, channel queries, and upgrade-path mode return complete results.
+
+### Retry Controls
+
+Use global retry flags to tune resilience behavior per run:
+
+```bash
+# Increase retries for flaky networks
+python3 scripts/query_versions.py --discover --retry-count 5 --retry-base-delay 0.25
+
+# Disable retries for fast-fail automation
+python3 scripts/query_versions.py --channel stable-4.18 --latest --retry-count 0
+```
+
+- `--retry-count` controls transient retry attempts (default: `3`)
+- `--retry-base-delay` controls exponential backoff base in seconds (default: `0.5`)
+
 ### Range Controls (for discover / all-latest)
 
 | Flag | Default | Description |
@@ -162,6 +217,12 @@ All modes accept `--json` for machine-parseable output and `--arch` to specify a
 | `--ceiling` | `99` | Highest minor to probe (auto-stops after 3 empty) |
 | `--channel-type` | `stable` | Channel type to probe (`stable`, `fast`, `candidate`, `eus`) |
 
+Validation rules:
+- `--channel-type` must be a single value for `--discover` and `--all-latest`
+- `--floor` must be `0` or greater
+- `--ceiling` must be greater than or equal to `--floor`
+- `--major` must be between `1` and `20`
+
 ### Upgrade Path Controls
 
 | Flag | Default | Description |
@@ -169,13 +230,71 @@ All modes accept `--json` for machine-parseable output and `--arch` to specify a
 | `--channel-type` | `stable` | Comma-separated channel types to check (e.g., `stable,eus`) |
 | `--arch` | `amd64` | Architecture |
 
+### Multi-Architecture Support
+
+Not every OCP minor is published for every architecture. Use discovery first if you are checking `arm64`, `ppc64le`, `s390x`, or `multi`.
+
+```bash
+# Find the latest patch for every active ppc64le minor
+python3 scripts/query_versions.py --all-latest --arch ppc64le
+
+# Inspect one channel on ARM64
+python3 scripts/query_versions.py --channel stable-{MAJOR}.{MINOR} --arch arm64
+```
+
+`multi` is valid but usually less useful for operator workflows than a concrete architecture.
+
 ## Error Handling
 
 | HTTP Code | Meaning |
 |-----------|---------|
 | 401 | Invalid or expired token (clusters_mgmt only) |
 | 404 | Channel or version not found (expected during discovery probing) |
-| 429 | Rate limited — back off and retry |
+| 429 | Rate limited — script retries with bounded exponential backoff |
+
+## Troubleshooting & Common Issues
+
+### No versions found for a channel
+
+- Cause: the channel does not exist yet or that architecture has no payloads for it
+- Fix: run `--discover` or `--all-latest` first, then plug the discovered minor into `--channel`
+
+### Discovery stops earlier than expected
+
+- The script stops after 3 consecutive empty channels to avoid probing the entire ceiling range
+- Connection failures do not count toward that empty-channel cutoff
+- If you expect higher minors, raise `--ceiling` explicitly
+
+### Upgrade path returns no targets
+
+- Cause: there is no direct one-hop upgrade edge from that version in the channels you checked
+- Fix: try `--channel-type stable,eus` or inspect intermediate versions in the same minor
+
+### Invalid argument errors
+
+- `--channel` must match `{type}-{major}.{minor}` such as `stable-4.18`
+- `--size` must stay between `1` and `100`
+- `--page` must be `1` or greater
+- `--channel-type` must be one of `stable`, `fast`, `candidate`, `eus`
+- `--retry-count` must be `0` or greater
+- `--retry-base-delay` must be greater than `0`
+
+### Token rejected with 401
+
+- Cause: token expired or copied incorrectly
+- Fix: generate a fresh token from https://console.redhat.com/openshift/token
+- Note: the script does not auto-refresh tokens
+
+### Rate limiting and transient network failures
+
+- The script retries bounded transient failures automatically (`429`, `5xx`, and URL connection errors)
+- Retry behavior uses short exponential backoff and then returns a clear error if all attempts fail
+- Use `--json` in automation so retries stay transparent to downstream parsing
+
+### Public and authenticated endpoints disagree
+
+- The public graph can show newly published payloads before `clusters_mgmt` picks up the same version metadata
+- Use the public endpoint for immediate availability questions and the authenticated endpoint for lifecycle and ROSA/HCP metadata
 
 ## Workflow Guidance for Claude
 
@@ -191,4 +310,4 @@ Always run `--discover` or `--all-latest` first when the user's question is broa
 
 ## References
 
-See `references/api_reference.md` for detailed API schema, search query syntax, and authentication details.
+See `references/api_reference.md` for detailed API schema, pagination details, search query syntax, and authentication details.
