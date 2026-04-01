@@ -4,6 +4,30 @@ A collection of reusable skills for AI coding agents. Each skill is a self-conta
 
 ## Available Skills
 
+### [OpenShift Cluster Health Check](openshift-cluster-health-check/)
+
+Platform-aware OpenShift cluster health diagnostics for control plane, operators, nodes, MCPs, and key platform subsystems across bare metal, virtualized, cloud, and SNO environments. Emphasizes read-only investigation and evidence-based severity classification.
+
+**Key capabilities:**
+
+- Performs structured health checks across cluster version, operators, nodes, MCPs, etcd, authentication, ingress, DNS, networking, storage, monitoring, registry, console, and certificates
+- Detects platform topology and infrastructure type (for example BareMetal, VSphere, AWS, Azure, GCP, SNO) and adapts checks accordingly
+- Classifies findings into **Healthy**, **Warning**, and **Critical** with explicit blast-radius and impact guidance
+- Distinguishes quota/app issues from platform-level failures for pending/crashing pods to avoid false escalation
+- Produces actionable output with executive summary, evidence, priority actions, and uncertainty notes
+
+### [OpenShift Versions](openshift-versions/)
+
+Version-discovery and upgrade-path skill for OpenShift releases using Red Hat APIs. Supports unauthenticated public upgrade graph queries and authenticated metadata queries for detailed lifecycle and managed-service availability information.
+
+**Key capabilities:**
+
+- Discovers currently active OpenShift minor and latest patch versions dynamically (without hardcoded release assumptions)
+- Queries channel-specific release availability (`stable`, `fast`, `candidate`, `eus`) across architectures
+- Computes valid one-hop upgrade targets from a given current version using the public upgrade graph
+- Supports authenticated `clusters_mgmt` lookups for ROSA/HCP enablement flags and end-of-life metadata
+- Provides script-based and raw API workflows for both human-readable and JSON-parseable outputs
+
 ### [Production Resilience Reviewer](production-resilience-reviewer/)
 
 Senior-level production resilience and failure-mode review for code, services, and system designs. Acts as a hybrid Staff SRE, Principal Engineer, and Incident Commander — finding every way code can fail in production and providing actionable fixes with priority rankings.
