@@ -68,38 +68,16 @@ If any of these are missing, detect what you can from the cluster and state assu
 
 ## Health model
 
-Classify every finding into one of three levels:
+Classify every finding as **Healthy**, **Warning**, or **Critical**. See [references/severity-calibration.md](references/severity-calibration.md) for full tier definitions, SNO and compact-3 topology overrides, and upstream failure-chaining rules.
 
 ### Healthy
-- No control-plane blockers.
-- Cluster operators available, not degraded.
-- Nodes ready.
-- MCPs updated, not degraded.
-- No etcd, API, auth, or ingress instability.
+All cluster operators available and not degraded, nodes ready, MCPs updated, etcd nominal, API/auth/ingress stable, no expired certificates.
 
 ### Warning
-- Single-node or localized issue with limited blast radius.
-- Non-critical operator degradation with working control plane.
-- Worker node readiness or pressure issues without broader control-plane impact.
-- MCP updating during an expected change window.
-- Certificate expiring in 7–30 days.
-- Non-critical storage or registry warnings.
-- Pending pods due to quota exhaustion in user namespaces (informational, not platform risk).
-- Isolated CrashLoopBackOff in user namespaces without node-level correlation.
-- A few workloads blocked by insufficient node capacity.
+Localised or low-blast-radius issues: single worker node problems, non-critical operator degraded, MCP updating in a planned window, certificate expiring in 7–30 days, quota-blocked pods in user namespaces.
 
 ### Critical
-- etcd health concerns (member down, DB size, leader elections).
-- API, authentication, ingress, kube-apiserver, scheduler, controller-manager, or machine-config failures with cluster-wide impact.
-- Control-plane node readiness problems.
-- Multiple degraded core operators.
-- Cluster version failing or blocked.
-- Certificate expired or expiring within 7 days.
-- Storage backend unreachable or degraded.
-- Authentication completely broken (no logins possible).
-- CrashLoopBackOff or Pending pods in `openshift-*` namespaces affecting platform components.
-- Cluster-wide scheduling failure due to total node capacity exhaustion.
-- Widespread OOMKilled across multiple namespaces or nodes indicating systemic memory pressure.
+Any of: etcd quorum at risk, API/auth/ingress cluster-wide failure, control-plane node NotReady, multiple core operators degraded, certificate expired or expiring within 7 days, storage backend unreachable, widespread OOMKilled.
 
 ---
 
@@ -133,7 +111,6 @@ Record: platform type, topology (HA/SNO/compact-3), control-plane count, worker 
 
 ```bash
 oc get clusterversion
-oc get clusterversion -o jsonpath='{.items[0].status.conditions[*]}' | jq .
 oc get clusteroperators
 oc get clusteroperators -o json | jq '.items[] | select(.status.conditions[] | select(.type=="Degraded" and .status=="True")) | .metadata.name'
 oc get clusteroperators -o json | jq '.items[] | select(.status.conditions[] | select(.type=="Available" and .status=="False")) | .metadata.name'
@@ -146,13 +123,10 @@ For any degraded or unavailable operator:
 oc describe clusteroperator <name>
 ```
 
-Key things:
-
 - `Available=False` → that capability is down.
 - `Degraded=True` → partial failure, may still function.
 - `Progressing=True` for extended time → stuck rollout.
-- Check the `.status.conditions[].message` for root cause hints.
-- Check `.status.versions` to confirm expected version alignment.
+- Check `.status.conditions[].message` for root cause hints.
 
 ---
 
@@ -170,16 +144,7 @@ oc describe node <node>
 oc get events --field-selector involvedObject.name=<node> --sort-by=.lastTimestamp
 ```
 
-Look for:
-
-- `NotReady` or `SchedulingDisabled` when not expected.
-- `MemoryPressure`, `DiskPressure`, `PIDPressure`.
-- Resource saturation (CPU/memory near 100%).
-- Repeated node events (kernel OOM, kubelet restarts).
-- Taints blocking scheduling.
-- Control-plane nodes are highest priority — a single unhealthy master in a 3-node cluster is dangerous.
-
-For SNO, any node issue is automatically Critical.
+Look for `NotReady`, `SchedulingDisabled`, `MemoryPressure`, `DiskPressure`, `PIDPressure`, or resource saturation. Control-plane nodes are highest priority. On SNO, any node issue is automatically Critical.
 
 ---
 
@@ -189,86 +154,30 @@ For SNO, any node issue is automatically Critical.
 oc get machineconfigpools
 ```
 
-For each pool, check:
-
-- `UPDATED=False` → config not applied yet.
-- `UPDATING=True` outside a planned change → unexpected rollout.
-- `DEGRADED=True` → rollout failed on one or more nodes.
-- `READYMACHINECOUNT` vs `MACHINECOUNT` mismatch.
+- `UPDATED=False` → config not applied. `UPDATING=True` outside a planned change → unexpected rollout. `DEGRADED=True` → rollout failed.
 
 If a pool is degraded:
 
 ```bash
 oc describe machineconfigpool <pool-name>
-oc get pods -n openshift-machine-config-operator
-oc get pods -n openshift-machine-config-operator -l k8s-app=machine-config-daemon -o wide
 oc logs -n openshift-machine-config-operator -l k8s-app=machine-config-daemon --tail=100 --prefix
-```
-
-Check which node is blocking:
-
-```bash
-oc get nodes -o json | jq '.items[] | select(.metadata.annotations["machineconfiguration.openshift.io/state"] != "Done") | {name: .metadata.name, state: .metadata.annotations["machineconfiguration.openshift.io/state"], desired: .metadata.annotations["machineconfiguration.openshift.io/desiredConfig"], current: .metadata.annotations["machineconfiguration.openshift.io/currentConfig"]}'
+oc get nodes -o json | jq '.items[] | select(.metadata.annotations["machineconfiguration.openshift.io/state"] != "Done") | {name: .metadata.name, state: .metadata.annotations["machineconfiguration.openshift.io/state"]}'
 ```
 
 ---
 
 ### Phase 4 — etcd health
 
-etcd is the most critical subsystem. Check it proactively, not just when symptoms appear.
-
-#### 4a — Operator and pod status
+etcd is the most critical subsystem. Check it proactively.
 
 ```bash
 oc describe clusteroperator etcd
 oc get pods -n openshift-etcd -o wide
-oc get pods -n openshift-etcd -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.phase}{"\t"}{.spec.nodeName}{"\n"}{end}'
 ```
 
-Verify: all etcd pods are Running, one per control-plane node, no restarts.
+Verify: all etcd pods Running, one per control-plane node, no unexpected restarts. Alert on DB size > 4 GB (Warning) or > 6 GB (Critical), members down, or leader election churn.
 
-#### 4b — etcd member health
-
-Exec into an etcd pod and check member health:
-
-```bash
-# Identify a running etcd pod
-ETCD_POD=$(oc get pods -n openshift-etcd -l k8s-app=etcd -o jsonpath='{.items[0].metadata.name}')
-
-# Member list
-oc rsh -n openshift-etcd $ETCD_POD etcdctl member list -w table
-
-# Endpoint health
-oc rsh -n openshift-etcd $ETCD_POD etcdctl endpoint health --cluster -w table
-
-# Endpoint status (shows DB size, leader, raft index)
-oc rsh -n openshift-etcd $ETCD_POD etcdctl endpoint status --cluster -w table
-```
-
-#### 4c — What to look for
-
-- All members should report `healthy: true`.
-- DB size should be under 8 GB (warning above 4 GB, critical above 6 GB).
-- Raft term differences between members → leader election churn.
-- One member down in a 3-member cluster → cluster still has quorum but zero fault tolerance.
-- Two members down → quorum lost, cluster is effectively read-only or down. This is Critical.
-- Leader changes in etcd logs indicate instability:
-
-```bash
-oc logs -n openshift-etcd $ETCD_POD --tail=200 | grep -i "leader\|election\|compaction\|took too long\|slow\|overloaded"
-```
-
-#### 4d — etcd performance signals
-
-```bash
-oc logs -n openshift-etcd $ETCD_POD --tail=500 | grep -E "apply request took too long|slow fdatasync|failed to send out heartbeat"
-```
-
-These indicate disk I/O latency — common on virtualized environments with shared storage.
-
-#### 4e — etcd on SNO
-
-On SNO there is exactly one etcd member. Any etcd issue is immediately Critical since there is no quorum redundancy. Verify the single pod is healthy and DB size is reasonable.
+See [references/checklist-etcd.md](references/checklist-etcd.md) for etcdctl member/endpoint commands, DB size thresholds, performance signal patterns, and SNO-specific notes.
 
 ---
 
@@ -277,186 +186,59 @@ On SNO there is exactly one etcd member. Any etcd issue is immediately Critical 
 ```bash
 oc describe clusteroperator authentication
 oc get pods -n openshift-authentication -o wide
-oc get pods -n openshift-authentication-operator -o wide
-```
-
-Check OAuth server health:
-
-```bash
-oc get oauthclient
 oc get pods -n openshift-authentication -l app=oauth-openshift -o wide
-oc logs -n openshift-authentication -l app=oauth-openshift --tail=100
-```
-
-Verify identity providers are configured:
-
-```bash
+oc get route -n openshift-authentication
 oc get oauth cluster -o jsonpath='{.spec.identityProviders[*].name}'
 ```
 
-Test token endpoint accessibility (read-only):
-
-```bash
-oc get route -n openshift-authentication
-```
-
-Signs of trouble:
-
-- `oauth-openshift` pods in CrashLoopBackOff → users cannot log in.
-- `authentication` operator degraded → console login broken, `oc login` fails.
-- Identity provider misconfiguration → users see login errors.
-- Certificate issues on the OAuth route → browser SSL errors at login.
-
-If the `authentication` operator is degraded, also check:
-
-```bash
-oc get events -n openshift-authentication --sort-by=.lastTimestamp
-oc describe clusteroperator authentication
-oc logs -n openshift-authentication-operator deployment/authentication-operator --tail=200
-```
+`oauth-openshift` pods in CrashLoopBackOff → users cannot log in (Critical). `authentication` operator degraded → `oc login` and console broken. See [references/checklist-authentication.md](references/checklist-authentication.md) for OAuth deep-dive and identity provider diagnostics.
 
 ---
 
 ### Phase 6 — Ingress and DNS
 
-#### 6a — Ingress
-
 ```bash
 oc describe clusteroperator ingress
 oc get ingresscontroller -n openshift-ingress-operator
 oc get pods -n openshift-ingress -o wide
-```
-
-For each IngressController:
-
-```bash
 oc describe ingresscontroller default -n openshift-ingress-operator
 ```
 
-Check:
-
-- Router pods Running with expected replica count.
-- `Available=True` on the IngressController.
-- No router pods stuck in `Pending` (scheduling/resource issue).
-- Router pods distributed across nodes (anti-affinity).
-
-If on bare metal, ingress often depends on external load balancer or keepalived/MetalLB:
-
-```bash
-oc get pods -n openshift-ingress -o wide
-# Check if VIPs are reachable (user must confirm externally)
-```
-
-#### 6b — DNS
+Verify router pods Running with expected replica count and distributed across nodes. On bare metal, confirm VIPs are reachable externally.
 
 ```bash
 oc describe clusteroperator dns
-oc get pods -n openshift-dns -o wide
 oc get pods -n openshift-dns -l dns.operator.openshift.io/daemonset-dns=default
-```
-
-Check:
-
-- DNS daemonset pods running on every node (compare count to node count).
-- DNS operator not degraded.
-
-Quick DNS validation from within a pod:
-
-```bash
 oc debug node/<any-node> -- chroot /host nslookup api-int.$(oc get dns cluster -o jsonpath='{.spec.baseDomain}')
 ```
+
+DNS daemonset pods must be Running on every node.
 
 ---
 
 ### Phase 7 — Networking (OVN-Kubernetes / OpenShiftSDN)
 
-Determine network type:
-
 ```bash
 oc get network.config cluster -o jsonpath='{.status.networkType}'
-```
-
-#### OVN-Kubernetes
-
-```bash
 oc describe clusteroperator network
 oc get pods -n openshift-ovn-kubernetes -o wide
 oc get pods -n openshift-ovn-kubernetes | grep -v Running
 ```
 
-Check:
-
-- `ovnkube-node` pods running on every node.
-- `ovnkube-control-plane` pods running on control-plane nodes.
-- No CrashLoopBackOff or excessive restarts.
-- OVN northbound/southbound DB pods healthy.
-
-```bash
-oc logs -n openshift-ovn-kubernetes -l app=ovnkube-node --tail=50 --prefix 2>&1 | grep -i "error\|failed\|timeout"
-```
-
-#### OpenShiftSDN (legacy)
-
-```bash
-oc get pods -n openshift-sdn -o wide
-oc get pods -n openshift-sdn | grep -v Running
-```
-
-#### Network diagnostics
-
-```bash
-oc get network.operator cluster -o jsonpath='{.status.conditions}' | jq .
-```
+`ovnkube-node` must be Running on every node. `ovnkube-control-plane` must be Running on control-plane nodes. See [references/checklist-networking.md](references/checklist-networking.md) for OVN database health, SDN checks, connectivity tests, and common failure patterns.
 
 ---
 
 ### Phase 8 — Storage
 
-#### 8a — Storage operator and CSI
-
 ```bash
 oc describe clusteroperator storage
-oc get pods -n openshift-cluster-csi-drivers -o wide
-oc get csidrivers
 oc get storageclasses
-```
-
-#### 8b — PV/PVC health
-
-```bash
-oc get pv --sort-by=.status.phase | head -30
 oc get pv -o json | jq '.items[] | select(.status.phase != "Bound" and .status.phase != "Available") | {name: .metadata.name, phase: .status.phase}'
-oc get pvc -A -o json | jq '.items[] | select(.status.phase == "Pending") | {namespace: .metadata.namespace, name: .metadata.name, storageClass: .spec.storageClassName}'
+oc get pvc -A -o json | jq '.items[] | select(.status.phase == "Pending") | {namespace: .metadata.namespace, name: .metadata.name}'
 ```
 
-Check for:
-
-- PVs in `Failed` or `Released` state.
-- PVCs stuck in `Pending` — indicates provisioner issues, quota, or storage backend problems.
-- Storage class marked as default exists.
-
-#### 8c — Platform-specific storage
-
-**vSphere:**
-
-```bash
-oc get pods -n openshift-cluster-csi-drivers -l app=vsphere-csi-driver-controller
-oc logs -n openshift-cluster-csi-drivers -l app=vsphere-csi-driver-controller --tail=100 --prefix
-```
-
-**AWS (EBS CSI):**
-
-```bash
-oc get pods -n openshift-cluster-csi-drivers -l app=aws-ebs-csi-driver-controller
-```
-
-**Bare metal (often uses local-storage or ODF/OCS):**
-
-```bash
-oc get pods -n openshift-local-storage 2>/dev/null
-oc get pods -n openshift-storage 2>/dev/null
-oc get storagecluster -n openshift-storage 2>/dev/null
-```
+PVs in `Failed`/`Released` or PVCs stuck in `Pending` indicate provisioner or backend problems. See [references/checklist-storage.md](references/checklist-storage.md) for platform-specific CSI driver checks, ODF/Ceph health, and volume attachment triage.
 
 ---
 
@@ -478,8 +260,6 @@ Key components to verify:
 Check for firing alerts:
 
 ```bash
-oc get prometheusrules -n openshift-monitoring
-# To see currently firing alerts (requires port-forward or route):
 oc -n openshift-monitoring exec -c prometheus prometheus-k8s-0 -- curl -s 'http://localhost:9090/api/v1/alerts' 2>/dev/null | jq '.data.alerts[] | select(.state=="firing") | {alertname: .labels.alertname, severity: .labels.severity, message: .annotations.message}' 2>/dev/null | head -50
 ```
 
@@ -524,150 +304,31 @@ Console depends on authentication and ingress. If either is degraded, console wi
 
 ### Phase 12 — Certificate health
 
-Check for expiring certificates:
-
 ```bash
-# Check kube-apiserver serving certs
-oc get secret -n openshift-kube-apiserver -o json | jq -r '.items[] | select(.type=="kubernetes.io/tls") | .metadata.name'
-
-# Check router/ingress certs
-oc get secret -n openshift-ingress -o json | jq -r '.items[] | select(.type=="kubernetes.io/tls") | .metadata.name'
-
-# Check certificate signing requests
-oc get csr
-oc get csr -o json | jq '.items[] | select(.status.conditions == null or (.status.conditions | length == 0)) | {name: .metadata.name, requestor: .spec.username, created: .metadata.creationTimestamp}'
-```
-
-Check for pending (unapproved) CSRs — common after node restarts or reinstalls:
-
-```bash
+# Pending (unapproved) CSRs — common after node restarts
 oc get csr | grep -i pending
-```
+oc get csr -o json | jq '.items[] | select(.status.conditions == null or (.status.conditions | length == 0)) | {name: .metadata.name, requestor: .spec.username}'
 
-Check API server certificate expiry:
-
-```bash
+# API server signer expiry
 oc -n openshift-kube-apiserver-operator get secret kube-apiserver-to-kubelet-signer -o jsonpath='{.metadata.annotations.auth\.openshift\.io/certificate-not-after}' 2>/dev/null
 ```
 
-Signs of trouble:
-
-- Unapproved CSRs → nodes cannot join or communicate properly.
-- Expired certs → API, auth, or ingress failures.
-- Certificate renewal loops in operator logs.
+Unapproved CSRs prevent nodes from joining or communicating. Expired certs cause API, auth, or ingress failures. Certificate renewal loops appear in operator logs.
 
 ---
 
 ### Phase 13 — Platform-specific checks
 
-Based on the platform detected in Phase 0, run the applicable section.
-
-#### 13a — Bare metal (IPI with Metal3/Ironic)
-
-```bash
-# BareMetalHost resources
-oc get baremetalhosts -n openshift-machine-api
-oc get bmh -n openshift-machine-api -o wide
-
-# Check for provisioning failures
-oc get bmh -n openshift-machine-api -o json | jq '.items[] | select(.status.provisioning.state != "provisioned" and .status.provisioning.state != "externally provisioned") | {name: .metadata.name, state: .status.provisioning.state, errorMessage: .status.errorMessage}'
-
-# Metal3 and Ironic pods
-oc get pods -n openshift-machine-api -l baremetal.openshift.io/cluster-baremetal-operator=metal3
-oc get pods -n openshift-machine-api | grep -E "metal3|ironic"
-
-# Provisioning network / config
-oc get provisioning cluster -o yaml
-
-# Machine resources
-oc get machines -n openshift-machine-api -o wide
-oc get machinesets -n openshift-machine-api
-
-# BMO (Bare Metal Operator) logs
-oc logs -n openshift-machine-api deployment/metal3 -c metal3-baremetal-operator --tail=100
-oc logs -n openshift-machine-api deployment/metal3 -c metal3-ironic-conductor --tail=100
-```
-
-Look for:
-
-- BMH stuck in `inspecting`, `preparing`, `registering` → Ironic/IPMI issues.
-- BMH in `error` state → check `errorMessage` and `errorType`.
-- Ironic pods not running → no provisioning or deprovisioning possible.
-- IPMI/BMC connectivity issues in logs.
-- Provisioning network misconfiguration.
-- Machine objects not matching to nodes.
-
-#### 13b — Bare metal (UPI / platform=None)
-
-UPI bare metal typically has no Machine API integration. Check:
-
-```bash
-# Machines may not exist
-oc get machines -n openshift-machine-api 2>/dev/null
-# Nodes are managed manually
-oc get nodes -o wide
-# CSRs may need manual approval after node restarts
-oc get csr | grep -i pending
-```
-
-#### 13c — vSphere
-
-```bash
-# vSphere cloud provider and machine API
-oc get pods -n openshift-cloud-controller-manager -o wide 2>/dev/null
-oc get pods -n openshift-machine-api -o wide
-
-# Machine resources
-oc get machines -n openshift-machine-api -o wide
-oc get machinesets -n openshift-machine-api
-
-# Machines stuck provisioning
-oc get machines -n openshift-machine-api -o json | jq '.items[] | select(.status.phase != "Running") | {name: .metadata.name, phase: .status.phase, errorReason: .status.errorReason, errorMessage: .status.errorMessage}'
-
-# vSphere CSI
-oc get pods -n openshift-cluster-csi-drivers -l app=vsphere-csi-driver-controller -o wide
-oc logs -n openshift-cluster-csi-drivers -l app=vsphere-csi-driver-controller --tail=100 --prefix 2>&1 | grep -i "error\|failed\|timeout"
-
-# vSphere connection config (does not reveal passwords)
-oc get cm -n openshift-config cloud-provider-config -o yaml 2>/dev/null
-```
-
-Look for:
-
-- Machine objects stuck in `Provisioning` or `Failed` → vCenter connectivity or resource issues.
-- vSphere CSI controller errors → storage provisioning broken.
-- Cloud controller manager not running → node addresses, zones, or load balancers not managed.
-- vCenter certificate issues in logs.
-
-#### 13d — AWS
-
-```bash
-oc get pods -n openshift-cloud-controller-manager -o wide
-oc get machines -n openshift-machine-api -o wide
-oc get machinesets -n openshift-machine-api
-
-# Machines not running
-oc get machines -n openshift-machine-api -o json | jq '.items[] | select(.status.phase != "Running") | {name: .metadata.name, phase: .status.phase}'
-
-# EBS CSI
-oc get pods -n openshift-cluster-csi-drivers -l app=aws-ebs-csi-driver-controller
-
-# AWS Load Balancers / ingress
-oc get svc -A -o json | jq '.items[] | select(.spec.type=="LoadBalancer") | {namespace: .metadata.namespace, name: .metadata.name, lb: .status.loadBalancer.ingress}'
-
-# Cloud credential operator
-oc describe clusteroperator cloud-credential
-```
-
-#### 13e — Azure / GCP
-
-Similar to AWS pattern — check cloud controller manager, machine API, CSI drivers, and cloud-credential operator. Adapt namespace and label selectors for the specific platform.
+Run platform-appropriate commands based on the platform detected in Phase 0. Universal checks:
 
 ```bash
 oc describe clusteroperator cloud-credential
-oc get pods -n openshift-cloud-controller-manager -o wide
+oc get machinesets -n openshift-machine-api
 oc get machines -n openshift-machine-api -o wide
+oc get machines -n openshift-machine-api -o json | jq '.items[] | select(.status.phase != "Running") | {name: .metadata.name, phase: .status.phase, errorMessage: .status.errorMessage}'
 ```
+
+See [references/checklist-platform-specific.md](references/checklist-platform-specific.md) for bare-metal IPI/UPI (BMH/Ironic), vSphere CSI, AWS ELB, and Azure/GCP checks.
 
 ---
 
@@ -694,132 +355,23 @@ oc logs <pod> -n <namespace> --tail=100
 
 ### Phase 15 — Pending and crashing pod analysis
 
-Scan cluster-wide for pods that are not running normally, then classify each failure as **quota/limits**, **platform/infrastructure**, or **application-level**.
-
-#### 15a — Identify unhealthy pods
+Identify unhealthy pods, then classify each failure as **quota/limits**, **platform/infrastructure**, or **application-level**.
 
 ```bash
-# All non-running, non-completed pods across the cluster
+# All non-running pods
 oc get pods -A --field-selector=status.phase!=Running,status.phase!=Succeeded --no-headers 2>/dev/null | grep -v Completed
 
-# Specifically Pending pods
+# Pending pods with scheduling reason
 oc get pods -A --field-selector=status.phase=Pending -o json | jq -r '.items[] | "\(.metadata.namespace)/\(.metadata.name)\t\(.status.conditions[]? | select(.type=="PodScheduled") | .reason // "unknown")\t\(.status.conditions[]? | select(.type=="PodScheduled") | .message // "no message")"'
 
-# CrashLoopBackOff and Error pods
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .state.waiting.reason == "CrashLoopBackOff" or .state.waiting.reason == "CreateContainerConfigError" or .state.waiting.reason == "ImagePullBackOff" or .state.waiting.reason == "ErrImagePull" or .state.waiting.reason == "CreateContainerError") | "\(.metadata.namespace)/\(.metadata.name)\t\(.status.containerStatuses[] | select(.state.waiting) | .state.waiting.reason)\t\(.status.containerStatuses[] | select(.state.waiting) | .state.waiting.message // "no message")"'
+# CrashLoopBackOff and ImagePullBackOff pods
+oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .state.waiting.reason == "CrashLoopBackOff" or .state.waiting.reason == "ImagePullBackOff") | "\(.metadata.namespace)/\(.metadata.name)\t\(.status.containerStatuses[] | select(.state.waiting) | .state.waiting.reason)"'
 
-# High restart-count pods (possible crash loops that recovered temporarily)
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .restartCount > 10) | "\(.metadata.namespace)/\(.metadata.name)\trestarts=\(.status.containerStatuses[] | select(.restartCount > 10) | .restartCount)"'
-
-# OOMKilled containers (recent)
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .lastState.terminated.reason == "OOMKilled") | "\(.metadata.namespace)/\(.metadata.name)\tOOMKilled\texitCode=\(.status.containerStatuses[] | select(.lastState.terminated.reason == "OOMKilled") | .lastState.terminated.exitCode)"'
+# OOMKilled (recent)
+oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .lastState.terminated.reason == "OOMKilled") | "\(.metadata.namespace)/\(.metadata.name)\tOOMKilled"'
 ```
 
-#### 15b — Classify Pending pods: quota vs platform
-
-For each Pending pod, inspect the scheduling failure reason via `oc describe pod`. The reason determines root cause category.
-
-**Quota / resource-limits causes** — these are namespace-scoped or user-config issues, not platform failures:
-
-```bash
-# Check ResourceQuota usage across namespaces with Pending pods
-PENDING_NS=$(oc get pods -A --field-selector=status.phase=Pending -o jsonpath='{range .items[*]}{.metadata.namespace}{"\n"}{end}' | sort -u)
-for ns in $PENDING_NS; do
-  echo "=== $ns ==="
-  oc get resourcequota -n $ns 2>/dev/null || echo "  No ResourceQuota"
-  oc get limitrange -n $ns 2>/dev/null || echo "  No LimitRange"
-done
-```
-
-Indicators that a Pending pod is quota-blocked:
-
-- Event message contains `exceeded quota` or `forbidden: exceeded quota`.
-- Event message contains `must specify limits` or `must specify requests` (LimitRange enforcement).
-- Pod requests exceed ResourceQuota `requests.cpu`, `requests.memory`, `limits.cpu`, `limits.memory`, `pods`, or `count/` quotas.
-- `oc describe pod` shows `FailedScheduling` with `didn't match pod's node affinity/selector` when the pod is pinned to nodes that don't exist or have taints — this is user config, not platform.
-
-To confirm quota exhaustion:
-
-```bash
-oc describe pod <pod> -n <ns> | grep -A5 "Events:"
-# Look for: "exceeded quota", "forbidden", "insufficient quota"
-
-oc get resourcequota -n <ns> -o json | jq '.items[] | {name: .metadata.name, status: .status}'
-# Compare .status.used vs .status.hard — if used >= hard on any resource, quota is exhausted
-```
-
-**Platform / infrastructure causes** — these indicate real cluster-level problems:
-
-```bash
-# Describe a Pending pod to get the scheduler reason
-oc describe pod <pod> -n <ns> | tail -20
-```
-
-Indicators that a Pending pod is platform-blocked:
-
-- `Insufficient cpu` or `Insufficient memory` at the **node level** (not quota) → cluster lacks total schedulable capacity.
-- `no nodes available to schedule pods` → all nodes are full, tainted, or cordoned.
-- `0/N nodes are available: N node(s) had taint {key=value}, that the pod didn't tolerate` → node taints blocking scheduling, but the cause may be platform-driven (e.g., node NotReady applies `node.kubernetes.io/not-ready` taint automatically).
-- `didn't find available persistent volumes to bind` or `unbound immediate PersistentVolumeClaims` → storage provisioner failure or missing PVs. Cross-reference Phase 8 (Storage).
-- `FailedAttachVolume` or `FailedMount` → storage backend or CSI driver issue.
-- `ErrImagePull` / `ImagePullBackOff` with registry connectivity errors → platform networking or registry issue. But if only one image is affected, it may be user-config (wrong image name/tag).
-- `NetworkNotReady` → CNI plugin not initialized on the node.
-- `Back-off restarting failed container` (CrashLoopBackOff) in `openshift-*` namespaces → platform-level component failure.
-
-#### 15c — Classify CrashLoopBackOff: platform vs application
-
-Differentiation logic:
-
-| Signal | Classification | Reasoning |
-|---|---|---|
-| Crash in `openshift-*` namespace | **Platform** | Core operator or control-plane component failing |
-| Crash in user namespace with OOMKilled | **Check both** | May be app under-requesting memory OR node under real pressure |
-| Crash in user namespace with exit code 1/137 and app-specific logs | **Application** | App bug, misconfiguration, or dependency issue |
-| Crash with `CreateContainerConfigError` | **Check both** | Often missing Secret/ConfigMap (user-config), but could be RBAC or platform issue |
-| Crash with `ImagePullBackOff` affecting many pods across namespaces | **Platform** | Registry, DNS, or network issue |
-| Crash with `ImagePullBackOff` affecting one pod/image | **Application** | Wrong image reference, missing credentials |
-| Multiple unrelated pods crashing on the same node | **Platform** | Node instability, disk, or kernel issue — correlate with Phase 2 |
-| OOMKilled across many pods on the same node | **Platform** | Node memory exhaustion, possible memory leak in kubelet or system process |
-
-For pods crashing in platform namespaces:
-
-```bash
-oc logs <pod> -n <namespace> --previous --tail=100
-oc describe pod <pod> -n <namespace>
-```
-
-#### 15d — Aggregate view
-
-Build a summary count to understand the scale:
-
-```bash
-echo "=== Pending pods by namespace ==="
-oc get pods -A --field-selector=status.phase=Pending --no-headers 2>/dev/null | awk '{print $1}' | sort | uniq -c | sort -rn
-
-echo "=== CrashLoopBackOff pods by namespace ==="
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .state.waiting.reason == "CrashLoopBackOff") | .metadata.namespace' | sort | uniq -c | sort -rn
-
-echo "=== ImagePullBackOff pods by namespace ==="
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .state.waiting.reason == "ImagePullBackOff" or .state.waiting.reason == "ErrImagePull") | .metadata.namespace' | sort | uniq -c | sort -rn
-
-echo "=== OOMKilled (recent) by namespace ==="
-oc get pods -A -o json | jq -r '.items[] | select(.status.containerStatuses[]? | .lastState.terminated.reason == "OOMKilled") | .metadata.namespace' | sort | uniq -c | sort -rn
-
-echo "=== Pending pods by node-scheduling reason ==="
-oc get events -A --field-selector reason=FailedScheduling -o json | jq -r '.items[].message' | sed 's/^[0-9]* //' | sort | uniq -c | sort -rn | head -10
-```
-
-#### 15e — Decision matrix
-
-Use this to set severity:
-
-- **Pending/crashing in `openshift-*` namespaces** → always investigate, usually Warning or Critical depending on which component.
-- **Quota-blocked pods in user namespaces only** → typically not a cluster health issue. Report as informational. Recommend the namespace owner adjust quota or pod resource requests.
-- **Platform-blocked Pending pods (insufficient node capacity)** → Warning if only a few workloads affected, Critical if cluster is saturated and control-plane pods cannot schedule.
-- **Widespread CrashLoopBackOff across multiple namespaces** → investigate common cause (node, storage, network, image registry). Likely platform issue.
-- **CrashLoopBackOff isolated to one namespace/app** → application issue. Note it but do not elevate cluster health status.
-- **OOMKilled in platform namespaces** → Warning or Critical. Platform components running out of memory can cascade.
-- **OOMKilled in user namespaces only** → informational unless it correlates with node memory pressure (Phase 2).
+See [references/checklist-pods-analysis.md](references/checklist-pods-analysis.md) for quota vs platform classification logic, CrashLoopBackOff triage table, aggregate view commands, and the severity decision matrix.
 
 ---
 
@@ -862,26 +414,7 @@ Prioritize:
 
 ## Output contract
 
-Always return:
-
-### Overall status
-
-One of: **Healthy**, **Warning**, **Critical**
-
-### Executive summary
-
-2-4 sentences covering:
-
-- What is healthy.
-- What is unhealthy.
-- Likely blast radius.
-- Whether immediate action is needed.
-
-### Platform context
-
-One line: platform type, topology, OCP version, node count breakdown.
-
-### Findings table
+Always return: overall status (**Healthy** / **Warning** / **Critical**), a 2-4 sentence executive summary, a one-line platform context, the findings table below, up to 5 priority actions, and an uncertainty block.
 
 | Area | Status | Evidence | Impact | Next check |
 |---|---|---|---|---|
@@ -902,39 +435,7 @@ One line: platform type, topology, OCP version, node count breakdown.
 | Pod health (pending/crash) | ... | ... | quota vs platform classification | ... |
 | Platform-specific | ... | ... | ... | ... |
 
-Omit rows that are not applicable (e.g., skip bare-metal row for AWS clusters).
-
-### Priority actions
-
-Up to 5 actions, ordered by impact:
-
-1. Highest-value diagnostic or immediate mitigation.
-2. Containment step if risk is high.
-3. Deeper subsystem follow-up.
-4. Medium-term fix.
-5. Preventive recommendation.
-
-### Uncertainty
-
-Explicitly note:
-
-- Missing permissions or RBAC limitations.
-- Missing namespaces or CRDs (e.g., Metal3 not present).
-- Version-specific command differences.
-- Checks that could not complete.
-- Inferences vs. verified facts.
-
----
-
-## Response style
-
-- Be concise, technical, and evidence-driven.
-- Do not dump raw command output unless the user asks.
-- Convert raw signals into risk language: Healthy, Warning, Critical.
-- Distinguish verified facts from hypotheses — label inferences.
-- Avoid recommending disruptive remediation until diagnosis is clear.
-- For bare-metal clusters, always surface BMH and Ironic status since reprovisioning depends on them.
-- For virtual/cloud clusters, always surface Machine API health since auto-healing depends on it.
+Omit rows not applicable to the detected platform. See [references/output-contract.md](references/output-contract.md) for full section schemas, response style rules, and an example findings row.
 
 ---
 
