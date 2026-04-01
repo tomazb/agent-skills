@@ -44,7 +44,7 @@ Senior-level production resilience and failure-mode review for code, services, a
 
 Each skill follows a consistent package layout:
 
-```
+```text
 skill-name/
 ├── SKILL.md          # Skill definition (frontmatter + instructions)
 ├── package.json      # Name, version, description, keywords
@@ -62,6 +62,24 @@ Skills include validation tooling to check package integrity:
 cd production-resilience-reviewer
 bash tools/validate_skill_package.sh
 ```
+
+For a lightweight repo-wide validation pass across all skill directories:
+
+```bash
+python3 scripts/validate_skill_collection.py
+```
+
+## Packaging
+
+Generated `.skill` bundles are treated as build artifacts, not source files.
+Build them locally into `dist/` with:
+
+```bash
+python3 scripts/build_skill_artifacts.py
+```
+
+CI also builds these bundles and publishes them as workflow artifacts. Tagged
+`v*` releases attach the generated `.skill` files to the GitHub release.
 
 ## License
 

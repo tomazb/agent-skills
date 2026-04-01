@@ -1,0 +1,63 @@
+name: Build Skill Artifacts
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  validate-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate all skill directories
+        run: python3 scripts/validate_skill_collection.py
+
+      - name: Validate production resilience reviewer package
+        run: python3 production-resilience-reviewer/tools/validate_skill_package.py
+
+      - name: Build .skill artifacts
+        run: python3 scripts/build_skill_artifacts.py
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: skill-artifacts
+          path: dist/*.skill
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: validate-and-build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate all skill directories
+        run: python3 scripts/validate_skill_collection.py
+
+      - name: Build .skill artifacts
+        run: python3 scripts/build_skill_artifacts.py
+
+      - name: Publish release artifacts
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.skill
