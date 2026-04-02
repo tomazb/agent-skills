@@ -4,6 +4,22 @@ A collection of reusable skills for AI coding agents. Each skill is a self-conta
 
 ## Available Skills
 
+### [Code Simplifier](code-simplifier/)
+
+Behavior-preserving code simplification and readability-focused refactoring for
+day-to-day coding work. Helps turn dense, nested, or inconsistent code into
+clearer local code without broadening scope or inventing unnecessary abstractions.
+
+**Key capabilities:**
+
+- Supports both review-only and direct-edit workflows for cleanup tasks
+- Prioritizes high-value readability wins such as flattening nesting, removing dead
+  code, clarifying naming, and reducing needless indirection
+- Loads language-specific guidance for TypeScript/JavaScript, Python, Go, Rust, and
+  shell scripting from `references/`
+- Treats behavior preservation, scope discipline, and validation status as explicit
+  parts of the skill contract
+
 ### [OpenShift Cluster Health Check](openshift-cluster-health-check/)
 
 Platform-aware OpenShift cluster health diagnostics for control plane, operators, nodes, MCPs, and key platform subsystems across bare metal, virtualized, cloud, and SNO environments. Emphasizes read-only investigation and evidence-based severity classification.
