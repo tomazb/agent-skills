@@ -9,6 +9,7 @@ FENCE_RE = re.compile(r"^\s*```")
 
 EXPECTED_REFERENCES = [
     "references/go.md",
+    "references/php.md",
     "references/python.md",
     "references/rust.md",
     "references/shell.md",

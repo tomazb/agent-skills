@@ -1,12 +1,11 @@
 ---
 name: code-simplifier
 description: >
-  Simplifies, refactors, and refines code for clarity, consistency, and
-  maintainability while preserving exact functionality. Use this skill whenever
-  the user asks to simplify, clean up, refactor, tidy, reduce complexity,
-  improve readability, or review code quality in any programming language.
-  Applies to direct code rewrites, refactor reviews, readability passes, and
-  targeted cleanup before a PR.
+  Use this skill whenever the user asks to simplify, clean up, refactor, tidy,
+  reduce complexity, improve readability, or review code quality in any
+  programming language. Preserves exact functionality while refining code for
+  clarity, consistency, and maintainability. Applies to direct code rewrites,
+  refactor reviews, readability passes, and targeted cleanup before a PR.
 ---
 
 # Code Simplifier
@@ -161,6 +160,7 @@ Load the relevant reference file at the start of the task.
 | Language | Reference File | When To Load |
 |---|---|---|
 | TypeScript / JavaScript | `references/typescript.md` | Any `.ts`, `.tsx`, `.js`, `.jsx`, `.mjs` file, or React/Node/Deno/Bun project |
+| PHP | `references/php.md` | Any `.php` file, `composer.json`-based PHP project, or Laravel/Symfony/WordPress codebase |
 | Python | `references/python.md` | Any `.py` file, or Django/FastAPI/Flask/data science project |
 | Go | `references/go.md` | Any `.go` file |
 | Rust | `references/rust.md` | Any `.rs` file, or Cargo project |

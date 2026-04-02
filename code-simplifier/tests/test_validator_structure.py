@@ -24,6 +24,10 @@ def test_expected_references_present(validator, package_factory):
     assert validator.check_expected_references(root) == []
 
 
+def test_expected_references_include_php(validator):
+    assert "references/php.md" in validator.EXPECTED_REFERENCES
+
+
 def test_expected_references_missing_one(validator, package_factory):
     root = package_factory()
     missing_ref = root / validator.EXPECTED_REFERENCES[0]

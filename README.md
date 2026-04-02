@@ -15,8 +15,8 @@ clearer local code without broadening scope or inventing unnecessary abstraction
 - Supports both review-only and direct-edit workflows for cleanup tasks
 - Prioritizes high-value readability wins such as flattening nesting, removing dead
   code, clarifying naming, and reducing needless indirection
-- Loads language-specific guidance for TypeScript/JavaScript, Python, Go, Rust, and
-  shell scripting from `references/`
+- Loads language-specific guidance for TypeScript/JavaScript, PHP, Python, Go,
+  Rust, and shell scripting from `references/`
 - Treats behavior preservation, scope discipline, and validation status as explicit
   parts of the skill contract
 
