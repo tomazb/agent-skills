@@ -1,0 +1,17 @@
+{
+  "name": "code-simplifier",
+  "version": "1.0.0",
+  "description": "Simplify and refactor code for readability and maintainability without changing behavior.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q",
+    "bump:version": "python3 tools/bump_version.py"
+  },
+  "keywords": [
+    "refactoring",
+    "readability",
+    "cleanup",
+    "code-review",
+    "maintainability"
+  ]
+}
