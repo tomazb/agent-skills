@@ -4,7 +4,7 @@
 
 A language-agnostic skill for simplifying code without changing behavior. It focuses
 on readability, local consistency, and maintainability, with language-specific
-references for TypeScript/JavaScript, Python, Go, Rust, and shell scripting.
+references for TypeScript/JavaScript, PHP, Python, Go, Rust, and shell scripting.
 
 ---
 
@@ -32,7 +32,7 @@ repository cleanup work.
 - Prioritizes high-value readability wins such as reducing nesting, removing dead
   code, clarifying naming, and collapsing needless indirection
 - Loads language-specific references from `references/` for TypeScript/JavaScript,
-  Python, Go, Rust, and shell
+  PHP, Python, Go, Rust, and shell
 - Distinguishes review-only work from direct code edits so the agent can choose the
   right interaction style
 - Requires explicit validation status in the final output, even when no tests could
@@ -66,6 +66,7 @@ See `SKILL.md` for the full operating contract.
 Language-specific guidance lives in:
 
 - `references/typescript.md`
+- `references/php.md`
 - `references/python.md`
 - `references/go.md`
 - `references/rust.md`
@@ -121,6 +122,6 @@ This updates:
 
 ## Version History
 
-Current version: **1.0.0**
+Current version: **1.0.1**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
