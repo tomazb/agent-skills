@@ -10,8 +10,11 @@ PHASE_HEADER_RE = re.compile(r"^### Phase (\d+)\b")
 
 EXPECTED_REFERENCES = [
     "references/checklist-authentication.md",
+    "references/checklist-certificates.md",
+    "references/checklist-cluster-operators.md",
     "references/checklist-etcd.md",
     "references/checklist-networking.md",
+    "references/checklist-nodes.md",
     "references/checklist-platform-specific.md",
     "references/checklist-pods-analysis.md",
     "references/checklist-storage.md",

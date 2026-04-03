@@ -128,6 +128,8 @@ oc describe clusteroperator <name>
 - `Progressing=True` for extended time → stuck rollout.
 - Check `.status.conditions[].message` for root cause hints.
 
+See [references/checklist-cluster-operators.md](references/checklist-cluster-operators.md) for operator condition interpretation, common failure patterns by operator name, and dependency relationship mapping.
+
 ---
 
 ### Phase 2 — Nodes and capacity
@@ -145,6 +147,8 @@ oc get events --field-selector involvedObject.name=<node> --sort-by=.lastTimesta
 ```
 
 Look for `NotReady`, `SchedulingDisabled`, `MemoryPressure`, `DiskPressure`, `PIDPressure`, or resource saturation. Control-plane nodes are highest priority. On SNO, any node issue is automatically Critical.
+
+See [references/checklist-nodes.md](references/checklist-nodes.md) for node condition interpretation, allocatable-vs-capacity analysis, and node drain impact assessment guidance.
 
 ---
 
@@ -314,6 +318,8 @@ oc -n openshift-kube-apiserver-operator get secret kube-apiserver-to-kubelet-sig
 ```
 
 Unapproved CSRs prevent nodes from joining or communicating. Expired certs cause API, auth, or ingress failures. Certificate renewal loops appear in operator logs.
+
+See [references/checklist-certificates.md](references/checklist-certificates.md) for expiry thresholds, CSR workflow, and common certificate failure cascade diagnostics.
 
 ---
 

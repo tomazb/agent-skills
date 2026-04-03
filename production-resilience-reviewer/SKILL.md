@@ -125,6 +125,8 @@ function; dependency lens not applicable").
   Priority: P1-HIGH (likely first bottleneck under load)
 ```
 
+See `references/checklist-load-concurrency.md` for unbounded queue detection, pool sizing guidance, N+1 fan-out checks, thread/goroutine explosion signals, and lock contention diagnostics.
+
 ---
 
 ### Lens 3: Network & Latency
@@ -155,6 +157,8 @@ function; dependency lens not applicable").
   Monitoring: dependency_latency_p99, upstream_timeout_count, connection_pool_in_use
   Priority: P1-HIGH (cascade risk on user-facing hot path)
 ```
+
+See `references/checklist-network-latency.md` for timeout layering, deadline propagation, DNS/TLS latency failure modes, and geo-latency considerations.
 
 ---
 
@@ -249,6 +253,8 @@ GOOD: "PaymentService.charge failed: Stripe returned 429 (rate limited) for
        customer=cus_abc123 amount=4999 idempotency_key=ik_xyz789
        correlation_id=req-abc-123. Action: Check rate limits/status; auto-retry in 60s (attempt 2/3)."
 ```
+
+See `references/checklist-debuggability.md` for exception context preservation, structured error payloads, correlation ID propagation, log-level guidance, and generic catch-all detection.
 
 ---
 
@@ -492,6 +498,7 @@ AI code has consistent blind spots. Assume these exist and check explicitly:
 
 Deep-dive checklists in `references/`:
 - `checklist-dependency.md`, `checklist-data.md`, `checklist-observability.md`
+- `checklist-load-concurrency.md` (Lens 2), `checklist-network-latency.md` (Lens 3), `checklist-debuggability.md` (Lens 6)
 - `checklist-change-management.md` (Lens 8), `checklist-disaster-recovery.md` (Lens 9)
 - `checklist-security-abuse-reliability.md` (Lens 10), `checklist-quota-limit-exhaustion.md` (Lens 11)
 - `severity-calibration.md`, `validation-monitoring-patterns.md`

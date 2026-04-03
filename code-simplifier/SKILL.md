@@ -163,7 +163,9 @@ Load the relevant reference file at the start of the task.
 | PHP | `references/php.md` | Any `.php` file, `composer.json`-based PHP project, or Laravel/Symfony/WordPress codebase |
 | Python | `references/python.md` | Any `.py` file, or Django/FastAPI/Flask/data science project |
 | Go | `references/go.md` | Any `.go` file |
+| Java | `references/java.md` | Any `.java` file, Maven/Gradle project, or Spring/Jakarta service |
 | Rust | `references/rust.md` | Any `.rs` file, or Cargo project |
+| SQL | `references/sql.md` | Any `.sql` file, migration script, query-heavy data access layer, or stored procedure review |
 | Shell (Bash/sh/Zsh/Csh) | `references/shell.md` | Any `.sh`, `.bash`, `.zsh`, `.csh` file, shebang-driven script, or shell-heavy automation file |
 
 For languages without a dedicated reference file, apply the general guidance in this

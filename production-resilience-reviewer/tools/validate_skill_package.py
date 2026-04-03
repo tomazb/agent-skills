@@ -13,8 +13,11 @@ LENS_HEADER_RE = re.compile(r"^### Lens (\d+):")
 EXPECTED_REFERENCES = [
     "references/checklist-change-management.md",
     "references/checklist-data.md",
+    "references/checklist-debuggability.md",
     "references/checklist-dependency.md",
     "references/checklist-disaster-recovery.md",
+    "references/checklist-load-concurrency.md",
+    "references/checklist-network-latency.md",
     "references/checklist-observability.md",
     "references/checklist-quota-limit-exhaustion.md",
     "references/checklist-security-abuse-reliability.md",
