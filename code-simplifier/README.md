@@ -25,6 +25,26 @@ repository cleanup work.
 
 ---
 
+## Operating Modes
+
+### Review-Only Mode
+
+Use this mode when the user wants critique, options, or simplification guidance
+without direct file edits. This is usually the right default for pasted snippets,
+design discussion, and risk-first analysis.
+
+### Apply-Changes Mode
+
+Use this mode when the user explicitly asks for workspace edits. Keep diffs small,
+preserve behavior, and run the best available validation commands after changes.
+
+### Choosing Between Modes
+
+If intent is ambiguous, start in Review-Only Mode and provide a concrete rewrite
+proposal. Switch to Apply-Changes Mode only after explicit approval to edit files.
+
+---
+
 ## Key Features
 
 - Preserves behavior by default and treats functional changes as out of scope unless
@@ -50,14 +70,32 @@ Use this skill when the user asks for:
 - review of messy or overly complex code
 - targeted cleanup before a PR
 
+---
+
+## When To Skip
+
 Skip this skill when the primary task is:
 
 - adding a new feature
 - fixing a behavioral bug
-- performance tuning on a hot path
+- performance tuning on a hot path where current structure may be intentional
+- a simplification where behavior-preservation confidence is low
 - broad architectural redesign
+- unrelated cleanup that breaks scope discipline by expanding beyond requested code
 
 See `SKILL.md` for the full operating contract.
+
+---
+
+## Example Simplification Summary Output
+
+Simplified the target function by flattening nested conditionals and removing a
+duplicated fallback branch. Behavior is preserved: input handling, error paths, and
+logging side effects are unchanged.
+
+- Replaced two nested `if` blocks with guard clauses for earlier exits.
+- Removed an unused temporary variable and inlined a one-use alias.
+- Left one branch untouched because it is part of a known hot path.
 
 ---
 

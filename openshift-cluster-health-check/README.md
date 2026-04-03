@@ -31,6 +31,27 @@ A read-only, platform-aware diagnostic skill for assessing OpenShift cluster hea
 
 ---
 
+## Condensed Output Format
+
+Use this six-section response structure for every health-check report:
+
+1. **Status** — overall `Healthy`, `Warning`, or `Critical`.
+2. **Summary** — 2-4 sentences describing the dominant risk and blast radius.
+3. **Platform context** — one line with platform/topology assumptions.
+4. **Findings table** — subsystem-by-subsystem evidence with impact and next check.
+5. **Priority actions** — up to 5 next actions ordered by urgency.
+6. **Uncertainty** — explicit constraints, missing access, or confidence limits.
+
+Findings table format:
+
+| Area | Status | Evidence | Impact | Next check |
+|---|---|---|---|---|
+| etcd | Critical | `etcd` operator `Degraded=True`; one member missing from quorum | API availability and control-plane writes are at risk | Run endpoint health/member checks and confirm leader stability |
+
+See `references/output-contract.md` for the full output specification and response style.
+
+---
+
 ## Package Structure
 
 ```
