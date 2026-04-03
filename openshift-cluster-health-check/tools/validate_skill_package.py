@@ -84,11 +84,16 @@ def check_expected_references(root: Path) -> list[str]:
 
 
 def check_version_sync(root: Path) -> list[str]:
+    issues: list[str] = []
     version_file = root / "VERSION"
     pkg_file = root / "package.json"
 
-    if not version_file.exists() or not pkg_file.exists():
-        return []
+    if not version_file.exists():
+        issues.append("Missing VERSION file.")
+        return issues
+    if not pkg_file.exists():
+        issues.append("Missing package.json file.")
+        return issues
 
     file_version = read_text(version_file).strip()
     try:
@@ -105,11 +110,15 @@ def check_version_sync(root: Path) -> list[str]:
 
 
 def check_changelog_version(root: Path) -> list[str]:
+    issues: list[str] = []
     version_file = root / "VERSION"
     changelog_file = root / "CHANGELOG.md"
 
-    if not version_file.exists() or not changelog_file.exists():
-        return []
+    if not changelog_file.exists():
+        issues.append("Missing CHANGELOG.md file.")
+        return issues
+    if not version_file.exists():
+        return issues
 
     version = read_text(version_file).strip()
     headings = {f"## {version}", f"## v{version}"}

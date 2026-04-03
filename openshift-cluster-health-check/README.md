@@ -95,3 +95,16 @@ npm test
 # Bump to a new version (updates VERSION, package.json, README)
 python3 tools/bump_version.py 1.1.0
 ```
+
+---
+
+## Validation Contract
+
+The package validator (`tools/validate_skill_package.py`) enforces these rules:
+
+- **Required files**: VERSION, package.json, CHANGELOG.md, SKILL.md, README.md — missing any raises an explicit error.
+- **VERSION ↔ package.json sync**: The `version` field in `package.json` must exactly match the content of `VERSION`.
+- **VERSION ↔ CHANGELOG.md heading**: `CHANGELOG.md` must contain a `## {version}` or `## v{version}` heading matching the current `VERSION`.
+- **SKILL.md structure**: Must contain Phase 0–16 headings; line count must stay under the configured limit.
+- **Reference files**: All expected reference files in `references/` must exist.
+- **Markdown hygiene**: Every `.md` file must end with a newline and have balanced code fences.

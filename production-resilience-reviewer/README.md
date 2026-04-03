@@ -152,12 +152,16 @@ Run validator regression tests:
 pytest -q
 ```
 
-The validator checks:
-- SKILL.md structure (all eleven lenses present)
-- Reference file existence
-- Version synchronization (VERSION ↔ package.json and VERSION ↔ CHANGELOG heading)
-- Markdown formatting (trailing newlines, balanced code fences, lens heading spacing)
-- Leaked TOC detection
+### Validation Contract
+
+The package validator enforces these rules:
+
+- **Required files**: VERSION, package.json, CHANGELOG.md, SKILL.md, README.md — missing any raises an explicit error.
+- **VERSION ↔ package.json sync**: The `version` field in `package.json` must exactly match the content of `VERSION`.
+- **VERSION ↔ CHANGELOG.md heading**: `CHANGELOG.md` must contain a `## {version}` or `## v{version}` heading matching the current `VERSION`.
+- **SKILL.md structure**: Must contain all eleven Lens headings with proper spacing; line count must stay under the configured limit.
+- **Reference files**: All expected reference files in `references/` must exist.
+- **Markdown hygiene**: Every `.md` file must end with a newline, have balanced code fences, and no leaked TOC titles.
 
 ---
 
