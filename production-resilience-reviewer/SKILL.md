@@ -491,6 +491,13 @@ AI code has consistent blind spots. Assume these exist and check explicitly:
 6. **Missing idempotency** — Retry-unsafe mutating operations
 7. **No observability** — Zero metrics, minimal logging
 8. **Unsafe rollouts** — Schema changes without compatibility or rollback plan
+9. **Placeholder TODO comments** — `// TODO: implement error handling` or `// TODO: add proper validation` left as unfinished work
+10. **Generic variable names** — Overuse of `data`, `result`, `response`, `output`, `temp` without domain-specific context
+11. **Suspiciously perfect happy-path** — Every success case handled elegantly with zero error or edge case handling
+
+**Quick heuristic:** If 3+ of these 11 signals are present, treat the code as AI-generated and apply heightened scrutiny. AI-generated code passes superficial review easily but consistently fails under production load.
+
+**Priority lenses for AI-generated code:** Apply **Lens 1 (Dependency Failure)** and **Lens 5 (Retry & Backpressure)** first — these are the highest-value lenses for AI code, which almost always omits dependency failure handling and retry safety. Follow with Lens 3 (Network & Latency) for missing timeouts and Lens 7 (Observability) for absent metrics.
 
 ---
 

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.0
+
+- Added edge case handling for limited-access scenarios to `references/output-contract.md`: RBAC restrictions preventing infrastructure detection, missing CRDs for optional components, and partial cluster access scenarios.
+- Added example uncertainty block to `references/output-contract.md` demonstrating how to document inference vs. verified fact.
+- Added "Degraded Discovery Mode" section to `SKILL.md` explaining fallback behavior when platform type cannot be determined (skip Phase 13, run generic phases, document in Uncertainty).
+- Added deep-dive reference checklists: `references/checklist-certificates.md`, `references/checklist-cluster-operators.md`, `references/checklist-nodes.md` with diagnostic commands for Phases 1, 2, and 12.
+- Updated `SKILL.md` with cross-links to the new reference checklists.
+- Expanded `README.md` with additional usage guidance and documented validation contract.
+- Standardized `check_version_sync` and `check_changelog_version` in validator to raise explicit errors for missing files.
+- Updated validator expected-reference list to include the three new checklist files.
+- Updated test suite to expect errors instead of no-ops for missing-file edge cases.
+
 ## 1.0.0
 
 - Initial packaged release of the OpenShift cluster health check skill.

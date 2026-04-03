@@ -1,5 +1,18 @@
 # Changelog
 
+## 5.4.0
+
+- Enhanced AI-generated code detection in `SKILL.md` with three LLM-specific patterns: placeholder TODO comments, generic variable names, and suspiciously perfect happy-path coverage.
+- Added quick heuristic checklist (3+ of 11 signals → treat as AI-generated) and priority lens guidance (Lens 1 + Lens 5 first) for AI-generated code review.
+- Added "Before / After: Common Fixes" section to `references/validation-monitoring-patterns.md` with three concrete examples: cardinality explosion fix, missing SLI to actionable metric, and unbounded retry to budgeted retry.
+- Added "Common Monitoring Anti-Patterns" section to `references/validation-monitoring-patterns.md` with 7 items mirroring the anti-pattern format used in other reference files.
+- Added deep-dive reference checklists: `references/checklist-debuggability.md` (Lens 6), `references/checklist-load-concurrency.md` (Lens 2), `references/checklist-network-latency.md` (Lens 3).
+- Updated `SKILL.md` with cross-links to the new reference checklists.
+- Expanded `README.md` with additional usage guidance and documented validation contract.
+- Standardized `check_version_sync` and `check_changelog_version` in validator to raise explicit errors for missing files.
+- Updated validator expected-reference list to include the three new checklist files.
+- Updated test suite to expect errors instead of no-ops for missing-file edge cases.
+
 ## 5.3.2
 - Fixed `Fix:` → `Recommendation:` in Lens 9, 10, 11 condensed examples to match Lens 8 style (review finding).
 - Removed orphaned trigger phrases from `README.md` that no longer appeared in `SKILL.md` frontmatter.
