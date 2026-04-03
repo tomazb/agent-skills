@@ -160,6 +160,6 @@ This updates:
 
 ## Version History
 
-Current version: **1.0.1**
+Current version: **1.1.0**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.

@@ -85,6 +85,41 @@ Explicitly note:
 
 If there is no uncertainty, omit this section.
 
+#### Example uncertainty block
+
+> ### Uncertainty
+> - **Platform type: inferred** — `oc get infrastructure cluster` returned `Forbidden`. Node labels suggest bare-metal topology (no cloud-provider annotations, `kubernetes.io/arch=amd64` only). Platform-specific checks (Phase 13) were skipped. This is an **inference**, not a verified fact.
+> - **Storage CSI driver: not checked** — `csi.storage.k8s.io` CRD not present; cluster may use in-tree provisioner or no dynamic storage.
+> - **etcd metrics: not checked** — Access to `openshift-etcd` namespace was denied. etcd health is based on API server responsiveness only.
+
+---
+
+### 7. Edge Cases: Limited Access Scenarios
+
+#### RBAC restrictions preventing infrastructure detection
+
+When `oc get infrastructure cluster` returns `Forbidden` or access is denied:
+
+- Fall back to inferring platform from node labels, annotations, and machine objects.
+- Use `Not checked` for platform-specific rows in the findings table.
+- Document the RBAC limitation in the Uncertainty section.
+
+#### Missing CRDs for optional components
+
+When Metal3 (`baremetalhost` CRD), MachineAPI, or other optional CRDs are not installed:
+
+- Use `N/A` status for subsystems that depend on the missing CRD.
+- Do not treat missing CRDs as errors — they indicate the component is not deployed.
+- Example: no `baremetalhost.metal3.io` CRD on a cloud cluster is normal, not a failure.
+
+#### Partial cluster access scenarios
+
+When access is limited to specific namespaces (e.g., no access to `openshift-etcd` or `openshift-kube-apiserver`):
+
+- Scope the report to observable subsystems only.
+- Use `Not checked` status with explicit reasoning for inaccessible subsystems.
+- Never infer health from absence of data — label it as "not assessable".
+
 ---
 
 ## Response style guidelines

@@ -107,6 +107,21 @@ Record: platform type, topology (HA/SNO/compact-3), control-plane count, worker 
 
 ---
 
+### Degraded Discovery Mode
+
+When platform type cannot be determined — `oc get infrastructure cluster` returns `None`, an empty value, or `Forbidden` — enter degraded discovery mode:
+
+1. **Skip platform-specific checks** — Do not run Phase 13 (platform-specific checks). There is no reliable way to select the correct checks without a confirmed platform type.
+2. **Run all generic phases normally** — Phases 1–12 and 14–16 do not depend on platform type. Execute them as usual.
+3. **Attempt platform inference** — Check node labels (`node.kubernetes.io/instance-type`, `topology.kubernetes.io/zone`, cloud-provider annotations) to infer the likely platform. Label any inference explicitly.
+4. **Document in Uncertainty** — Add a dedicated entry in the Uncertainty section explaining what was attempted, what was inferred, and what was skipped. Distinguish inference from verified fact.
+
+Example uncertainty entry for degraded discovery:
+
+> - **Platform type: inferred** — `oc get infrastructure cluster` returned `Forbidden`. Node labels suggest bare-metal topology (no cloud-provider annotations, `kubernetes.io/arch=amd64` only). Platform-specific checks (Phase 13) were skipped. This is an **inference**, not a verified fact.
+
+---
+
 ### Phase 1 — Cluster version and operators
 
 ```bash

@@ -1,6 +1,6 @@
 {
   "name": "openshift-cluster-health-check",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Platform-aware OpenShift cluster health diagnostic workflow covering 17 phases: platform detection, cluster operators, nodes, MCPs, etcd, auth, ingress, DNS, networking, storage, monitoring, image registry, console, certificates, platform-specific, pod health, and cluster-wide events.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",

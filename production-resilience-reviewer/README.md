@@ -182,7 +182,7 @@ This updates:
 
 ## Version History
 
-Current version: **5.3.2**
+Current version: **5.4.0**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
