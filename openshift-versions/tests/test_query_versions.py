@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import importlib.util
+import json
 import sys
 import urllib.error
 from pathlib import Path
@@ -21,6 +22,23 @@ def run_main(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> SystemExit:
     with pytest.raises(SystemExit) as exc_info:
         query_versions.main()
     return exc_info.value
+
+
+class _ExitResult:
+    """Lightweight wrapper so E2E tests can inspect an exit code."""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+
+
+def run_main_ok(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> _ExitResult:
+    """Run main() and return an _ExitResult.  Handles normal return (code 0)."""
+    monkeypatch.setattr(sys, "argv", ["query_versions.py", *args])
+    try:
+        query_versions.main()
+    except SystemExit as exc:
+        return _ExitResult(exc.code if exc.code is not None else 0)
+    return _ExitResult(0)
 
 
 def test_version_key_sorts_semver_values() -> None:
@@ -328,3 +346,150 @@ def test_main_rejects_nonpositive_retry_base_delay(
 
     assert exit_info.code == 2
     assert "--retry-base-delay must be greater than 0" in capsys.readouterr().err
+
+
+# ---------------------------------------------------------------------------
+# End-to-end CLI tests
+# ---------------------------------------------------------------------------
+
+
+def test_all_latest_mode_end_to_end(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Mock the graph API and verify --all-latest output format."""
+
+    def fake_graph(channel: str, arch: str = "amd64", **kwargs) -> dict:
+        if channel == "stable-4.17":
+            return {"nodes": [{"version": "4.17.5"}, {"version": "4.17.12"}]}
+        if channel == "stable-4.18":
+            return {"nodes": [{"version": "4.18.0"}, {"version": "4.18.3"}]}
+        return {"nodes": []}
+
+    monkeypatch.setattr(query_versions, "get_graph_versions", fake_graph)
+
+    exit_info = run_main_ok(monkeypatch, [
+        "--all-latest", "--floor", "17", "--ceiling", "21",
+    ])
+
+    assert exit_info.code == 0
+    out = capsys.readouterr().out
+    assert "4.17" in out
+    assert "4.17.12" in out
+    assert "4.18" in out
+    assert "4.18.3" in out
+    assert "2 active minor" in out
+
+
+def test_upgrade_path_multi_channel(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Verify --upgrade-path with --channel-type stable,eus checks all channels."""
+    calls: list[str] = []
+
+    def fake_graph(channel: str, arch: str = "amd64", **kwargs) -> dict:
+        calls.append(channel)
+        if channel == "stable-4.16":
+            return {
+                "nodes": [{"version": "4.16.30"}, {"version": "4.16.31"}],
+                "edges": [[0, 1]],
+            }
+        if channel == "eus-4.16":
+            return {
+                "nodes": [{"version": "4.16.30"}, {"version": "4.16.32"}],
+                "edges": [[0, 1]],
+            }
+        return {"nodes": [], "edges": []}
+
+    monkeypatch.setattr(query_versions, "get_graph_versions", fake_graph)
+
+    exit_info = run_main_ok(monkeypatch, [
+        "--upgrade-path", "4.16.30", "--channel-type", "stable,eus",
+    ])
+
+    assert exit_info.code == 0
+    out = capsys.readouterr().out
+    assert "stable-4.16" in out
+    assert "eus-4.16" in out
+    assert "4.16.31" in out
+    assert "4.16.32" in out
+
+
+def test_authenticated_path_uses_token(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When --token is present, main() routes to the authenticated endpoint."""
+    captured: dict = {}
+
+    def fake_make_request(
+        endpoint: str,
+        params: dict | None = None,
+        token: str | None = None,
+        **kwargs,
+    ) -> dict:
+        captured["endpoint"] = endpoint
+        captured["token"] = token
+        return {"items": [], "total": 0, "page": 1, "size": 100}
+
+    monkeypatch.setattr(query_versions, "make_request", fake_make_request)
+
+    exit_info = run_main_ok(monkeypatch, ["--token", "my-secret-token", "--enabled"])
+
+    assert exit_info.code == 0
+    assert captured["endpoint"] == "/api/clusters_mgmt/v1/versions"
+    assert captured["token"] == "my-secret-token"
+
+
+def test_unauthenticated_path_uses_graph_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Without --token, --channel routes to the public graph endpoint."""
+    captured: dict = {}
+
+    def fake_make_request(
+        endpoint: str,
+        params: dict | None = None,
+        token: str | None = None,
+        **kwargs,
+    ) -> dict:
+        captured["endpoint"] = endpoint
+        captured["token"] = token
+        return {"nodes": [{"version": "4.18.1"}]}
+
+    monkeypatch.setattr(query_versions, "make_request", fake_make_request)
+
+    exit_info = run_main_ok(monkeypatch, ["--channel", "stable-4.18", "--latest"])
+
+    assert exit_info.code == 0
+    assert captured["endpoint"] == "/api/upgrades_info/v1/graph"
+    assert captured["token"] is None
+
+
+def test_json_decode_error_from_malformed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Malformed (non-JSON) API responses should surface as RuntimeError."""
+
+    class FakeResponse:
+        def __init__(self, payload: bytes):
+            self._payload = payload
+
+        def __enter__(self) -> "FakeResponse":
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        def read(self) -> bytes:
+            return self._payload
+
+    def fake_urlopen(request, timeout=30):
+        return FakeResponse(b"this is not json")
+
+    monkeypatch.setattr(query_versions.urllib.request, "urlopen", fake_urlopen)
+
+    with pytest.raises(json.JSONDecodeError):
+        query_versions.make_request("/api/upgrades_info/v1/graph", {"channel": "stable-4.18"})
