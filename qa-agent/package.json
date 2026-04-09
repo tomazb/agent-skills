@@ -1,0 +1,17 @@
+{
+  "name": "qa-agent",
+  "version": "0.1.0",
+  "description": "Risk-first QA skill for requirement tracing, test planning, bug reproduction, and regression control.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q",
+    "bump:version": "python3 tools/bump_version.py"
+  },
+  "keywords": [
+    "qa",
+    "testing",
+    "regression",
+    "bug-hunt",
+    "verification"
+  ]
+}
