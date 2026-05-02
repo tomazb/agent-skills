@@ -1,0 +1,17 @@
+{
+  "name": "pr-comments",
+  "version": "0.1.0",
+  "description": "Fetch and display GitHub PR review comments for the current branch.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q",
+    "bump:version": "python3 tools/bump_version.py"
+  },
+  "keywords": [
+    "github",
+    "pr",
+    "comments",
+    "review",
+    "code-review"
+  ]
+}
