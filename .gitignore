@@ -1,5 +1,7 @@
 __pycache__/
 *.pyc
 .cursor/
+.codex/
+.opencode/
 dist/
 *.skill
