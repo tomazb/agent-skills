@@ -5,3 +5,4 @@ __pycache__/
 .opencode/
 dist/
 *.skill
+.worktrees/
