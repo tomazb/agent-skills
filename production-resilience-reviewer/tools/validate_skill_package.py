@@ -21,6 +21,7 @@ EXPECTED_REFERENCES = [
     "references/checklist-observability.md",
     "references/checklist-quota-limit-exhaustion.md",
     "references/checklist-security-abuse-reliability.md",
+    "references/checklist-complexity-tax.md",
     "references/severity-calibration.md",
     "references/validation-monitoring-patterns.md",
 ]
@@ -114,11 +115,15 @@ def find_leaked_toc_titles(text: str) -> list[str]:
 
 
 def check_lens_headings(skill_md_text: str) -> list[str]:
-    """Ensure SKILL.md contains Lens 1..11 headings (prevents accidental deletions)."""
-    lens_nums = sorted(int(n) for n in re.findall(LENS_HEADER_RE.pattern, skill_md_text, flags=re.M))
-    expected = list(range(1, 12))
+    """Ensure SKILL.md contains Lens 1..12 headings (prevents accidental deletions)."""
+    lens_nums = sorted(
+        int(n) for n in re.findall(LENS_HEADER_RE.pattern, skill_md_text, flags=re.M)
+    )
+    expected = list(range(1, 13))
     if lens_nums != expected:
-        return [f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}"]
+        return [
+            f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}"
+        ]
     return []
 
 

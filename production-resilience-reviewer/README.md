@@ -2,7 +2,7 @@
 
 ## TLDR
 
-A senior-level AI skill that reviews code, services, and system designs for production resilience through **eleven failure lenses** (dependency, load, network, data, retry, debuggability, observability, change management, disaster recovery, security-abuse reliability, quota exhaustion). It finds every way your code can fail in production and provides actionable fixes with priority rankings—especially valuable for catching AI-generated code blind spots.
+A senior-level AI skill that reviews code, services, and system designs for production resilience through **twelve failure lenses** (dependency, load, network, data, retry, debuggability, observability, change management, disaster recovery, security-abuse reliability, quota exhaustion, complexity tax & architecture fit). It finds every way your code can fail in production and provides actionable fixes with priority rankings—especially valuable for catching AI-generated code blind spots and challenging over-engineered architectures.
 
 ---
 
@@ -12,13 +12,13 @@ The **Production Resilience Reviewer** acts as a hybrid Staff SRE, Principal Eng
 
 Every external call will eventually fail. Every dependency will eventually be slow. Every assumption about data shape will eventually be violated. The question is never "will this fail?" but "when this fails, what happens to the user, the system, and the on-call engineer—and how quickly can we recover?"
 
-This skill systematically analyzes code to answer that question across eleven critical failure domains.
+This skill systematically analyzes code to answer that question across twelve critical failure domains — including a contrarian architecture lens that challenges whether the chosen architecture itself is creating unnecessary complexity.
 
 ---
 
 ## Key Features
 
-### Eleven Failure Lenses
+### Twelve Failure Lenses
 
 The skill applies a comprehensive framework to every review:
 
@@ -33,6 +33,7 @@ The skill applies a comprehensive framework to every review:
 9. **Fault Domains & Disaster Recovery** - What happens if an AZ/region/control plane fails?
 10. **Security & Abuse as Reliability** - What happens under hostile traffic and auth failures?
 11. **Quota & Limit Exhaustion** - What happens when quotas, pools, or budgets run out?
+12. **Complexity Tax & Architecture Fit** - Is the architecture paying for complexity it doesn't need?
 
 ### Severity Calibration
 
@@ -112,6 +113,7 @@ The `references/` directory contains deep-dive checklists and patterns:
 - **`checklist-disaster-recovery.md`** - Fault domains, RPO/RTO, backup/restore, failover, and replay safety (Lens 9 deep-dive)
 - **`checklist-security-abuse-reliability.md`** - Auth fail-open, abuse resistance, and secure degradation (Lens 10 deep-dive)
 - **`checklist-quota-limit-exhaustion.md`** - Quota/resource exhaustion and cost/rate guardrails (Lens 11 deep-dive)
+- **`checklist-complexity-tax.md`** - Architecture fit, distributed monolith detection, Conway's Law, and cost model (Lens 12 deep-dive)
 - **`severity-calibration.md`** - Full severity/context matrix and adjustment rules
 - **`validation-monitoring-patterns.md`** - Validation and monitoring patterns by failure type
 
@@ -125,6 +127,7 @@ AI coding agents should trigger this skill when users request:
 - Production-readiness, resilience, or failure-mode review of code/services/designs
 - Reliability analysis for error handling, retries, timeouts, circuit breakers, graceful degradation, or observability
 - Operational risk review around deploy/rollback safety, DR (RPO/RTO), abuse resilience, or quota exhaustion
+- Architecture trade-off review, complexity tax analysis, or contrarian challenge of microservices/distributed designs
 - Extra scrutiny of AI-generated code for common resilience blind spots
 
 Skip this skill for:
@@ -159,7 +162,7 @@ The package validator enforces these rules:
 - **Required files**: VERSION, package.json, CHANGELOG.md, SKILL.md, README.md — missing any raises an explicit error.
 - **VERSION ↔ package.json sync**: The `version` field in `package.json` must exactly match the content of `VERSION`.
 - **VERSION ↔ CHANGELOG.md heading**: `CHANGELOG.md` must contain a `## {version}` or `## v{version}` heading matching the current `VERSION`.
-- **SKILL.md structure**: Must contain all eleven Lens headings with proper spacing; line count must stay under the configured limit.
+- **SKILL.md structure**: Must contain all twelve Lens headings with proper spacing; line count must stay under the configured limit.
 - **Reference files**: All expected reference files in `references/` must exist.
 - **Markdown hygiene**: Every `.md` file must end with a newline, have balanced code fences, and no leaked TOC titles.
 
@@ -182,18 +185,18 @@ This updates:
 
 ## Version History
 
-Current version: **5.4.0**
+Current version: **5.5.0**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 Recent highlights:
+- **5.5.0** - Added Lens 12 (Complexity Tax & Architecture Fit) — contrarian architecture review with deep-dive reference
+- **5.4.0** - Enhanced AI-generated code detection, added Lens 2/3/6 deep-dive checklists
 - **5.3.1** - Aligned lens example style (Risk/Recommendation), refined trigger guidance, consolidated severity calibration
 - **5.3.0** - Validator refactor with regression tests, version bump tooling, expanded Lenses 9-11 guidance
 - **5.2.0** - Added Lenses 9-11 (Disaster Recovery, Security/Abuse Reliability, Quota Exhaustion) and deep-dive references
 - **5.1.0** - Added condensed examples across all lenses; enhanced validation
 - **5.0.0** - Restored Load & Concurrency as first-class lens
-- **4.0.0** - Added Change Management lens and reference materials
-- **3.x** - Introduced Lens 8 and severity calibration framework
 
 ---
 

@@ -20,7 +20,7 @@ def make_skill_text(*, double_blank_after_lens: int | None = None) -> str:
         "# Demo Skill",
         "",
     ]
-    for lens_num in range(1, 12):
+    for lens_num in range(1, 13):
         lines.append(f"### Lens {lens_num}: Example")
         lines.append("")
         if double_blank_after_lens == lens_num:
@@ -34,7 +34,9 @@ def make_skill_text(*, double_blank_after_lens: int | None = None) -> str:
 
 @pytest.fixture(scope="session")
 def validator():
-    spec = importlib.util.spec_from_file_location("validate_skill_package", VALIDATOR_PATH)
+    spec = importlib.util.spec_from_file_location(
+        "validate_skill_package", VALIDATOR_PATH
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
