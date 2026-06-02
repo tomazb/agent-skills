@@ -87,11 +87,15 @@ production-resilience-reviewer/
 ├── references/             # Deep-dive reference materials
 │   ├── checklist-dependency.md
 │   ├── checklist-data.md
+│   ├── checklist-debuggability.md
+│   ├── checklist-load-concurrency.md
+│   ├── checklist-network-latency.md
 │   ├── checklist-observability.md
 │   ├── checklist-change-management.md
 │   ├── checklist-disaster-recovery.md
 │   ├── checklist-security-abuse-reliability.md
 │   ├── checklist-quota-limit-exhaustion.md
+│   ├── checklist-complexity-tax.md
 │   ├── severity-calibration.md
 │   └── validation-monitoring-patterns.md
 └── tools/                  # Validation and utilities
