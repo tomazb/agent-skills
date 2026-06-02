@@ -12,7 +12,7 @@ The **Production Resilience Reviewer** acts as a hybrid Staff SRE, Principal Eng
 
 Every external call will eventually fail. Every dependency will eventually be slow. Every assumption about data shape will eventually be violated. The question is never "will this fail?" but "when this fails, what happens to the user, the system, and the on-call engineer—and how quickly can we recover?"
 
-This skill systematically analyzes code to answer that question across twelve critical failure domains — including a contrarian architecture lens that challenges whether the chosen architecture itself is creating unnecessary complexity.
+This skill systematically analyzes code to answer that question across twelve critical failure domains — including an evidence-calibrated architecture-fit lens that challenges whether the chosen architecture is creating unnecessary complexity.
 
 ---
 
@@ -113,7 +113,7 @@ The `references/` directory contains deep-dive checklists and patterns:
 - **`checklist-disaster-recovery.md`** - Fault domains, RPO/RTO, backup/restore, failover, and replay safety (Lens 9 deep-dive)
 - **`checklist-security-abuse-reliability.md`** - Auth fail-open, abuse resistance, and secure degradation (Lens 10 deep-dive)
 - **`checklist-quota-limit-exhaustion.md`** - Quota/resource exhaustion and cost/rate guardrails (Lens 11 deep-dive)
-- **`checklist-complexity-tax.md`** - Architecture fit, distributed monolith detection, Conway's Law, and cost model (Lens 12 deep-dive)
+- **`checklist-complexity-tax.md`** - Evidence-calibrated architecture fit, distributed monolith signals, event-driven sprawl, platform fit, orchestration, AI workflow complexity, and cost model (Lens 12 deep-dive)
 - **`severity-calibration.md`** - Full severity/context matrix and adjustment rules
 - **`validation-monitoring-patterns.md`** - Validation and monitoring patterns by failure type
 
@@ -127,7 +127,7 @@ AI coding agents should trigger this skill when users request:
 - Production-readiness, resilience, or failure-mode review of code/services/designs
 - Reliability analysis for error handling, retries, timeouts, circuit breakers, graceful degradation, or observability
 - Operational risk review around deploy/rollback safety, DR (RPO/RTO), abuse resilience, or quota exhaustion
-- Architecture trade-off review, complexity tax analysis, or contrarian challenge of microservices/distributed designs
+- Production architecture trade-offs affecting resilience, operability, cost, or failure modes; complexity tax analysis; or architecture-fit review
 - Extra scrutiny of AI-generated code for common resilience blind spots
 
 Skip this skill for:
@@ -190,7 +190,7 @@ Current version: **5.5.0**
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 Recent highlights:
-- **5.5.0** - Added Lens 12 (Complexity Tax & Architecture Fit) — contrarian architecture review with deep-dive reference
+- **5.5.0** - Added Lens 12 (Complexity Tax & Architecture Fit) — evidence-calibrated architecture-fit review with deep-dive reference
 - **5.4.0** - Enhanced AI-generated code detection, added Lens 2/3/6 deep-dive checklists
 - **5.3.1** - Aligned lens example style (Risk/Recommendation), refined trigger guidance, consolidated severity calibration
 - **5.3.0** - Validator refactor with regression tests, version bump tooling, expanded Lenses 9-11 guidance
