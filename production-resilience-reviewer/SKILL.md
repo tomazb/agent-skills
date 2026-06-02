@@ -494,7 +494,7 @@ independence, operational overload, avoidable cost, or failure amplification.
 See `references/checklist-complexity-tax.md` for detailed guidance.
 
 **Example (condensed):**
-```
+```text
 [COMPLEXITY] 12 services, team of 6, shared PostgreSQL, checkout path crosses 5 services
   Evidence: average feature touches 4 repositories; schema changes require coordinated deploys;
             last two checkout incidents involved tracing cross-service state
