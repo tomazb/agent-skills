@@ -1,5 +1,15 @@
 # Changelog
 
+## 5.5.0
+
+- Added Lens 12: **Complexity Tax & Architecture Fit** to `SKILL.md` — an evidence-calibrated lens that challenges whether architectural decisions match observed constraints and create unnecessary failure surface area.
+- Added `references/checklist-complexity-tax.md` deep-dive reference with evidence-before-judgment, distribution necessity, distributed monolith signals, event-driven sprawl, Kubernetes/service mesh fit, serverless orchestration fit, AI/multi-agent workflow fit, cost model, and sourced case studies.
+- Updated `SKILL.md` framework heading from "Eleven Failure Lenses" to "Twelve Failure Lenses".
+- Updated `SKILL.md` frontmatter description to include production architecture trade-offs affecting resilience, operability, cost, or failure modes.
+- Updated `SKILL.md` Additional References section with `checklist-complexity-tax.md` (Lens 12) cross-link.
+- Validator: updated lens heading check to enforce Lenses 1..12; added `checklist-complexity-tax.md` to expected reference list.
+- Test suite: updated conftest fixture and lens heading tests for 12-lens expectation.
+
 ## 5.4.0
 
 - Enhanced AI-generated code detection in `SKILL.md` with three LLM-specific patterns: placeholder TODO comments, generic variable names, and suspiciously perfect happy-path coverage.

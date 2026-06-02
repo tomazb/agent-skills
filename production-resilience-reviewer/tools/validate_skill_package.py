@@ -21,11 +21,43 @@ EXPECTED_REFERENCES = [
     "references/checklist-observability.md",
     "references/checklist-quota-limit-exhaustion.md",
     "references/checklist-security-abuse-reliability.md",
+    "references/checklist-complexity-tax.md",
     "references/severity-calibration.md",
     "references/validation-monitoring-patterns.md",
 ]
 
 MAX_SKILL_LINES = 700
+
+REQUIRED_RESILIENCE_GUIDANCE_PHRASES = [
+    "production architecture trade-offs affecting resilience, operability, cost, or failure modes",
+    "Minimum evidence before judging",
+    "team size",
+    "service count",
+    "ownership model",
+    "deploy coupling",
+    "shared data ownership",
+    "request path depth",
+    "traffic/cost profile",
+    "platform/SRE support",
+    "recent incident/on-call pain",
+    "Right-Sized Resilience",
+    "Would fail-fast or queue-and-reconcile be safer than retrying?",
+    "Are metrics/logs useful without creating cardinality or cost blowups?",
+    "Does the RPO/RTO match business impact?",
+    "Does the rollout mechanism reduce net risk?",
+    "Can the expensive path be bounded, simplified, or removed?",
+]
+
+UNSUPPORTED_COMPLEXITY_CLAIMS = [
+    "DZone 2024",
+    "CNCF 2025 Survey",
+    "35%",
+    "42%",
+    "3.75x",
+    "3.75×",
+    "6x",
+    "6×",
+]
 
 
 def read_text(p: Path) -> str:
@@ -114,11 +146,15 @@ def find_leaked_toc_titles(text: str) -> list[str]:
 
 
 def check_lens_headings(skill_md_text: str) -> list[str]:
-    """Ensure SKILL.md contains Lens 1..11 headings (prevents accidental deletions)."""
-    lens_nums = sorted(int(n) for n in re.findall(LENS_HEADER_RE.pattern, skill_md_text, flags=re.M))
-    expected = list(range(1, 12))
+    """Ensure SKILL.md contains Lens 1..12 headings (prevents accidental deletions)."""
+    lens_nums = sorted(
+        int(n) for n in re.findall(LENS_HEADER_RE.pattern, skill_md_text, flags=re.M)
+    )
+    expected = list(range(1, 13))
     if lens_nums != expected:
-        return [f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}"]
+        return [
+            f"SKILL.md lens headings mismatch: found {lens_nums}, expected {expected}"
+        ]
     return []
 
 
@@ -149,6 +185,34 @@ def check_expected_references(root: Path) -> list[str]:
     for ref in EXPECTED_REFERENCES:
         if not (root / ref).exists():
             issues.append(f"Missing expected reference file: {ref}")
+    return issues
+
+
+def check_resilience_guidance_guards(
+    skill_md_text: str, complexity_reference_text: str
+) -> list[str]:
+    """Guard Lens 12 evidence calibration and weak complexity-tax claims."""
+    issues: list[str] = []
+    normalized_skill_text = " ".join(skill_md_text.split())
+
+    for phrase in REQUIRED_RESILIENCE_GUIDANCE_PHRASES:
+        if phrase not in normalized_skill_text:
+            if phrase == REQUIRED_RESILIENCE_GUIDANCE_PHRASES[0]:
+                issues.append(
+                    "SKILL.md: description must target production architecture trade-offs affecting resilience, operability, cost, or failure modes."
+                )
+            else:
+                issues.append(f"SKILL.md: missing resilience guidance phrase: {phrase}")
+
+    found_unsupported = [
+        claim for claim in UNSUPPORTED_COMPLEXITY_CLAIMS if claim in complexity_reference_text
+    ]
+    if found_unsupported:
+        issues.append(
+            "references/checklist-complexity-tax.md: unsupported complexity-tax claim(s): "
+            + ", ".join(found_unsupported)
+        )
+
     return issues
 
 
@@ -242,6 +306,14 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_expected_references(root))
     issues.extend(check_version_sync(root))
     issues.extend(check_changelog_version(root))
+
+    complexity_ref = root / "references/checklist-complexity-tax.md"
+    if skill.exists() and complexity_ref.exists():
+        issues.extend(
+            check_resilience_guidance_guards(
+                read_text(skill), read_text(complexity_ref)
+            )
+        )
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill:
