@@ -4,8 +4,8 @@ description: >
   Use when reviewing production readiness, resilience, failure modes, or reliability of code,
   services, or system designs. Trigger for requests about error handling, retries, timeouts,
   circuit breakers, graceful degradation, observability, DR/RPO/RTO, abuse resilience, quota
-  exhaustion, architecture trade-off review, complexity tax analysis, or AI-generated code
-  risk checks.
+  exhaustion, production architecture trade-offs affecting resilience, operability, cost, or
+  failure modes, complexity tax analysis, or AI-generated code risk checks.
 ---
 
 # Production Resilience Reviewer
@@ -213,6 +213,7 @@ See `references/checklist-network-latency.md` for timeout layering, deadline pro
   - Visibility timeout / ack semantics
   - Duplicate delivery handling (at-least-once delivery)
   - Consumer lag and replay safety
+- Right-size prompt: Would fail-fast or queue-and-reconcile be safer than retrying?
 - Flag retry without idempotency on mutating operations as **P0-CRITICAL**
 - Flag retry amplification chains as **P1-HIGH**
 
@@ -275,6 +276,7 @@ See `references/checklist-debuggability.md` for exception context preservation, 
   - Dashboard existence: Can a new on-call engineer understand system health in < 60s?
   - Cardinality bombs: Are metric labels bounded, or can they explode with user input?
   - Multi-window burn-rate alerting for critical SLOs (where applicable)
+- Right-size prompt: Are metrics/logs useful without creating cardinality or cost blowups?
 - Flag services with no observability as **P1-HIGH**
 - Flag high-cardinality metric labels as **P2-MEDIUM**
 
@@ -315,6 +317,7 @@ migration safety explicitly.
   - Clear rollback criteria?
   - Runbook / deployment checklist updated?
   - Ownership and on-call visibility during rollout?
+- Right-size prompt: Does the rollout mechanism reduce net risk?
 - Flag destructive schema/data changes without safe rollback path as **P0-CRITICAL**
 - Flag incompatible contract changes requiring lockstep deploys as **P1-HIGH** (or **P0**
   on critical paths)
@@ -345,6 +348,7 @@ Validation: mixed-version deploy test + rollback test; Monitoring: compare metri
 - Confirm recovery objectives:
   - Is RPO/RTO defined per critical workflow (not just globally)?
   - Are objectives tied to customer/financial impact and contractual SLA?
+- Right-size prompt: Does the RPO/RTO match business impact?
 - Verify recovery drill evidence:
   - Backup + restore tested on production-like data
   - Replay/reconciliation tested for in-flight operations
@@ -419,6 +423,7 @@ Recommendation: fail closed, add scoped service tokens, and enforce per-actor + 
   - Manual/automated quota increase path with ownership
   - Feature-level throttles for high-cost operations
   - Minimum headroom targets for critical dependencies
+- Right-size prompt: Can the expensive path be bounded, simplified, or removed?
 - Flag missing safeguards for quota failures or cost protection on mutating paths as **P1-HIGH**
 
 See `references/checklist-quota-limit-exhaustion.md` for detailed guidance.
@@ -434,64 +439,86 @@ Recommendation: add quota utilization alerts, retry budgets, and degraded queue-
 
 ### Lens 12: Complexity Tax & Architecture Fit
 
-> "Is this architecture paying for complexity it doesn't need?"
+> "Does the architecture fit the evidence, or is it adding failure surface area?"
 
-This lens challenges whether the chosen architecture matches the actual constraints — team
-size, traffic volume, domain maturity, and operational capacity. It is the contrarian lens:
-it asks whether the architecture itself is creating unnecessary failure surface area.
+This lens evaluates whether architecture choices match observed constraints. Microservices,
+Kubernetes, service mesh, event buses, serverless orchestration, and AI/multi-agent workflows
+are not findings by themselves. They become findings only when evidence shows unmet
+independence, operational overload, avoidable cost, or failure amplification.
 
+- Minimum evidence before judging:
+  - team size and service count
+  - ownership model and on-call model
+  - deploy coupling (how many services/repositories change per feature)
+  - shared data ownership and schema-change coupling
+  - request path depth and synchronous fan-out
+  - traffic/cost profile and scaling bottlenecks
+  - platform/SRE support and maturity of paved paths
+  - recent incident/on-call pain tied to architecture
 - Assess distribution necessity:
-  - Does each service boundary have a concrete justification? (independent scaling proof,
-    team autonomy proof, regulatory isolation proof)
-  - Are network calls replacing in-process calls without scaling or team-autonomy benefit?
-    (serialization tax: ~10,000–50,000× latency vs in-memory calls)
-  - Could a modular monolith (single deployable, enforced internal boundaries) achieve the
-    same goals at lower cost?
-- Check team-architecture fit (Conway's Law):
-  - Does the org structure justify the service boundaries?
-  - Is there a dedicated platform team to absorb operational overhead?
-  - What is the engineer-to-service ratio? (<2 engineers per service is a strong smell)
-- Detect premature decomposition:
-  - Were service boundaries drawn before domain understanding stabilized?
-  - Are bounded contexts stable and team-owned, or still shifting?
-  - How many cross-service PRs does an average feature require?
-- Identify distributed monolith anti-patterns:
-  - Services sharing a database
-  - Coordinated deploys required across services
-  - Synchronous call chains deeper than two hops
-  - Test environments that need the entire fleet running
-- Evaluate operational burden vs capacity:
-  - N services × (CI/CD + monitoring + alerting + on-call) vs actual team size
-  - Percentage of engineering time on infrastructure vs features
-  - Service mesh, event bus, orchestration infra for systems with low traffic or small teams
-- Estimate cost multiplier:
-  - Per-service infrastructure duplication (compute, storage, pipeline, observability)
-  - Network egress and cross-service data transfer costs
-  - Platform team headcount required vs available
-- Flag distributed monolith anti-patterns as **P1-HIGH** (all distributed tax, none of
-  the independence)
-- Flag microservices with <10 engineers and no platform team as **P1-HIGH**
-- Flag premature decomposition (unstable domain boundaries) as **P2-MEDIUM**
-- Flag over-engineering (service mesh for <5 services, Kubernetes for <10 engineers) as
-  **P2-MEDIUM**
+  - Does each service boundary have concrete evidence? (independent scaling, team autonomy,
+    regulatory isolation, divergent runtime/data needs)
+  - Are network calls replacing in-process calls without measurable independence, isolation,
+    or scaling benefit?
+  - Could a modular monolith or fewer deployables achieve the same resilience at lower
+    operational cost?
+- Check service and team fit:
+  - Are bounded contexts stable, team-owned, and independently deployable?
+  - Are cross-service changes rare, or does ordinary work require coordinated PRs/deploys?
+  - Do services own their data, or does shared database/schema ownership force coupling?
+- Check event-driven sprawl:
+  - Are async chains shallow, observable, replayable, and owned end-to-end?
+  - Are event schemas versioned with clear producers/consumers and compatibility rules?
+  - Can operators debug dropped, duplicated, delayed, or replayed events without guesswork?
+- Check Kubernetes/service mesh fit:
+  - Is there platform maturity to operate clusters, policies, upgrades, ingress, secrets,
+    observability, and incident response?
+  - Does the mesh solve concrete traffic/security needs, or add opaque failure modes and
+    operational burden?
+- Check serverless orchestration fit:
+  - Do state machines and function chains simplify recovery, or hide state, retries, and
+    partial failures across too many places?
+  - Can developers reproduce, debug, and cost-bound the workflow locally or in test?
+- Check AI or multi-agent workflow fit:
+  - Are agent hops, tool fan-out, model calls, and orchestration layers justified by task
+    decomposition quality?
+  - Can the workflow meet latency/cost targets, explain decisions, and debug bad outcomes?
+- Severity calibration:
+  - Flag as **P1-HIGH** when evidence shows distributed-monolith coupling on a critical path,
+    operational overload that is already causing incidents, or architecture-driven failure
+    amplification.
+  - Flag as **P2-MEDIUM** when evidence shows avoidable complexity, premature boundaries, or
+    cost/debuggability risk without current high blast radius.
+  - Do not file findings for architecture style alone; file on observed mismatch and impact.
 
 See `references/checklist-complexity-tax.md` for detailed guidance.
 
 **Example (condensed):**
 ```
-[COMPLEXITY] 12-service architecture, team of 6, shared PostgreSQL
-  Risk: distributed monolith — coordinated deploys, 40-80ms network tax per
-        request chain, 3 engineers on infra instead of features; no independent
-        scaling or deployment achieved
-  Recommendation: collapse to modular monolith with enforced module boundaries;
-                  extract only when module has proven divergent scaling or
-                  deployment cadence; enforce via ArchUnit/Packwerk-style tooling
-  Validation: measure deploy coupling (how many services change per feature);
-              compare request latency before/after consolidation
-  Monitoring: deploy_coupling_ratio, feature_velocity_per_sprint,
-              infra_cost_per_service, time_spent_on_infra_vs_features
-  Priority: P1-HIGH (distributed monolith on critical path)
+[COMPLEXITY] 12 services, team of 6, shared PostgreSQL, checkout path crosses 5 services
+  Evidence: average feature touches 4 repositories; schema changes require coordinated deploys;
+            last two checkout incidents involved tracing cross-service state
+  Risk: distributed-monolith coupling on a revenue path; the architecture pays distributed
+        operational cost without independent deployability or data ownership
+  Recommendation: consolidate tightly coupled checkout components behind enforced module
+                  boundaries; extract only when a module has proven divergent scaling,
+                  ownership, or isolation needs
+  Validation: measure deploy coupling and request path depth before/after; replay recent
+              incident scenarios against the simpler boundary
+  Monitoring: deploy_coupling_ratio, cross_service_call_depth, architecture_related_incidents
+  Priority: P1-HIGH (evidence-backed coupling on critical path)
 ```
+
+---
+
+## Right-Sized Resilience
+
+Resilience machinery has its own failure modes. Before recommending retries, service meshes,
+multi-region failover, orchestration layers, alerts, or queues, ask whether the mechanism
+reduces net risk for the actual business impact and operating team. Prefer the simplest
+control that bounds blast radius, makes recovery observable, and can be operated during an
+incident. If the recommended machinery adds more coupling, cost, latency, or on-call burden
+than the failure it mitigates, recommend a smaller control.
 
 ---
 
