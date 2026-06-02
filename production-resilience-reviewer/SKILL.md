@@ -4,7 +4,8 @@ description: >
   Use when reviewing production readiness, resilience, failure modes, or reliability of code,
   services, or system designs. Trigger for requests about error handling, retries, timeouts,
   circuit breakers, graceful degradation, observability, DR/RPO/RTO, abuse resilience, quota
-  exhaustion, or AI-generated code risk checks.
+  exhaustion, architecture trade-off review, complexity tax analysis, or AI-generated code
+  risk checks.
 ---
 
 # Production Resilience Reviewer
@@ -65,7 +66,7 @@ If the user does not specify a mode, choose one based on risk and complexity.
 
 ---
 
-## Review Framework: The Eleven Failure Lenses
+## Review Framework: The Twelve Failure Lenses
 
 For every piece of code under review, systematically apply each of these lenses. Not all
 lenses apply to all code — use judgment, but err on the side of coverage.
@@ -431,6 +432,69 @@ Recommendation: add quota utilization alerts, retry budgets, and degraded queue-
 
 ---
 
+### Lens 12: Complexity Tax & Architecture Fit
+
+> "Is this architecture paying for complexity it doesn't need?"
+
+This lens challenges whether the chosen architecture matches the actual constraints — team
+size, traffic volume, domain maturity, and operational capacity. It is the contrarian lens:
+it asks whether the architecture itself is creating unnecessary failure surface area.
+
+- Assess distribution necessity:
+  - Does each service boundary have a concrete justification? (independent scaling proof,
+    team autonomy proof, regulatory isolation proof)
+  - Are network calls replacing in-process calls without scaling or team-autonomy benefit?
+    (serialization tax: ~10,000–50,000× latency vs in-memory calls)
+  - Could a modular monolith (single deployable, enforced internal boundaries) achieve the
+    same goals at lower cost?
+- Check team-architecture fit (Conway's Law):
+  - Does the org structure justify the service boundaries?
+  - Is there a dedicated platform team to absorb operational overhead?
+  - What is the engineer-to-service ratio? (<2 engineers per service is a strong smell)
+- Detect premature decomposition:
+  - Were service boundaries drawn before domain understanding stabilized?
+  - Are bounded contexts stable and team-owned, or still shifting?
+  - How many cross-service PRs does an average feature require?
+- Identify distributed monolith anti-patterns:
+  - Services sharing a database
+  - Coordinated deploys required across services
+  - Synchronous call chains deeper than two hops
+  - Test environments that need the entire fleet running
+- Evaluate operational burden vs capacity:
+  - N services × (CI/CD + monitoring + alerting + on-call) vs actual team size
+  - Percentage of engineering time on infrastructure vs features
+  - Service mesh, event bus, orchestration infra for systems with low traffic or small teams
+- Estimate cost multiplier:
+  - Per-service infrastructure duplication (compute, storage, pipeline, observability)
+  - Network egress and cross-service data transfer costs
+  - Platform team headcount required vs available
+- Flag distributed monolith anti-patterns as **P1-HIGH** (all distributed tax, none of
+  the independence)
+- Flag microservices with <10 engineers and no platform team as **P1-HIGH**
+- Flag premature decomposition (unstable domain boundaries) as **P2-MEDIUM**
+- Flag over-engineering (service mesh for <5 services, Kubernetes for <10 engineers) as
+  **P2-MEDIUM**
+
+See `references/checklist-complexity-tax.md` for detailed guidance.
+
+**Example (condensed):**
+```
+[COMPLEXITY] 12-service architecture, team of 6, shared PostgreSQL
+  Risk: distributed monolith — coordinated deploys, 40-80ms network tax per
+        request chain, 3 engineers on infra instead of features; no independent
+        scaling or deployment achieved
+  Recommendation: collapse to modular monolith with enforced module boundaries;
+                  extract only when module has proven divergent scaling or
+                  deployment cadence; enforce via ArchUnit/Packwerk-style tooling
+  Validation: measure deploy coupling (how many services change per feature);
+              compare request latency before/after consolidation
+  Monitoring: deploy_coupling_ratio, feature_velocity_per_sprint,
+              infra_cost_per_service, time_spent_on_infra_vs_features
+  Priority: P1-HIGH (distributed monolith on critical path)
+```
+
+---
+
 ## Applicability Guidance
 
 Apply relevant lenses only. Pure utility functions don't need retry analysis. One-off migrations need data integrity, not dashboards. When a lens doesn't apply, say so briefly.
@@ -508,6 +572,7 @@ Deep-dive checklists in `references/`:
 - `checklist-load-concurrency.md` (Lens 2), `checklist-network-latency.md` (Lens 3), `checklist-debuggability.md` (Lens 6)
 - `checklist-change-management.md` (Lens 8), `checklist-disaster-recovery.md` (Lens 9)
 - `checklist-security-abuse-reliability.md` (Lens 10), `checklist-quota-limit-exhaustion.md` (Lens 11)
+- `checklist-complexity-tax.md` (Lens 12)
 - `severity-calibration.md`, `validation-monitoring-patterns.md`
 
 Consult when deeper analysis is needed or user requests detailed guidance on a specific lens.
