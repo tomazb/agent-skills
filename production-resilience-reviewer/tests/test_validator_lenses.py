@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from conftest import make_skill_text
-
-
-def test_lens_headings_validation_match(validator):
+def test_lens_headings_validation_match(validator, make_skill_text):
     assert validator.check_lens_headings(make_skill_text()) == []
 
 
-def test_lens_headings_validation_missing_lens(validator):
+def test_lens_headings_validation_missing_lens(validator, make_skill_text):
     skill_text = make_skill_text().replace(
         "### Lens 12: Example\n\nLens 12 guidance.\n\n---\n", ""
     )
@@ -22,7 +19,9 @@ def test_expected_references_check(validator, package_factory):
     assert len(issues) == len(validator.EXPECTED_REFERENCES)
 
 
-def test_resilience_guidance_guards_require_architecture_fit_calibration(validator):
+def test_resilience_guidance_guards_require_architecture_fit_calibration(
+    validator, make_skill_text
+):
     skill_text = make_skill_text()
     reference_text = "# ref\n"
 
