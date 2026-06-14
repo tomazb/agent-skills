@@ -36,6 +36,10 @@ def make_skill_text(*, missing_phases: list[int] | None = None) -> str:
         lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
+@pytest.fixture(name="make_skill_text")
+def make_skill_text_fixture():
+    return make_skill_text
+
 
 @pytest.fixture(scope="session")
 def validator():
