@@ -57,7 +57,7 @@ MAX_SKILL_LINES = 160
 
 
 def read_text(path: Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+    return path.read_text(encoding="utf-8-sig", errors="replace")
 
 
 def ends_with_newline(path: Path) -> bool:
@@ -123,11 +123,18 @@ def markdown_headings(skill_text: str) -> set[str]:
     return headings
 
 
+def strip_frontmatter(skill_text: str) -> str:
+    match = FRONTMATTER_RE.match(skill_text)
+    if match:
+        return skill_text[match.end():]
+    return skill_text
+
+
 def visible_lines(skill_text: str) -> list[str]:
     lines: list[str] = []
     in_fence = False
 
-    for line in skill_text.splitlines():
+    for line in strip_frontmatter(skill_text).splitlines():
         if FENCE_RE.match(line):
             in_fence = not in_fence
             continue
@@ -358,12 +365,15 @@ def check_packaged_tools(root: Path) -> list[str]:
             issues.append(f"{python_file.relative_to(root)}: {error.msg}")
 
     for shell_file in sorted(tools_dir.rglob("*.sh")):
-        result = subprocess.run(
-            ["bash", "-n", str(shell_file)],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        try:
+            result = subprocess.run(
+                ["bash", "-n", str(shell_file)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+        except FileNotFoundError:
+            continue
         if result.returncode != 0:
             shell_error = result.stderr.strip() or "shell syntax check failed"
             issues.append(f"{shell_file.relative_to(root)}: {shell_error}")

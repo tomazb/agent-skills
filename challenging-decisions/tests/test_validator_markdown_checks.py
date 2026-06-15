@@ -50,6 +50,22 @@ def test_literal_frontmatter_description_is_accepted(validator, make_skill_text_
     assert validator.check_skill_frontmatter(skill_text) == []
 
 
+def test_headings_inside_frontmatter_are_not_counted(validator, make_skill_text_fn):
+    # A heading-like line living inside the folded `description: >` block must not
+    # be mistaken for a real body heading; otherwise the validator would pass even
+    # after the actual section was deleted.
+    skill_text = make_skill_text_fn().replace(
+        "  Use when a decision sounds reasonable but still needs pressure-testing before agreement, "
+        "especially for scope, architecture, sequencing, or irreversible product trade-offs.",
+        "  Use when a decision sounds reasonable.\n  ## Response pattern",
+    ).replace("\n## Response pattern\n", "\n")
+
+    assert "## Response pattern" not in validator.markdown_headings(skill_text)
+    assert validator.check_required_sections(skill_text) == [
+        "SKILL.md is missing required sections: ## Response pattern"
+    ]
+
+
 def test_guidance_guards_require_challenge_first_and_followup(
     validator, make_skill_text_fn
 ):

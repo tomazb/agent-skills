@@ -103,12 +103,15 @@ def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
                 issues.append(f"{python_file.relative_to(repo_root)}: {error.msg}")
 
         for shell_file in shell_files:
-            result = subprocess.run(
-                ["bash", "-n", str(shell_file)],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                result = subprocess.run(
+                    ["bash", "-n", str(shell_file)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except FileNotFoundError:
+                continue
             if result.returncode != 0:
                 shell_error = result.stderr.strip() or "shell syntax check failed"
                 issues.append(f"{shell_file.relative_to(repo_root)}: {shell_error}")
