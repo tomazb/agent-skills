@@ -6,6 +6,9 @@ import argparse
 from pathlib import Path
 import zipfile
 
+IGNORED_DIR_NAMES = {"__pycache__"}
+IGNORED_SUFFIXES = {".pyc", ".pyo", ".tmp", ".swp", ".skill"}
+
 
 def find_skill_dirs(repo_root: Path) -> list[Path]:
     skill_dirs: list[Path] = []
@@ -17,11 +20,25 @@ def find_skill_dirs(repo_root: Path) -> list[Path]:
     return skill_dirs
 
 
+def should_archive_path(skill_dir: Path, path: Path) -> bool:
+    try:
+        relative_parts = path.relative_to(skill_dir).parts
+    except ValueError:
+        return False
+
+    return (
+        path.is_file()
+        and not any(part in IGNORED_DIR_NAMES or part.startswith(".") for part in relative_parts)
+        and path.suffix not in IGNORED_SUFFIXES
+        and not path.name.endswith("~")
+    )
+
+
 def build_archive(skill_dir: Path, output_dir: Path) -> Path:
     archive_path = output_dir / f"{skill_dir.name}.skill"
     with zipfile.ZipFile(archive_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(skill_dir.rglob("*")):
-            if not path.is_file():
+            if not should_archive_path(skill_dir, path):
                 continue
             archive.write(path, arcname=path.relative_to(skill_dir.parent))
     return archive_path

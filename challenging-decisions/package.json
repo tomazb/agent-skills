@@ -1,0 +1,17 @@
+{
+  "name": "challenging-decisions",
+  "version": "1.0.0",
+  "description": "Pressure-test product and architecture decisions before agreement.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q tests",
+    "bump:version": "python3 tools/bump_version.py"
+  },
+  "keywords": [
+    "decision-making",
+    "pressure-test",
+    "architecture",
+    "product-strategy",
+    "counterarguments"
+  ]
+}

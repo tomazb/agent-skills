@@ -1,34 +1,31 @@
 from __future__ import annotations
 
-from conftest import make_skill_text
-
-
-def test_skill_line_count_passes_under_limit(validator, package_factory):
+def test_skill_line_count_passes_under_limit(validator, package_factory, make_skill_text):
     root = package_factory(skill_text=make_skill_text())
     issues = validator.check_skill_file(root)
     assert not any("lines" in issue and ">" in issue for issue in issues)
 
 
-def test_skill_line_count_enforcement(validator, package_factory):
+def test_skill_line_count_enforcement(validator, package_factory, make_skill_text):
     long_skill = make_skill_text() + ("extra line\n" * validator.MAX_SKILL_LINES)
     root = package_factory(skill_text=long_skill)
     issues = validator.check_skill_file(root)
     assert any("SKILL.md is" in issue for issue in issues)
 
 
-def test_phase_headings_all_present(validator, package_factory):
+def test_phase_headings_all_present(validator, package_factory, make_skill_text):
     root = package_factory(skill_text=make_skill_text())
     issues = validator.check_skill_file(root)
     assert not any("phase" in issue.lower() for issue in issues)
 
 
-def test_phase_headings_missing_one(validator, package_factory):
+def test_phase_headings_missing_one(validator, package_factory, make_skill_text):
     root = package_factory(skill_text=make_skill_text(missing_phases=[5]))
     issues = validator.check_skill_file(root)
     assert any("missing phases" in issue for issue in issues)
 
 
-def test_phase_headings_missing_multiple(validator, package_factory):
+def test_phase_headings_missing_multiple(validator, package_factory, make_skill_text):
     root = package_factory(skill_text=make_skill_text(missing_phases=[0, 8, 16]))
     issues = validator.check_skill_file(root)
     assert any("missing phases" in issue for issue in issues)
