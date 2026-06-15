@@ -1,20 +1,17 @@
 from __future__ import annotations
 
-from conftest import make_skill_text
-
-
-def test_framework_headings_all_present(validator):
+def test_framework_headings_all_present(validator, make_skill_text):
     assert validator.check_framework_headings(make_skill_text()) == []
 
 
-def test_framework_headings_missing_one(validator):
+def test_framework_headings_missing_one(validator, make_skill_text):
     skill_text = make_skill_text(missing_frameworks=[10])
     issues = validator.check_framework_headings(skill_text)
     assert len(issues) == 1
     assert "expected [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]" in issues[0]
 
 
-def test_framework_headings_missing_multiple(validator):
+def test_framework_headings_missing_multiple(validator, make_skill_text):
     skill_text = make_skill_text(missing_frameworks=[4, 7])
     issues = validator.check_framework_headings(skill_text)
     assert len(issues) == 1
@@ -28,7 +25,9 @@ def test_framework_spacing_correct(validator, package_factory):
     assert spacing_issues == []
 
 
-def test_framework_spacing_detects_double_blank(validator, package_factory):
+def test_framework_spacing_detects_double_blank(
+    validator, package_factory, make_skill_text
+):
     root = package_factory(skill_text=make_skill_text(double_blank_after_framework=3))
     issues = validator.check_skill_file(root)
     assert any("must be followed by exactly 1 blank line" in i for i in issues)

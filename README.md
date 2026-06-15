@@ -20,6 +20,22 @@ clearer local code without broadening scope or inventing unnecessary abstraction
 - Treats behavior preservation, scope discipline, and validation status as explicit
   parts of the skill contract
 
+### [Challenging Decisions](challenging-decisions/)
+
+Pressure-testing skill for product, architecture, scope, and sequencing
+decisions before reassurance. Helps an agent challenge plausible ideas first and
+endorse them only after the choice survives scrutiny.
+
+**Key capabilities:**
+
+- Challenges before agreement instead of leading with reassurance
+- Uses named decision lenses to test evidence, scope, timing, complexity,
+  reversibility, and opportunity cost
+- Surfaces the strongest counterarguments first and states what evidence,
+  trigger, or constraint would change the call
+- Ends with a forcing question and gives explicit follow-up guidance after the
+  user responds
+
 ### [How to Speak — Winston Framework](how-to-speak-winston-framework/)
 
 Apply Patrick Winston's MIT presentation framework to craft compelling talks, audit slides, make ideas memorable, structure persuasive presentations, and design teaching props and stories.

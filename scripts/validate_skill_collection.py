@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import py_compile
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -84,16 +85,36 @@ def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
     if references_dir.exists() and not any(references_dir.glob("*.md")):
         issues.append(f"{references_dir.relative_to(repo_root)}: directory exists but contains no markdown files")
 
-    scripts_dir = skill_dir / "scripts"
-    if scripts_dir.exists():
-        python_files = sorted(scripts_dir.rglob("*.py"))
-        if not python_files:
-            issues.append(f"{scripts_dir.relative_to(repo_root)}: directory exists but contains no Python files")
+    for python_dir_name in ("scripts", "tools"):
+        python_dir = skill_dir / python_dir_name
+        if not python_dir.exists():
+            continue
+
+        python_files = sorted(python_dir.rglob("*.py"))
+        shell_files = sorted(python_dir.rglob("*.sh"))
+        if not python_files and not shell_files:
+            issues.append(
+                f"{python_dir.relative_to(repo_root)}: directory exists but contains no Python or shell files"
+            )
         for python_file in python_files:
             try:
                 py_compile.compile(str(python_file), doraise=True)
             except py_compile.PyCompileError as error:
                 issues.append(f"{python_file.relative_to(repo_root)}: {error.msg}")
+
+        for shell_file in shell_files:
+            try:
+                result = subprocess.run(
+                    ["bash", "-n", str(shell_file)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+            except FileNotFoundError:
+                continue
+            if result.returncode != 0:
+                shell_error = result.stderr.strip() or "shell syntax check failed"
+                issues.append(f"{shell_file.relative_to(repo_root)}: {shell_error}")
 
     return issues
 
