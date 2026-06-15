@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
 from pathlib import Path
+
+import pytest
 
 
 def load_module(module_path: Path, module_name: str):
@@ -33,6 +36,7 @@ def test_validate_skill_dir_compiles_python_under_tools(tmp_path):
     assert any("broken.py" in issue for issue in issues)
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash executable not found")
 def test_validate_skill_dir_checks_shell_entrypoints_under_tools(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     module = load_module(

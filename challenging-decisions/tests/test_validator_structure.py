@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
+
+import pytest
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -115,6 +118,7 @@ def test_validate_root_reports_invalid_python_tool(validator, package_factory):
     assert any("tools/bump_version.py" in issue for issue in issues)
 
 
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash executable not found")
 def test_validate_root_reports_invalid_shell_tool(validator, package_factory):
     root = package_factory(tool_shell_text="if [ -n \"$BROKEN\"; then\n")
     issues = validator.validate_root(root)
