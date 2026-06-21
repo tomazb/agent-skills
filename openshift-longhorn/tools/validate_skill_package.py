@@ -47,7 +47,6 @@ SAFETY_PHRASES = [
     "wipefs -n",
     "/dev/disk/by-id/",
     "mkfs",
-    "wipefs",
 ]
 
 SNO_STORAGE_PHRASES = [
@@ -174,8 +173,18 @@ def check_required_sections(skill_text: str) -> list[str]:
     return []
 
 
+# README and CHANGELOG are project metadata, not lifecycle runbooks. Phrase-group
+# guidance must live in SKILL.md or the references, so it cannot be "satisfied"
+# by an incidental mention in the README or changelog.
+PHRASE_SCAN_EXCLUDES = {"README.md", "CHANGELOG.md"}
+
+
 def package_markdown_text(root: Path) -> str:
-    return "\n".join(read_text(path) for path in sorted(root.rglob("*.md")))
+    return "\n".join(
+        read_text(path)
+        for path in sorted(root.rglob("*.md"))
+        if path.name not in PHRASE_SCAN_EXCLUDES
+    )
 
 
 def missing_phrases(text: str, phrases: list[str]) -> list[str]:
@@ -230,6 +239,27 @@ def check_changelog_version(root: Path) -> list[str]:
     return [f"CHANGELOG.md does not contain a heading for VERSION '{version}'."]
 
 
+README_VERSION_RE = re.compile(r"Current version:\s*\*\*(?P<version>[^*]+)\*\*")
+
+
+def check_readme_version(root: Path) -> list[str]:
+    version_file = root / "VERSION"
+    readme_file = root / "README.md"
+    if not readme_file.exists() or not version_file.exists():
+        return []
+
+    version = read_text(version_file).strip()
+    match = README_VERSION_RE.search(read_text(readme_file))
+    if match is None:
+        return ["README.md: missing 'Current version: **<version>**' marker."]
+    readme_version = match.group("version").strip()
+    if readme_version != version:
+        return [
+            f"README.md version ({readme_version}) and VERSION ({version}) are out of sync."
+        ]
+    return []
+
+
 def check_skill_file(root: Path) -> list[str]:
     skill_file = root / "SKILL.md"
     if not skill_file.exists():
@@ -254,14 +284,17 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_expected_references(root))
     issues.extend(check_version_sync(root))
     issues.extend(check_changelog_version(root))
+    issues.extend(check_readme_version(root))
 
-    if not issues:
-        all_text = package_markdown_text(root)
-        issues.extend(check_phrase_group(all_text, SAFETY_PHRASES, "destructive disk safety"))
-        issues.extend(check_phrase_group(all_text, SNO_STORAGE_PHRASES, "SNO replica/default StorageClass"))
-        issues.extend(check_phrase_group(all_text, V2_PHRASES, "V2 raw block/hugepages/modules/SCC"))
-        issues.extend(check_phrase_group(all_text, OPENSHIFT_PHRASES, "OpenShift SCC/MachineConfig/oauth-proxy"))
-        issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
+    # Content/phrase checks run unconditionally so a single validation pass reports
+    # both structural and guidance gaps instead of hiding content issues until the
+    # structural problems are fixed.
+    all_text = package_markdown_text(root)
+    issues.extend(check_phrase_group(all_text, SAFETY_PHRASES, "destructive disk safety"))
+    issues.extend(check_phrase_group(all_text, SNO_STORAGE_PHRASES, "SNO replica/default StorageClass"))
+    issues.extend(check_phrase_group(all_text, V2_PHRASES, "V2 raw block/hugepages/modules/SCC"))
+    issues.extend(check_phrase_group(all_text, OPENSHIFT_PHRASES, "OpenShift SCC/MachineConfig/oauth-proxy"))
+    issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill_file:
