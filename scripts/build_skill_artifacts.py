@@ -6,7 +6,10 @@ import argparse
 from pathlib import Path
 import zipfile
 
-IGNORED_DIR_NAMES = {"__pycache__"}
+# "tests" holds the development test suite, which is not part of the shipped skill
+# and may import repo-root helpers (e.g. scripts/) that do not exist inside an
+# extracted package. Excluding it keeps the archive self-contained and runnable.
+IGNORED_DIR_NAMES = {"__pycache__", "tests"}
 IGNORED_SUFFIXES = {".pyc", ".pyo", ".tmp", ".swp", ".skill"}
 
 
@@ -64,7 +67,12 @@ def main() -> int:
     built_archives = [build_archive(skill_dir, output_dir) for skill_dir in skill_dirs]
 
     for archive_path in built_archives:
-        print(archive_path.relative_to(repo_root))
+        # --output-dir may live outside the repo, so fall back to the absolute path
+        # when it cannot be expressed relative to the repo root.
+        try:
+            print(archive_path.relative_to(repo_root))
+        except ValueError:
+            print(archive_path)
 
     return 0
 

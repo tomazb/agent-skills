@@ -2,12 +2,10 @@
 
 This journal records one observed Longhorn `v1.12.0` V2 Data Engine conversion on OpenShift 4.22 SNO. Treat host names, device names, versions, and command outputs as evidence from that environment, not universal defaults.
 
-## Original Working Notes
-
 ## Environment
 
 - Cluster: OpenShift 4.22.1 / Kubernetes 1.35.5
-- Node: `htz2.all-it.tech`
+- Node: `sno1.example.com`
 - OS/kernel observed before V2 prep: RHCOS/RHEL CoreOS 9.8, `5.14.0-687.13.1.el9_8.x86_64`
 - Longhorn: `v1.12.0`
 - Starting state:
@@ -83,7 +81,7 @@ The initial attempt included a mask for `var-mnt-longhorn.mount` in a later
 MachineConfig. That caused MCP degradation:
 
 ```text
-unexpected on-disk state validating against rendered-master-41aa3095056d4894d4b7eb53f1ce917a:
+unexpected on-disk state validating against rendered-master-<hash>:
 mode mismatch for file: "/etc/systemd/system/var-mnt-longhorn.mount";
 expected: -rw-r--r--/420/0644; received: Lrwxrwxrwx/.../0777
 ```
@@ -93,7 +91,7 @@ Cause: MachineConfigDaemon validates current on-disk state against the previous 
 Recovery:
 
 ```bash
-oc debug node/htz2.all-it.tech -- chroot /host bash -c '
+oc debug node/sno1.example.com -- chroot /host bash -c '
   rm -f /etc/systemd/system/var-mnt-longhorn.mount
   printf "%s\n" \
     "[Unit]" \
@@ -145,7 +143,7 @@ After the V2 prerequisite MachineConfig settled:
 Command used:
 
 ```bash
-oc debug node/htz2.all-it.tech -- chroot /host bash -c '
+oc debug node/sno1.example.com -- chroot /host bash -c '
   cat /proc/cmdline
   grep -i Huge /proc/meminfo
   lsmod | egrep "^(vfio_pci|vfio_iommu_type1|uio_pci_generic|nvme_tcp)"
@@ -176,7 +174,7 @@ Confirmed there were no Longhorn volumes, replicas, or engines before wiping.
 Then marked the old filesystem disk unschedulable:
 
 ```bash
-oc -n longhorn-system patch nodes.longhorn.io htz2.all-it.tech --type=json -p='[
+oc -n longhorn-system patch nodes.longhorn.io sno1.example.com --type=json -p='[
   {"op":"replace","path":"/spec/disks/longhorn-disk/allowScheduling","value":false}
 ]'
 ```
@@ -184,11 +182,11 @@ oc -n longhorn-system patch nodes.longhorn.io htz2.all-it.tech --type=json -p='[
 Wiped the dedicated disk signature:
 
 ```bash
-oc debug node/htz2.all-it.tech -- chroot /host bash -c '
+oc debug node/sno1.example.com -- chroot /host bash -c '
   set -e
-  wipefs -a /dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_S676NF0X230069
+  wipefs -a /dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_SXXXXXXXXXXXXX
   udevadm settle
-  lsblk -f /dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_S676NF0X230069
+  lsblk -f /dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_SXXXXXXXXXXXXX
 '
 ```
 
@@ -221,20 +219,20 @@ oc -n longhorn-system patch settings.longhorn.io create-default-disk-labeled-nod
   --type=merge -p '{"value":"false"}'
 oc -n longhorn-system patch settings.longhorn.io default-data-path \
   --type=merge -p '{"value":"/var/lib/longhorn/"}'
-oc label node htz2.all-it.tech node.longhorn.io/create-default-disk-
+oc label node sno1.example.com node.longhorn.io/create-default-disk-
 ```
 
 Replaced the old filesystem disk with a V2 block disk:
 
 ```bash
-oc -n longhorn-system patch nodes.longhorn.io htz2.all-it.tech --type=json -p='[
+oc -n longhorn-system patch nodes.longhorn.io sno1.example.com --type=json -p='[
   {"op":"remove","path":"/spec/disks/longhorn-disk"},
   {"op":"add","path":"/spec/disks/longhorn-v2-nvme","value":{
     "allowScheduling":true,
     "diskDriver":"aio",
     "diskType":"block",
     "evictionRequested":false,
-    "path":"/dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_S676NF0X230069",
+    "path":"/dev/disk/by-id/nvme-SAMSUNG_MZVL21T0HCLR-00B00_SXXXXXXXXXXXXX",
     "storageReserved":0,
     "tags":["dedicated","v2"]
   }}
@@ -313,7 +311,7 @@ Result:
   - exactly one replica
   - `DATA ENGINE: v2`
   - `STATE: running`
-  - `NODE: htz2.all-it.tech`
+  - `NODE: sno1.example.com`
   - `DISK: 761fa8b8-321d-479a-85dd-90690730afff`
 - Longhorn engine:
   - `DATA ENGINE: v2`

@@ -1,6 +1,6 @@
 ---
 name: openshift-longhorn
-description: Use when Codex needs to discover, plan, install, validate, harden, upgrade, migrate, back up, restore, maintain, uninstall, or troubleshoot Longhorn on OpenShift/OKD, especially Single Node OpenShift, dedicated disk preparation, V1 filesystem data disks, V2 block/SPDK data engine, OpenShift oauth-proxy handling, SCC/MachineConfig workflows, StorageClass defaulting, or lifecycle safety.
+description: Use when discovering, planning, installing, validating, hardening, upgrading, migrating, backing up, restoring, maintaining, uninstalling, or troubleshooting Longhorn on OpenShift/OKD — including Single Node OpenShift, dedicated disk preparation, V1 filesystem data disks, V2 block/SPDK data engine, oauth-proxy handling, SCC/MachineConfig workflows, StorageClass defaulting, and lifecycle safety.
 ---
 
 # OpenShift Longhorn Lifecycle
