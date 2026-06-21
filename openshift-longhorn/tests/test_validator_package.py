@@ -90,3 +90,28 @@ def test_missing_raw_block_phrase_alone_fails(validator, package_factory, refere
     root = package_factory(reference_content=text)
     issues = validator.validate_root(root)
     assert any("V2 raw block/hugepages/modules/SCC" in issue for issue in issues)
+
+
+def test_readme_version_matches_passes(validator, package_factory):
+    # The factory writes README "Current version: **1.2.3**" and VERSION "1.2.3",
+    # so the sync check must report no issues.
+    root = package_factory()
+    assert validator.check_readme_version(root) == []
+
+
+def test_readme_version_mismatch_fails(validator, package_factory):
+    root = package_factory()
+    (root / "README.md").write_text(
+        "# OpenShift Longhorn\n\nCurrent version: **9.9.9**\n", encoding="utf-8"
+    )
+    issues = validator.validate_root(root)
+    assert any("README.md version" in issue and "out of sync" in issue for issue in issues)
+
+
+def test_readme_missing_version_marker_fails(validator, package_factory):
+    root = package_factory()
+    (root / "README.md").write_text(
+        "# OpenShift Longhorn\n\nNo version marker here.\n", encoding="utf-8"
+    )
+    issues = validator.validate_root(root)
+    assert any("missing 'Current version" in issue for issue in issues)
