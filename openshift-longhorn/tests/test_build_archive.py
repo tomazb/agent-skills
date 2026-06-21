@@ -18,24 +18,21 @@ def load_build_module():
 
 def test_archive_includes_package_files_and_excludes_generated_artifacts(tmp_path):
     module = load_build_module()
-    skill_dir = Path(__file__).resolve().parents[1]
-    # Plant a generated artifact under an archived directory (tools/) so the test
-    # actually proves __pycache__/.pyc exclusion. Use an isolated dir we fully own
-    # and never touch a shared cache directory in teardown.
-    pycache = skill_dir / "tools" / "__pycache__"
-    preexisting = pycache.exists()
-    pycache.mkdir(exist_ok=True)
-    generated = pycache / "generated.pyc"
-    generated.write_bytes(b"generated")
+    # Copy the package into a temp dir so the test never mutates the checked-in
+    # tree (no manual cleanup, no cross-test interference). The generated .pyc is
+    # planted under an archived directory (tools/) so the test actually proves
+    # __pycache__/.pyc exclusion.
+    source_dir = Path(__file__).resolve().parents[1]
+    skill_dir = tmp_path / "openshift-longhorn"
+    shutil.copytree(source_dir, skill_dir)
 
-    try:
-        archive_path = module.build_archive(skill_dir, tmp_path)
-        with zipfile.ZipFile(archive_path) as archive:
-            names = set(archive.namelist())
-    finally:
-        generated.unlink(missing_ok=True)
-        if not preexisting:
-            shutil.rmtree(pycache, ignore_errors=True)
+    pycache = skill_dir / "tools" / "__pycache__"
+    pycache.mkdir(exist_ok=True)
+    (pycache / "generated.pyc").write_bytes(b"generated")
+
+    archive_path = module.build_archive(skill_dir, tmp_path)
+    with zipfile.ZipFile(archive_path) as archive:
+        names = set(archive.namelist())
 
     required = {
         "openshift-longhorn/SKILL.md",
