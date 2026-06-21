@@ -1,6 +1,6 @@
 # OpenShift Longhorn
 
-Current version: **1.0.0**
+Current version: **1.1.0**
 
 Lifecycle skill for planning, installing, migrating, upgrading, validating, hardening, backing up, restoring, maintaining, and uninstalling Longhorn on OpenShift/OKD.
 
@@ -19,7 +19,15 @@ The validated OpenShift 4.22 SNO / Longhorn v1.12.0 V2 journal is retained in `r
 
 ## Validation
 
+The package self-check ships with the skill and runs anywhere it is extracted:
+
 ```bash
 bash tools/validate_skill_package.sh
+```
+
+The full test suite runs from the repository checkout (the `tests/` directory is a
+development dependency and is not included in the packaged `.skill` archive):
+
+```bash
 pytest -q
 ```
