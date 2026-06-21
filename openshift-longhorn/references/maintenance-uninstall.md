@@ -81,13 +81,21 @@ oc -n longhorn-system patch settings.longhorn.io deleting-confirmation-flag \
   --type=merge -p '{"value":"true"}'
 ```
 
-For manifest installs, use the uninstall job matching the installed Longhorn version:
+Uninstall with the same install method that was used.
+
+For Helm installs, uninstall the release after the confirmation flag is set:
+
+```bash
+helm uninstall longhorn -n longhorn-system
+```
+
+For manifest installs on OpenShift/OKD, run the uninstall job matching the installed Longhorn version, then delete the OKD deploy manifest (the same `longhorn-okd.yaml` applied at install, so OpenShift-specific oauth-proxy/SCC resources are removed) and the uninstall job:
 
 ```bash
 LONGHORN_VERSION="v<installed-version>"
 oc create -f "https://raw.githubusercontent.com/longhorn/longhorn/${LONGHORN_VERSION}/uninstall/uninstall.yaml"
 oc -n longhorn-system get job/longhorn-uninstall -w
-oc delete -f "https://raw.githubusercontent.com/longhorn/longhorn/${LONGHORN_VERSION}/deploy/longhorn.yaml"
+oc delete -f "https://raw.githubusercontent.com/longhorn/longhorn/${LONGHORN_VERSION}/deploy/longhorn-okd.yaml"
 oc delete -f "https://raw.githubusercontent.com/longhorn/longhorn/${LONGHORN_VERSION}/uninstall/uninstall.yaml"
 ```
 
