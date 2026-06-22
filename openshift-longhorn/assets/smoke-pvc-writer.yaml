@@ -1,0 +1,70 @@
+# Replace placeholders directly, or generate a concrete manifest with:
+# python3 scripts/render_smoke_manifest.py --mode v1 --output /tmp/longhorn-v1-smoke.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: longhorn-smoke
+    longhorn.io/data-engine: __MODE__
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: __PVC_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: longhorn-smoke
+    longhorn.io/data-engine: __MODE__
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: __STORAGE_CLASS__
+  volumeMode: Filesystem
+  resources:
+    requests:
+      storage: __SIZE__
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: __POD_NAME__
+  namespace: __NAMESPACE__
+  labels:
+    app.kubernetes.io/name: longhorn-smoke
+    longhorn.io/data-engine: __MODE__
+spec:
+  restartPolicy: Always
+  terminationGracePeriodSeconds: 5
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: writer
+      image: __IMAGE__
+      imagePullPolicy: IfNotPresent
+      command:
+        - /bin/sh
+        - -c
+      args:
+        - |
+          set -eu
+          while true; do
+            date -Iseconds > /data/probe
+            cat /data/probe
+            sleep 30
+          done
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+      volumeMounts:
+        - name: data
+          mountPath: /data
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: __PVC_NAME__

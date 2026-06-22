@@ -108,6 +108,24 @@ def package_factory(tmp_path, validator):
         (tools / "validate_skill_package.py").write_text("# validator\n", encoding="utf-8")
         (tools / "validate_skill_package.sh").write_text("#!/usr/bin/env bash\n", encoding="utf-8")
 
+        scripts = root / "scripts"
+        scripts.mkdir()
+        (scripts / "patch_longhorn_okd_manifest.py").write_text(
+            "#!/usr/bin/env python3\n", encoding="utf-8"
+        )
+        (scripts / "post_uninstall_audit.sh").write_text(
+            "#!/usr/bin/env bash\n", encoding="utf-8"
+        )
+        (scripts / "render_smoke_manifest.py").write_text(
+            "#!/usr/bin/env python3\n", encoding="utf-8"
+        )
+
+        assets = root / "assets"
+        assets.mkdir()
+        (assets / "smoke-pvc-writer.yaml").write_text(
+            "apiVersion: v1\nkind: Pod\nmetadata:\n  name: writer\n", encoding="utf-8"
+        )
+
         if include_references:
             content = reference_content or reference_text()
             for rel in validator.EXPECTED_REFERENCES:
