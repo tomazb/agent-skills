@@ -27,6 +27,7 @@ class PatchOptions:
     longhorn_default: bool = False
     replicas: int = 1
     v1_data_path: str = "/var/lib/longhorn/"
+    keep_v1_engine: bool = False
     v2_disk_selector: str = "v2"
     v2_memory_size: str = "2048"
 
@@ -127,10 +128,12 @@ def _patch_default_setting_configmap(configmap: dict[str, Any], options: PatchOp
     settings["create-default-disk-labeled-nodes"] = "false"
 
     if options.mode == "v2":
+        settings["v1-data-engine"] = "true" if options.keep_v1_engine else "false"
         settings["v2-data-engine"] = "true"
         settings["data-engine-hugepage-enabled"] = _json_setting({"v2": "true"})
         settings["data-engine-memory-size"] = _json_setting({"v2": options.v2_memory_size})
     else:
+        settings["v1-data-engine"] = "true"
         settings["v2-data-engine"] = "false"
         settings["data-engine-hugepage-enabled"] = _json_setting({"v2": "false"})
         settings.pop("data-engine-memory-size", None)
@@ -219,6 +222,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Default V1 filesystem data path.",
     )
     parser.add_argument(
+        "--keep-v1-engine",
+        default=False,
+        type=parse_bool,
+        metavar="true|false",
+        help="For --mode v2, keep V1 Data Engine enabled for migration scenarios.",
+    )
+    parser.add_argument(
         "--v2-disk-selector",
         default="v2",
         help="StorageClass diskSelector to set for V2 volumes.",
@@ -239,6 +249,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         longhorn_default=args.longhorn_default,
         replicas=args.replicas,
         v1_data_path=args.v1_data_path,
+        keep_v1_engine=args.keep_v1_engine,
         v2_disk_selector=args.v2_disk_selector,
         v2_memory_size=args.v2_memory_size,
     )

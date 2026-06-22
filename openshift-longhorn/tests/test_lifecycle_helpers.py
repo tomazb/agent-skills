@@ -117,6 +117,7 @@ def test_patch_longhorn_okd_manifest_for_v2_sets_engine_defaults_and_oauth_proxy
     settings = embedded_yaml(patched, "longhorn-default-setting", "default-setting.yaml")
     assert settings["default-replica-count"] == '{"v1":"1","v2":"1"}'
     assert settings["create-default-disk-labeled-nodes"] == "false"
+    assert settings["v1-data-engine"] == "false"
     assert settings["v2-data-engine"] == "true"
     assert settings["data-engine-hugepage-enabled"] == '{"v2":"true"}'
     assert settings["data-engine-memory-size"] == '{"v2":"2048"}'
@@ -137,9 +138,24 @@ def test_patch_longhorn_okd_manifest_for_v1_removes_v2_storageclass_selector():
     assert "diskSelector" not in storageclass["parameters"]
 
     settings = embedded_yaml(patched, "longhorn-default-setting", "default-setting.yaml")
+    assert settings["v1-data-engine"] == "true"
     assert settings["v2-data-engine"] == "false"
     assert settings["data-engine-hugepage-enabled"] == '{"v2":"false"}'
     assert "data-engine-memory-size" not in settings
+
+
+def test_patch_longhorn_okd_manifest_can_keep_v1_engine_for_v2_migration():
+    patcher = load_module("patch_longhorn_okd_manifest", "scripts/patch_longhorn_okd_manifest.py")
+    docs = deepcopy(sample_longhorn_okd_docs())
+
+    patched, _ = patcher.patch_documents(
+        docs,
+        patcher.PatchOptions(mode="v2", keep_v1_engine=True),
+    )
+
+    settings = embedded_yaml(patched, "longhorn-default-setting", "default-setting.yaml")
+    assert settings["v1-data-engine"] == "true"
+    assert settings["v2-data-engine"] == "true"
 
 
 def test_render_smoke_manifest_uses_restricted_podsecurity_settings():
@@ -184,7 +200,7 @@ def test_post_uninstall_audit_covers_cluster_scoped_longhorn_leftovers():
         "validatingwebhookconfiguration longhorn-webhook-validator",
         "mutatingwebhookconfiguration longhorn-webhook-mutator",
         "oc get csidriver driver.longhorn.io",
-        "oc get clusterrole,clusterrolebinding",
+        "oc get clusterrole,clusterrolebinding -o name | grep -i longhorn",
         "oc get priorityclass longhorn-critical",
         "oc get storageclass -o wide",
         "oc get pv,pvc -A -o wide",

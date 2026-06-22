@@ -165,7 +165,9 @@ oc apply -f /tmp/longhorn-okd-v2.yaml
 ```
 
 Use `--mode v1` for a V1-only smoke install. Use `--mode v2` only after the
-host has the V2/SPDK prerequisites and raw block disk path prepared.
+host has the V2/SPDK prerequisites and raw block disk path prepared. For clean
+V2 installs, the helper disables the V1 Data Engine by default. During a
+migration where V1 volumes must stay online, add `--keep-v1-engine true`.
 
 Server-side dry-run of the full multi-document OKD manifest can report
 `namespaces "longhorn-system" not found` for later namespaced objects because
