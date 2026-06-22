@@ -84,6 +84,19 @@ def test_v1_and_v2_preflight_paths_are_documented():
     assert "temporary privileged SCC workflow" in v2_text
 
 
+def test_live_preflight_warning_interpretation_is_documented():
+    root = Path(__file__).resolve().parents[1]
+    install_text = (root / "references" / "install-and-preflight.md").read_text(encoding="utf-8")
+    v2_text = (root / "references" / "v2-block-data-engine.md").read_text(encoding="utf-8")
+
+    assert "https://github.com/longhorn/cli/releases" in install_text
+    assert "verify the checksum" in install_text
+    assert "/host/proc/config.gz" in install_text
+    assert "KubeDNS" in install_text
+    assert "ublk_drv cannot be loaded" in v2_text
+    assert "diskDriver: aio" in v2_text
+
+
 def test_missing_v2_raw_block_hugepage_module_and_scc_guidance_fails(
     validator, package_factory, reference_text
 ):

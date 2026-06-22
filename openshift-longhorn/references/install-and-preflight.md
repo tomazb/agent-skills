@@ -55,6 +55,12 @@ Longhorn nodes need root/privileged host access and the expected host tools. Ver
 longhornctl --kubeconfig "${KUBECONFIG}" check preflight
 ```
 
+If `longhornctl` is missing, download the CLI release matching the target or
+installed Longhorn version from `https://github.com/longhorn/cli/releases`,
+download the matching `.sha256` file, verify the checksum, and run that pinned
+binary. Do not mix a newer or older `longhornctl` with a different Longhorn
+minor unless the official docs explicitly allow it.
+
 Use the plain preflight command for V1 Data Engine and general host checks. Do
 not add `--enable-spdk` for a V1-only validation because that flag checks
 V2/SPDK prerequisites such as hugepages, SPDK modules, and raw block readiness.
@@ -90,7 +96,17 @@ oc adm policy remove-scc-from-user privileged \
   -n longhorn-system
 ```
 
-If preflight fails, report the missing package, service, kernel module, hugepage, or disk condition before writing remediation commands.
+Interpret preflight findings before writing remediation commands:
+
+- Report missing package, service, kernel module, hugepage, or disk conditions
+  with the exact check name and node.
+- On RHCOS/OpenShift, missing `/host/proc/config.gz` or
+  `/host/boot/config-*` can cause kernel-config checks such as NFS or
+  `dm_crypt` to report errors even when package checks pass. Verify whether the
+  flagged feature is required before remediating.
+- OpenShift DNS can trigger a `KubeDNS` deployment-label warning because
+  OpenShift does not expose DNS exactly like upstream kube-dns. Verify cluster
+  DNS health separately before treating that warning as a Longhorn blocker.
 
 ## OpenShift Install Path
 
