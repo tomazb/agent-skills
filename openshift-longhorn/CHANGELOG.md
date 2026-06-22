@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.2
+
+- Updated the OKD manifest patch helper so clean V2 installs disable V1 Data Engine by default, with `--keep-v1-engine true` for migration cases.
+- Reduced post-uninstall audit noise by filtering RBAC checks to Longhorn resources.
+
 ## 1.2.1
 
 - Documented how to obtain and checksum a pinned `longhornctl` when it is not locally installed.
