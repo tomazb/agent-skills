@@ -1,6 +1,6 @@
 # OpenShift Longhorn
 
-Current version: **1.1.0**
+Current version: **1.2.0**
 
 Lifecycle skill for planning, installing, migrating, upgrading, validating, hardening, backing up, restoring, maintaining, and uninstalling Longhorn on OpenShift/OKD.
 
@@ -16,6 +16,9 @@ The skill routes work through focused reference runbooks:
 - validation, hardening, and troubleshooting
 
 The validated OpenShift 4.22 SNO / Longhorn v1.12.0 V2 journal is retained in `references/validated-v2-ocp422-sno.md` as observed evidence, not a universal default.
+
+The package also ships helpers for YAML-aware OKD manifest patching, restricted
+smoke manifest rendering, and read-only post-uninstall audits.
 
 ## Validation
 
