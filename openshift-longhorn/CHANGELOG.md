@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.2.1
+
+- Documented how to obtain and checksum a pinned `longhornctl` when it is not locally installed.
+- Added OpenShift/RHCOS preflight interpretation notes for kernel-config, DNS-label, and V2 `ublk_drv` warnings found during live testing.
+
 ## 1.2.0
 
 - Added helper scripts for OKD manifest patching, restricted smoke manifest rendering, and read-only post-uninstall audits.

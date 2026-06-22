@@ -17,6 +17,11 @@ Verify live prerequisites instead of assuming from version numbers:
 
 Run `longhornctl check preflight --enable-spdk` when available. On OpenShift, use the temporary privileged SCC workflow from `install-and-preflight.md` and remove the SCC grant after the check.
 
+If the V2 preflight reports `ublk_drv cannot be loaded`, treat it as a warning
+unless the target design needs the ublk frontend. For a V2 engine using
+`diskDriver: aio` and the NVMe/TCP frontend, confirm the other V2 prerequisites
+and the Longhorn smoke test before declaring it a blocker.
+
 ## Host Preparation
 
 A MachineConfig can persist hugepages and modules:
