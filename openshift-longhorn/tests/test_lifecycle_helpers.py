@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import importlib.util
+import os
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
 
-import yaml
+import pytest
+
+yaml = pytest.importorskip("yaml", reason="PyYAML is required for lifecycle helper tests")
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -180,6 +184,18 @@ def test_render_smoke_manifest_uses_restricted_podsecurity_settings():
     assert container["volumeMounts"][0]["mountPath"] == "/data"
 
 
+def test_render_smoke_manifest_reports_output_write_errors(tmp_path, capsys):
+    renderer = load_module("render_smoke_manifest", "scripts/render_smoke_manifest.py")
+    missing_parent_output = tmp_path / "missing" / "smoke.yaml"
+
+    result = renderer.main(["--mode", "v1", "--output", str(missing_parent_output)])
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert captured.out == ""
+    assert captured.err.startswith("error: ")
+
+
 def test_smoke_template_keeps_restricted_podsecurity_settings():
     docs = list(yaml.safe_load_all((REPO_ROOT / "assets" / "smoke-pvc-writer.yaml").read_text()))
     pod = next(doc for doc in docs if doc["kind"] == "Pod")
@@ -207,3 +223,69 @@ def test_post_uninstall_audit_covers_cluster_scoped_longhorn_leftovers():
     ]
     for check in expected_checks:
         assert check in text
+
+
+def run_post_uninstall_audit_with_fake_oc(
+    tmp_path: Path, fake_oc_body: str, namespace: str = "longhorn-system"
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    log_path = tmp_path / "oc-calls.log"
+    fake_oc = tmp_path / "oc"
+    fake_oc.write_text("#!/usr/bin/env bash\nset -u\n" + fake_oc_body, encoding="utf-8")
+    fake_oc.chmod(0o755)
+
+    env = os.environ.copy()
+    env["AUDIT_LOG"] = str(log_path)
+    env["PATH"] = f"{tmp_path}:{env['PATH']}"
+
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "scripts" / "post_uninstall_audit.sh"), namespace],
+        capture_output=True,
+        check=False,
+        env=env,
+        text=True,
+    )
+    calls = log_path.read_text(encoding="utf-8").splitlines()
+    return result, calls
+
+
+def test_post_uninstall_audit_runs_expected_oc_commands_and_tolerates_oc_failures(tmp_path):
+    fake_oc_body = r'''
+printf '%s\n' "$*" >> "${AUDIT_LOG:?}"
+if [ "$*" = "get namespace longhorn-system" ]; then
+  exit 7
+fi
+if [ "$*" = "get clusterrole,clusterrolebinding -o name" ]; then
+  printf '%s\n' "clusterrole.rbac.authorization.k8s.io/longhorn-manager"
+fi
+'''
+
+    result, calls = run_post_uninstall_audit_with_fake_oc(tmp_path, fake_oc_body)
+
+    assert result.returncode == 0
+    assert calls == [
+        "get namespace longhorn-system",
+        "api-resources --api-group=longhorn.io",
+        "get validatingwebhookconfiguration longhorn-webhook-validator",
+        "get mutatingwebhookconfiguration longhorn-webhook-mutator",
+        "get csidriver driver.longhorn.io",
+        "get clusterrole,clusterrolebinding -o name",
+        "get priorityclass longhorn-critical",
+        "get storageclass -o wide",
+        "get pv,pvc -A -o wide",
+    ]
+    assert "$ oc get namespace longhorn-system" in result.stdout
+    assert "$ oc get clusterrole,clusterrolebinding -o name | grep -i longhorn" in result.stdout
+
+
+def test_post_uninstall_audit_tolerates_shell_pipeline_without_matches(tmp_path):
+    fake_oc_body = r'''
+printf '%s\n' "$*" >> "${AUDIT_LOG:?}"
+if [ "$*" = "get clusterrole,clusterrolebinding -o name" ]; then
+  printf '%s\n' "clusterrole.rbac.authorization.k8s.io/not-related"
+fi
+'''
+
+    result, calls = run_post_uninstall_audit_with_fake_oc(tmp_path, fake_oc_body)
+
+    assert result.returncode == 0
+    assert "get clusterrole,clusterrolebinding -o name" in calls
