@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.3
+
+- Corrected V2 host-prep guidance: `vfio_iommu_type1` is now described as an auto-loaded VFIO dependency rather than a Longhorn requirement, and the V2 SPDK MachineConfig loads only `vfio_pci`, `uio_pci_generic`, and `nvme_tcp` to match the validated evidence.
+- Clarified that the `aio` disk-driver path needs only `nvme_tcp` for I/O; the vfio/uio modules satisfy `--enable-spdk` preflight and SPDK initialization.
+- Noted that the `backupTargetName` StorageClass parameter requires Longhorn v1.8.0+.
+- Added an oauth-proxy image-tag caveat, a V2 migration feature-parity gate, and a smoke-pod `fsGroup` note for non-OpenShift clusters.
+
 ## 1.2.2
 
 - Updated the OKD manifest patch helper so clean V2 installs disable V1 Data Engine by default, with `--keep-v1-engine true` for migration cases.

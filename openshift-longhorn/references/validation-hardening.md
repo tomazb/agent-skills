@@ -57,6 +57,12 @@ On OpenShift, make smoke pods compatible with restricted PodSecurity by setting
 `seccompProfile.type: RuntimeDefault`. PodSecurity warnings do not always block
 pod creation, but avoid them in reusable examples.
 
+The smoke pod runs as non-root with no explicit `fsGroup`. On OpenShift it still
+writes successfully because the `restricted-v2` SCC injects an `fsGroup` and
+Longhorn's CSIDriver uses the default `fsGroupPolicy: ReadWriteOnceWithFSType`,
+so the RWO ext4 volume is chowned at mount time. Off OpenShift, set `fsGroup`
+explicitly so a non-root writer can access the volume.
+
 For V1, confirm the Longhorn volume uses `DATA ENGINE=v1`. For V2, confirm
 `DATA ENGINE=v2` on volume, replica, and engine CRs.
 
@@ -79,7 +85,8 @@ Check:
 
 - `iscsid.service` active;
 - `HugePages_Total` and `hugepages-2Mi` node capacity;
-- `vfio_pci`, `vfio_iommu_type1`, `uio_pci_generic`, and `nvme_tcp` loaded where expected;
+- `vfio_pci`, `uio_pci_generic`, and `nvme_tcp` loaded where expected
+  (`vfio_iommu_type1` may also appear as an auto-loaded VFIO dependency);
 - raw block disk unmounted with no signatures from `wipefs -n`;
 - Longhorn V2 block disk `Ready=True` and `Schedulable=True`;
 - `v2-data-engine=true`;

@@ -123,6 +123,11 @@ helm install longhorn longhorn/longhorn \
   --set image.openshift.oauthProxy.tag=<openshift-minor>
 ```
 
+Confirm the oauth-proxy tag that actually exists for your OpenShift version in
+`quay.io/openshift/origin-oauth-proxy`. Tags historically track the OpenShift
+minor (for example `4.22`), but newer images may use a different scheme, so
+verify the published tag instead of assuming `<openshift-minor>`.
+
 For manifest installs, pin the Longhorn version and use the OKD manifest:
 
 ```bash

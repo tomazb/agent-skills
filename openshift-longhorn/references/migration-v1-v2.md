@@ -16,6 +16,9 @@ Use this runbook for migration between Longhorn V1 filesystem disks and V2 block
 - Require explicit destructive confirmation before every `mkfs`, `wipefs`, mount removal, or uninstall step.
 - Use `/dev/disk/by-id/*` for block-device targeting and gather `readlink -f`, `lsblk -f`, `findmnt`, and `wipefs -n` immediately before the destructive action.
 - Keep exactly one default StorageClass after migration if defaulting is requested.
+- Before choosing V2, verify V2 Data Engine feature parity for the workload (for
+  example RWX/share-manager, volume encryption, and backup/snapshot behavior)
+  against the target Longhorn version's docs.
 
 ## V1 Filesystem To V2 Block Disk
 

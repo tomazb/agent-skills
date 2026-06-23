@@ -163,7 +163,7 @@ parameters:
   unmapMarkSnapChainRemoved: ignored
   disableRevisionCounter: "true"
   dataEngine: v1
-  backupTargetName: default
+  backupTargetName: default  # requires Longhorn v1.8.0+; omit on older versions
 ```
 
 Keep the `longhorn-storageclass` ConfigMap aligned with the live class when Longhorn reconciles default StorageClass state.

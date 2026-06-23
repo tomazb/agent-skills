@@ -7,7 +7,10 @@ Use this runbook for Longhorn V2 Data Engine, SPDK, NVMe/TCP, raw block disks, o
 Verify live prerequisites instead of assuming from version numbers:
 
 - Raw block disk with no filesystem signature or partition table.
-- Kernel module support for `nvme_tcp`, `vfio_pci`, `vfio_iommu_type1`, and `uio_pci_generic` where applicable.
+- Kernel module support for `nvme_tcp`, `vfio_pci`, and `uio_pci_generic` where
+  applicable. Longhorn's SPDK setup and `longhornctl` preflight require these
+  three; `vfio_iommu_type1` is not a documented Longhorn requirement and
+  auto-loads as a VFIO dependency on IOMMU-enabled hosts.
 - Huge pages configured persistently, commonly `hugepagesz=2M hugepages=1024` for 2 GiB.
 - `iscsid.service` active for Longhorn attach workflows.
 - AMD64 nodes support SSE4.2.
@@ -45,7 +48,7 @@ spec:
       - path: /etc/modules-load.d/longhorn-v2-spdk.conf
         mode: 0644
         contents:
-          source: data:text/plain;charset=utf-8;base64,dmZpb19wY2kKdmZpb19pb21tdV90eXBlMQp1aW9fcGNpX2dlbmVyaWMKbnZtZV90Y3AK
+          source: data:text/plain;charset=utf-8;base64,dmZpb19wY2kKdWlvX3BjaV9nZW5lcmljCm52bWVfdGNwCg==
     systemd:
       units:
       - name: iscsid.service
@@ -175,6 +178,11 @@ oc -n longhorn-system patch nodes.longhorn.io "${NODE}" --type=json -p="[
 
 Use `diskDriver: aio` when IOMMU grouping or PCI detachment is not safe; this still uses the V2 engine and NVMe/TCP frontend path. Use SPDK NVMe only when IOMMU group isolation is verified.
 
+For the `aio` path, only `nvme_tcp` is strictly required for storage I/O over the
+NVMe/TCP frontend. The `vfio_pci` and `uio_pci_generic` modules are loaded mainly
+to satisfy `longhornctl check preflight --enable-spdk` and SPDK initialization,
+not because `aio` performs PCI passthrough.
+
 After patching, wait for the Longhorn node disk to report ready and schedulable:
 
 ```bash
@@ -200,7 +208,7 @@ parameters:
   unmapMarkSnapChainRemoved: "ignored"
   dataEngine: "v2"
   diskSelector: "v2"
-  backupTargetName: "default"
+  backupTargetName: "default"  # requires Longhorn v1.8.0+; omit on older versions
 ```
 
 Keep `longhorn-storageclass` ConfigMap aligned with the live class to prevent reconcile drift.
