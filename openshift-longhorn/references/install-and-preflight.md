@@ -218,8 +218,7 @@ When switching between Longhorn data engines on SNO:
 
 - remove obsolete Longhorn MachineConfigs before preparing the new mode;
 - wait for the MCP to finish and the node to return `Ready`;
-- validate host state with `systemctl`, `findmnt`, `lsblk -f`, `grep Huge
-  /proc/meminfo`, and `lsmod` as appropriate;
+- validate host state with `systemctl`, `findmnt`, `lsblk -f`, `grep Huge /proc/meminfo`, and `lsmod` as appropriate;
 - expect temporary API unavailability while the single node reboots.
 
 ## Install Validation

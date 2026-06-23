@@ -140,14 +140,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 )
             )
         )
-    except (ValueError, yaml.YAMLError) as exc:
+        if str(args.output) == "-":
+            sys.stdout.write(manifest)
+        else:
+            args.output.write_text(manifest, encoding="utf-8")
+    except (OSError, ValueError, yaml.YAMLError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-
-    if str(args.output) == "-":
-        sys.stdout.write(manifest)
-    else:
-        args.output.write_text(manifest, encoding="utf-8")
     return 0
 
 
