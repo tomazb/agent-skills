@@ -2,6 +2,10 @@
 ## Repository Scope
 This repository stores reusable agent skills. Each skill should live in its own directory with a `SKILL.md` file and any supporting scripts or tests nearby.
 
+## Skill Inventory
+- `openshift-rook` — Use when planning, installing, configuring, upgrading, expanding, shrinking, backing up, restoring, maintaining, validating, or troubleshooting Rook Ceph on OpenShift/OKD for SNO or multi-node clusters.
+- `openshift-longhorn` — Longhorn lifecycle on OpenShift/OKD (existing).
+
 ## Skill Authoring Conventions
 - Write skill descriptions in `Use when...` form so they describe triggering conditions, not workflow summaries.
 - Keep skill instructions concise and move heavy operational detail into scripts or tests when possible.
