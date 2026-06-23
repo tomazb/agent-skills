@@ -67,10 +67,9 @@ curl -fsSLo /tmp/rook-ceph-crds.yaml \
 curl -fsSLo /tmp/rook-ceph-common.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml"
 curl -fsSLo /tmp/rook-ceph-operator.yaml \
-  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator.yaml"
+  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 
-oc apply --dry-run=server -f /tmp/rook-ceph-crds.yaml
-oc apply -f /tmp/rook-ceph-crds.yaml
+oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-common.yaml
 oc apply -f /tmp/rook-ceph-common.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-operator.yaml

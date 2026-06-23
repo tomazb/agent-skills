@@ -44,29 +44,55 @@ Do not copy `size: 1` or `requireSafeReplicaSize: false` into multi-node product
 
 ## PG/PGP Planning
 
-Plan PG/PGP counts at pool creation time. Changing PG counts after data is written triggers rebalancing and can degrade performance.
+Modern Ceph manages placement groups automatically. The PG autoscaler
+(`pg_autoscale_mode`) is enabled by default for new pools (since Ceph Octopus),
+and Rook creates pools with it on. In most clusters, leave it on and do not set
+`pg_num`/`pgp_num` manually.
 
-For guidance, use the Ceph PG calculator. A simple heuristic for small clusters:
+`pg_num` is **not immutable** — the autoscaler splits and merges PGs as the pool
+grows, and manual changes are also allowed. Any change triggers rebalancing, so
+make manual changes deliberately during a maintenance window.
 
-- 100 OSDs or fewer: 128 PGs per pool.
-- 100–200 OSDs: 256 PGs per pool.
-- 200+ OSDs: 512 PGs per pool.
+### Let the autoscaler do the work (recommended)
 
-Set `pg_num` and `pgp_num` in the `CephBlockPool` spec under `spec.parameters` (merge into the pool manifest, not a standalone resource):
+Give the autoscaler a hint about the pool's expected share of cluster capacity
+with `target_size_ratio` instead of hard-coding PG counts:
 
 ```yaml
 # CephBlockPool spec fragment:
 spec:
   parameters:
-    pg_num: "128"
-    pgp_num: "128"
+    target_size_ratio: "0.5"
+```
+
+Check what the autoscaler is doing:
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool autoscale-status
+```
+
+### Manual PG counts (advanced override)
+
+Only set `pg_num`/`pgp_num` manually when you have a specific reason. Manual
+values conflict with the autoscaler, so turn it off for that pool first, then
+size with the Ceph PG calculator (rough target is ~100 PGs per OSD summed across
+all pools, divided by replica size, rounded to a power of two):
+
+```yaml
+# CephBlockPool spec fragment:
+spec:
+  parameters:
+    pg_autoscale_mode: "off"
+    pg_num: "256"
+    pgp_num: "256"
 ```
 
 If the Rook Ceph version does not support these pool parameters in the CR, set them via the Ceph CLI after pool creation:
 
 ```bash
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pg_num 128
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pgp_num 128
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pg_autoscale_mode off
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pg_num 256
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd pool set replicapool pgp_num 256
 ```
 
 ## StorageClass

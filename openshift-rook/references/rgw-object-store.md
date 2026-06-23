@@ -24,9 +24,11 @@ spec:
       size: 3
       requireSafeReplicaSize: true
   gateway:
-    type: s3
-    port: 80
-    securePort: 443
+    # On OpenShift the RGW pod runs as a non-root, arbitrary UID and cannot bind
+    # privileged ports (<1024). Use 8080 for HTTP. To enable HTTPS, set a
+    # non-privileged securePort (e.g. 8443) and gateway.sslCertificateRef — see
+    # "TLS and Ingress" below. There is no gateway.type field.
+    port: 8080
     instances: 2
     placement:
       nodeAffinity:
@@ -62,16 +64,15 @@ spec:
       size: 1
       requireSafeReplicaSize: false
   gateway:
-    type: s3
-    port: 80
+    # Use 8080 (non-privileged) — RGW runs non-root on OpenShift. No gateway.type field.
+    port: 8080
     instances: 1
     placement:
-      all:
-        tolerations:
-        - key: "node.ocs.openshift.io/storage"
-          operator: "Equal"
-          value: "true"
-          effect: "NoSchedule"
+      tolerations:
+      - key: "node.ocs.openshift.io/storage"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
     resources:
       limits:
         memory: "1Gi"
@@ -132,7 +133,52 @@ Create a test OBC, verify:
 
 ## TLS and Ingress
 
-TLS passthrough requires `securePort: 443` in the CephObjectStore `gateway` spec (multi-node example above includes it; add it to the SNO spec if TLS is needed there). Without `securePort`, the RGW service will not expose port 443 and the Route will fail to connect.
+On OpenShift, expose RGW through a Route. The RGW service exposes a port named
+`http` (and `https` only when `securePort` is set). Two common patterns:
+
+### Edge termination (simplest — RGW stays HTTP)
+
+The Route terminates TLS at the edge and talks plain HTTP (`port: 8080`) to the
+RGW service. No certificate or `securePort` is needed on the RGW pod.
+
+```yaml
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rook-ceph-rgw
+  namespace: rook-ceph
+spec:
+  to:
+    kind: Service
+    name: rook-ceph-rgw-<objectstore-name>
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+```
+
+### Passthrough / reencrypt (RGW terminates TLS)
+
+To terminate TLS at the RGW pod, set a non-privileged `securePort` (e.g. `8443`,
+**not** 443 — the non-root RGW cannot bind privileged ports) and reference a TLS
+secret in the `rook-ceph` namespace via `gateway.sslCertificateRef`. Without a
+certificate the secure port is not served and a passthrough Route will fail to
+connect.
+
+```yaml
+spec:
+  gateway:
+    port: 8080
+    securePort: 8443
+    sslCertificateRef: <tls-secret-name>   # secret in rook-ceph, type kubernetes.io/tls
+    instances: 1
+```
+
+You can let OpenShift generate the serving certificate by annotating the RGW
+service with `service.beta.openshift.io/serving-cert-secret-name: <secret>` and
+referencing that secret in `sslCertificateRef`. Then use a passthrough (or
+reencrypt) Route targeting the `https` port:
 
 ```yaml
 apiVersion: route.openshift.io/v1
