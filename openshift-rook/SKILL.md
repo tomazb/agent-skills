@@ -1,5 +1,5 @@
 ---
-name: openshift-rook-ceph
+name: openshift-rook
 description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, host networking, device discovery, stretch clusters, PG/PGP tuning, and operator lifecycle safety.
 ---
 

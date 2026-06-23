@@ -46,12 +46,18 @@ oc -n rook-ceph delete cephblockpool --all --wait=true --timeout=10m
 oc -n rook-ceph delete cephcluster rook-ceph --wait=true --timeout=10m
 ```
 
-Wait for the operator to clean up OSDs, mons, and mgrs. Then delete the operator and namespace:
+Wait for the operator to clean up OSDs, mons, and mgrs. Then delete the operator, common resources, and namespace:
 
 ```bash
 oc delete -f /tmp/rook-ceph-operator.yaml
 oc delete -f /tmp/rook-ceph-common.yaml
 oc delete namespace rook-ceph --wait=true --timeout=10m
+```
+
+If the cluster was installed with the direct manifest path (crds.yaml was applied), delete the CRDs last. CRD deletion is irreversible and will cascade-delete any remaining custom resources — only proceed after the namespace is fully removed and the post-uninstall audit confirms no CRs remain:
+
+```bash
+oc delete -f /tmp/rook-ceph-crds.yaml
 ```
 
 ## Post-Uninstall Audit

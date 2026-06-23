@@ -1,5 +1,5 @@
 {
-  "name": "openshift-rook-ceph",
+  "name": "openshift-rook",
   "version": "1.0.0",
   "description": "OpenShift/OKD Rook Ceph lifecycle skill covering discovery, install, OSD disk prep, RBD block pools, CephFS filesystem, RGW object store, cluster expansion, upgrade, backup/restore, maintenance, uninstall, validation, hardening, and troubleshooting.",
   "scripts": {

@@ -56,13 +56,13 @@ def main() -> int:
     parser.add_argument("--rook-version", default="v1.14.0", help="Rook version to pin")
     parser.add_argument("--ceph-version", default="v18.2.2", help="Ceph image version to pin")
     parser.add_argument(
-        "--rook-default", type=bool, default=False, help="Set rook StorageClass as default"
+        "--rook-default", action="store_true", default=False, help="Set rook StorageClass as default"
     )
     parser.add_argument("--replicas", type=int, default=3, help="Replica count for pools")
     parser.add_argument("--mon-count", type=int, default=3, help="MON count")
     parser.add_argument("--mgr-count", type=int, default=2, help="MGR count")
     parser.add_argument(
-        "--allow-multiple-per-node", type=bool, default=False, help="Allow multiple per node"
+        "--allow-multiple-per-node", action="store_true", default=False, help="Allow multiple per node"
     )
     args = parser.parse_args()
 

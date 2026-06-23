@@ -3,7 +3,7 @@
 This repository stores reusable agent skills. Each skill should live in its own directory with a `SKILL.md` file and any supporting scripts or tests nearby.
 
 ## Skill Inventory
-- `openshift-rook` — Rook Ceph lifecycle on OpenShift/OKD: discovery, install, OSD disk prep, RBD/CephFS/RGW pools, cluster expansion, upgrade, backup/restore, maintenance, uninstall, validation, hardening, and troubleshooting for SNO and multi-node clusters.
+- `openshift-rook` — Use when planning, installing, configuring, upgrading, expanding, shrinking, backing up, restoring, maintaining, validating, or troubleshooting Rook Ceph on OpenShift/OKD for SNO or multi-node clusters.
 - `openshift-longhorn` — Longhorn lifecycle on OpenShift/OKD (existing).
 
 ## Skill Authoring Conventions
