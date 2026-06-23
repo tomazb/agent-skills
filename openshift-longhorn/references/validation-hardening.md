@@ -30,6 +30,36 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 
 Remove smoke resources unless the user asks to keep them for inspection.
 
+Use unique smoke namespaces per mode, for example `longhorn-v1-smoke` and
+`longhorn-v2-smoke`, so cleanup and audit commands are unambiguous.
+
+Minimum smoke flow:
+
+```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode <v1-or-v2> \
+  --namespace <smoke-namespace> \
+  --storage-class longhorn \
+  --output /tmp/longhorn-smoke.yaml
+
+oc apply -f /tmp/longhorn-smoke.yaml
+oc -n <smoke-namespace> wait pod/<writer-pod> --for=condition=Ready --timeout=5m
+oc -n <smoke-namespace> exec <writer-pod> -- sh -c 'echo ok > /data/probe && cat /data/probe'
+oc -n longhorn-system get volumes.longhorn.io,replicas.longhorn.io,engines.longhorn.io -o wide
+```
+
+If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace
+every placeholder before applying it.
+
+On OpenShift, make smoke pods compatible with restricted PodSecurity by setting
+`allowPrivilegeEscalation: false`, dropping all capabilities, setting
+`runAsNonRoot: true` when the image supports it, and setting
+`seccompProfile.type: RuntimeDefault`. PodSecurity warnings do not always block
+pod creation, but avoid them in reusable examples.
+
+For V1, confirm the Longhorn volume uses `DATA ENGINE=v1`. For V2, confirm
+`DATA ENGINE=v2` on volume, replica, and engine CRs.
+
 ## V1 Post-Reboot Drift
 
 Check:
@@ -39,6 +69,9 @@ Check:
 - dedicated disk schedulable and root disk unschedulable when intended;
 - `default-replica-count`, `create-default-disk-labeled-nodes`, and `default-data-path`;
 - one default StorageClass.
+
+For a root-backed V1 smoke-only test, verify `/var/lib/longhorn` exists and
+report that `/var/mnt/longhorn` was not validated as a mounted dedicated disk.
 
 ## V2 Post-Reboot Drift
 
@@ -52,6 +85,19 @@ Check:
 - `v2-data-engine=true`;
 - `data-engine-hugepage-enabled` and `data-engine-memory-size`;
 - V2 StorageClass uses `dataEngine: "v2"` and expected `diskSelector`.
+
+## Post-Uninstall Validation
+
+After uninstall, confirm:
+
+- `longhorn-system` namespace is absent;
+- `oc api-resources --api-group=longhorn.io` returns no Longhorn resources;
+- Longhorn validating and mutating webhooks are absent;
+- `csidriver/driver.longhorn.io` is absent;
+- Longhorn RBAC and `longhorn-critical` priority class are absent;
+- no StorageClass uses `driver.longhorn.io`;
+- no PV/PVC uses a Longhorn StorageClass;
+- exactly one intended default StorageClass remains.
 
 ## Hardening
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 
 def test_valid_package_passes_cleanly(validator, package_factory):
     root = package_factory()
@@ -15,6 +17,14 @@ def test_frontmatter_name_mismatch_fails(validator, package_factory, make_skill_
 def test_missing_lifecycle_reference_fails(validator, package_factory):
     root = package_factory()
     missing = root / validator.EXPECTED_REFERENCES[0]
+    missing.unlink()
+    issues = validator.validate_root(root)
+    assert any(str(missing.relative_to(root)) in issue for issue in issues)
+
+
+def test_missing_required_helper_file_fails(validator, package_factory):
+    root = package_factory()
+    missing = root / "scripts" / "render_smoke_manifest.py"
     missing.unlink()
     issues = validator.validate_root(root)
     assert any(str(missing.relative_to(root)) in issue for issue in issues)
@@ -59,6 +69,32 @@ def test_present_sno_storageclass_rules_pass(validator, package_factory, referen
         "SNO replica/default StorageClass",
     )
     assert issues == []
+
+
+def test_v1_and_v2_preflight_paths_are_documented():
+    root = Path(__file__).resolve().parents[1]
+    install_text = (root / "references" / "install-and-preflight.md").read_text(encoding="utf-8")
+    v1_text = (root / "references" / "v1-filesystem.md").read_text(encoding="utf-8")
+    v2_text = (root / "references" / "v2-block-data-engine.md").read_text(encoding="utf-8")
+
+    assert 'longhornctl --kubeconfig "${KUBECONFIG}" check preflight' in install_text
+    assert 'longhornctl --kubeconfig "${KUBECONFIG}" check preflight' in v1_text
+    assert "Do not use `--enable-spdk` for a V1-only check" in v1_text
+    assert "longhornctl check preflight --enable-spdk" in v2_text
+    assert "temporary privileged SCC workflow" in v2_text
+
+
+def test_live_preflight_warning_interpretation_is_documented():
+    root = Path(__file__).resolve().parents[1]
+    install_text = (root / "references" / "install-and-preflight.md").read_text(encoding="utf-8")
+    v2_text = (root / "references" / "v2-block-data-engine.md").read_text(encoding="utf-8")
+
+    assert "https://github.com/longhorn/cli/releases" in install_text
+    assert "verify the checksum" in install_text
+    assert "/host/proc/config.gz" in install_text
+    assert "KubeDNS" in install_text
+    assert "ublk_drv cannot be loaded" in v2_text
+    assert "diskDriver: aio" in v2_text
 
 
 def test_missing_v2_raw_block_hugepage_module_and_scc_guidance_fails(
