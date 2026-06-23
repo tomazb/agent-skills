@@ -7,8 +7,31 @@ Use this runbook for Longhorn V1 Data Engine deployments that store replica data
 - `iscsid.service` enabled and active on every Longhorn node.
 - Dedicated storage uses ext4 or XFS on a filesystem path such as `/var/mnt/longhorn`.
 - The host mount is persisted through MachineConfig on OpenShift/RHCOS.
+- V2/SPDK-only host configuration such as hugepage kernel arguments and
+  `/etc/modules-load.d/longhorn-v2-spdk.conf` is absent unless the user is
+  deliberately testing a mixed host-prep transition.
 - SNO uses `numberOfReplicas: "1"` and `default-replica-count` set to one replica. Multi-node production normally uses two or three replicas.
 - Exactly one default StorageClass exists when defaulting is requested.
+
+For a non-production smoke test, V1 can use `/var/lib/longhorn` on the root
+filesystem when the user accepts that it is not a dedicated data disk. Do not
+claim dedicated-disk validation unless `/var/mnt/longhorn` is a real mount.
+
+## V1 Preflight
+
+Run the generic Longhorn preflight and keep the result scoped to V1 host
+requirements:
+
+```bash
+longhornctl --kubeconfig "${KUBECONFIG}" check preflight
+```
+
+Do not use `--enable-spdk` for a V1-only check. That flag belongs to the V2
+Data Engine path and can fail on hosts that are valid for V1 filesystem disks.
+
+On OpenShift, if the preflight checker is blocked by SCC, use the temporary
+`longhorn-preflight-checker` privileged SCC workflow from
+`install-and-preflight.md`, then remove the SCC grant after the preflight.
 
 ## Destructive Disk Gate
 
@@ -79,6 +102,22 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 "
 ```
 
+If reusing an existing labeled filesystem, verify it is mounted before
+installing Longhorn:
+
+```bash
+oc debug "node/${NODE}" -- chroot /host bash -c "
+  set -e
+  systemctl is-active iscsid
+  findmnt /var/mnt/longhorn
+  lsblk -f
+"
+```
+
+If `/var/mnt/longhorn` is only a directory on the root filesystem, either stop
+for explicit disk formatting confirmation or run a root-backed smoke test using
+`/var/lib/longhorn` and label the result as non-production.
+
 ## Default Disk Discovery
 
 Configure node annotations before Longhorn manager first starts when possible:
@@ -129,6 +168,10 @@ parameters:
 
 Keep the `longhorn-storageclass` ConfigMap aligned with the live class when Longhorn reconciles default StorageClass state.
 
+When Longhorn must not become the cluster default, use the same parameters but
+set `storageclass.kubernetes.io/is-default-class: "false"` and verify another
+class, such as `lvms-vg1`, is the only default.
+
 ## Validation
 
 Create a test PVC and pod. Confirm:
@@ -139,3 +182,9 @@ Create a test PVC and pod. Confirm:
 - SNO volume has exactly one replica.
 - Replica is on `/var/mnt/longhorn`, not `/var/lib/longhorn`.
 - `oc get sc` shows exactly one default StorageClass.
+
+For a root-backed smoke test, replace the disk-path assertion with:
+
+- the replica is on `/var/lib/longhorn`;
+- the result is reported as a smoke-only validation, not a dedicated-disk V1
+  production layout.

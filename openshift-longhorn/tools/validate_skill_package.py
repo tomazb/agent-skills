@@ -19,6 +19,7 @@ EXPECTED_REFERENCES = [
     "references/maintenance-uninstall.md",
     "references/validation-hardening.md",
     "references/validated-v2-ocp422-sno.md",
+    "references/journal-2026-06-22-deprovision-lessons.md",
 ]
 
 REQUIRED_FILES = [
@@ -27,6 +28,10 @@ REQUIRED_FILES = [
     "VERSION",
     "CHANGELOG.md",
     "package.json",
+    "assets/smoke-pvc-writer.yaml",
+    "scripts/patch_longhorn_okd_manifest.py",
+    "scripts/post_uninstall_audit.sh",
+    "scripts/render_smoke_manifest.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]

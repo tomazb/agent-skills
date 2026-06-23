@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.2
+
+- Updated the OKD manifest patch helper so clean V2 installs disable V1 Data Engine by default, with `--keep-v1-engine true` for migration cases.
+- Reduced post-uninstall audit noise by filtering RBAC checks to Longhorn resources.
+
+## 1.2.1
+
+- Documented how to obtain and checksum a pinned `longhornctl` when it is not locally installed.
+- Added OpenShift/RHCOS preflight interpretation notes for kernel-config, DNS-label, and V2 `ublk_drv` warnings found during live testing.
+
+## 1.2.0
+
+- Added helper scripts for OKD manifest patching, restricted smoke manifest rendering, and read-only post-uninstall audits.
+- Added a reusable smoke PVC/writer pod template that avoids OpenShift restricted PodSecurity warnings.
+- Packaged the 2026-06-22 deprovision lessons journal as an expected reference.
+- Made V1 and V2 Longhorn preflight flows explicit, including when to avoid or use `--enable-spdk`.
+- Updated install, validation, and uninstall runbooks to reference the packaged helpers.
+- Extended package validation and tests so lifecycle helpers are shipped and their V1/V2 behavior stays covered.
+
 ## 1.1.0
 
 - Fixed the OpenShift uninstall runbook to delete the `longhorn-okd.yaml` manifest that install applies, and added a Helm uninstall path.

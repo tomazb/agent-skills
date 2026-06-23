@@ -12,8 +12,15 @@ Verify live prerequisites instead of assuming from version numbers:
 - `iscsid.service` active for Longhorn attach workflows.
 - AMD64 nodes support SSE4.2.
 - CPU budget for V2 instance-manager pods.
+- V1 filesystem mount MachineConfigs are removed or intentionally disabled if
+  the V2 test should use only raw block disks.
 
 Run `longhornctl check preflight --enable-spdk` when available. On OpenShift, use the temporary privileged SCC workflow from `install-and-preflight.md` and remove the SCC grant after the check.
+
+If the V2 preflight reports `ublk_drv cannot be loaded`, treat it as a warning
+unless the target design needs the ublk frontend. For a V2 engine using
+`diskDriver: aio` and the NVMe/TCP frontend, confirm the other V2 prerequisites
+and the Longhorn smoke test before declaring it a blocker.
 
 ## Host Preparation
 
@@ -57,6 +64,10 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 "
 ```
 
+On SNO, apply V2 MachineConfig changes only after V1 workloads and Longhorn V1
+state have been removed. Wait for the master MCP to update and the node to
+return `Ready` before touching raw block disks.
+
 ## Raw Block Disk Gate
 
 Adding or converting a V2 disk can require `wipefs`. This requires explicit destructive confirmation for the exact `/dev/disk/by-id/*` path.
@@ -85,6 +96,10 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 "
 ```
 
+For SNO smoke tests, prefer a spare stable disk such as
+`/dev/disk/by-id/<stable-id>`. Never use an LVM PV backing another StorageClass,
+the root disk, or an ambiguous `/dev/nvmeXnY` path.
+
 ## Longhorn Settings
 
 Enable V2 deliberately:
@@ -106,6 +121,16 @@ oc -n longhorn-system patch settings.longhorn.io data-engine-memory-size \
   --type=merge -p '{"value":"{\"v2\":\"2048\"}"}'
 ```
 
+For a clean V2-only end state, disable V1 only after all V1 volumes, engines,
+and replicas are gone:
+
+```bash
+oc -n longhorn-system get volumes.longhorn.io,replicas.longhorn.io,engines.longhorn.io -o wide
+oc -n longhorn-system patch settings.longhorn.io v1-data-engine \
+  --type=merge -p '{"value":"false"}'
+oc -n longhorn-system get instancemanagers.longhorn.io -o wide
+```
+
 If switching from automatic filesystem disk discovery to explicit block disks:
 
 ```bash
@@ -114,6 +139,14 @@ oc -n longhorn-system patch settings.longhorn.io create-default-disk-labeled-nod
 oc -n longhorn-system patch settings.longhorn.io default-data-path \
   --type=merge -p '{"value":"/var/lib/longhorn/"}'
 oc label node "${NODE}" node.longhorn.io/create-default-disk-
+```
+
+If a stale node annotation still points to `/var/mnt/longhorn`, remove it before
+Longhorn manager first starts or before adding the V2 disk:
+
+```bash
+oc annotate node "${NODE}" node.longhorn.io/default-disks-config- || true
+oc label node "${NODE}" node.longhorn.io/create-default-disk- || true
 ```
 
 ## Add A Block Disk
@@ -141,6 +174,17 @@ oc -n longhorn-system patch nodes.longhorn.io "${NODE}" --type=json -p="[
 ```
 
 Use `diskDriver: aio` when IOMMU grouping or PCI detachment is not safe; this still uses the V2 engine and NVMe/TCP frontend path. Use SPDK NVMe only when IOMMU group isolation is verified.
+
+After patching, wait for the Longhorn node disk to report ready and schedulable:
+
+```bash
+oc -n longhorn-system get nodes.longhorn.io "${NODE}" -o yaml
+```
+
+It is normal to briefly see `NoDiskInfo`, `DiskNotReady`, or
+`mismatching disks in node resource object and monitor collected data` while the
+manager creates the V2 disk. Continue polling and check manager logs if the disk
+does not become `Ready=True` and `Schedulable=True` within a few minutes.
 
 ## V2 StorageClass
 
@@ -170,3 +214,4 @@ Confirm:
 - `engines.longhorn.io` shows `DATA ENGINE=v2`.
 - The block disk is unmounted and `wipefs -n` shows no filesystem signature.
 - Hugepages, modules, `iscsid`, MCP, and node readiness survive reboot.
+- `longhorn-storageclass` ConfigMap matches the V2 StorageClass parameters.
