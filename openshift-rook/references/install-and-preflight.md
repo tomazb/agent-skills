@@ -46,19 +46,40 @@ Never proceed from `/dev/nvmeXnY`, `/dev/sdX`, or a guessed path alone. Resolve 
 
 ## OpenShift Prerequisites
 
-- Rook Ceph requires privileged containers. The Rook operator and Ceph OSD pods need privileged SCC.
-- Ensure `allowPrivilegedContainer: true` in the Rook operator namespace or use the Rook operator namespace's security configuration.
-- On OpenShift, the Rook operator requires a privileged ServiceAccount for the lifetime of the operator. Grant the required SCC before applying the operator manifests:
+Rook Ceph needs elevated privileges (host paths for OSDs, privileged CSI). On
+OpenShift, prefer the upstream OpenShift manifests, which create dedicated,
+scoped SecurityContextConstraints instead of granting the broad built-in
+`privileged` SCC to service accounts:
+
+- Use `operator-openshift.yaml` instead of `operator.yaml` (see Direct Manifest
+  Install below). It defines a dedicated `rook-ceph` SCC (and a `rook-ceph-csi`
+  SCC) bound to the Rook service accounts, and sets
+  `ROOK_HOSTPATH_REQUIRES_PRIVILEGED=true` so OSD pods using host paths run
+  correctly.
+- The dedicated `rook-ceph` SCC binds these service accounts: `rook-ceph-system`,
+  `rook-ceph-default`, `rook-ceph-mgr`, `rook-ceph-osd`, and `rook-ceph-rgw`.
+  Confirm they are covered before deploying OSDs or an object store.
+
+If you must grant SCCs manually (a customized install), grant **all** the service
+accounts the workloads use — omitting `rook-ceph-rgw` or `rook-ceph-default`
+causes RGW or OSD-prepare pods to fail admission:
 
 ```bash
-oc adm policy add-scc-to-user privileged -z rook-ceph-osd -n rook-ceph
 oc adm policy add-scc-to-user privileged -z rook-ceph-system -n rook-ceph
+oc adm policy add-scc-to-user privileged -z rook-ceph-default -n rook-ceph
+oc adm policy add-scc-to-user privileged -z rook-ceph-osd -n rook-ceph
 oc adm policy add-scc-to-user privileged -z rook-ceph-mgr -n rook-ceph
+oc adm policy add-scc-to-user privileged -z rook-ceph-rgw -n rook-ceph
 ```
 
 ## Install Path
 
 ### Helm Install (Recommended)
+
+The `rook-ceph` chart installs the **operator only** — the CephCluster CR and
+pools below are applied separately (or via the companion `rook-ceph-cluster`
+chart). The operator chart ships the OpenShift SecurityContextConstraints; after
+install, verify they exist with `oc get scc rook-ceph rook-ceph-csi`.
 
 ```bash
 helm repo add rook-release https://charts.rook.io/release
@@ -69,7 +90,7 @@ helm install rook-ceph rook-release/rook-ceph \
 
 ### Direct Manifest Install (OLM or YAML)
 
-For OLM-based installs, use the OperatorHub or an OLM Subscription. For direct manifest installs, pin the version:
+For OLM-based installs, use the OperatorHub or an OLM Subscription. For direct manifest installs, pin the version and use the OpenShift operator manifest (`operator-openshift.yaml`), which ships the dedicated SCCs described above:
 
 ```bash
 ROOK_VERSION="v<version>"
@@ -78,14 +99,13 @@ curl -fsSLo /tmp/rook-ceph-crds.yaml \
 curl -fsSLo /tmp/rook-ceph-common.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml"
 curl -fsSLo /tmp/rook-ceph-operator.yaml \
-  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator.yaml"
+  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 ```
 
-Apply CRDs first (required before common.yaml and operator.yaml), then common, then operator:
+Apply CRDs first (required before common.yaml and operator.yaml), then common, then operator. Apply the CRDs server-side — the Rook CRDs are large and client-side `oc apply` can fail with a `metadata.annotations: Too long` error:
 
 ```bash
-oc apply --dry-run=server -f /tmp/rook-ceph-crds.yaml
-oc apply -f /tmp/rook-ceph-crds.yaml
+oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-common.yaml
 oc apply -f /tmp/rook-ceph-common.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-operator.yaml

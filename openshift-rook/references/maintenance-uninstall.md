@@ -92,7 +92,30 @@ oc get csidriver | grep rook-ceph || true
 
 Destroying the Ceph cluster destroys all data. Require explicit destructive confirmation before proceeding.
 
-If the user wants to destroy the cluster and erase OSD data:
+### Option A: Rook-native cleanup (recommended)
+
+Set `cleanupPolicy` on the CephCluster **before** deleting it. With the required
+confirmation string, Rook runs a job that zaps each OSD disk and removes
+`dataDirHostPath` automatically, so you do not have to wipe disks by hand. This
+is irreversible — only apply it when you intend to erase all data:
+
+```bash
+oc -n rook-ceph patch cephcluster rook-ceph --type=merge \
+  -p '{"spec":{"cleanupPolicy":{"confirmation":"yes-really-destroy-data"}}}'
+```
+
+Then delete the CephCluster (the operator runs the cleanup job) and continue with
+the operator uninstall steps above. Watch the cleanup jobs complete before
+deleting the namespace:
+
+```bash
+oc -n rook-ceph delete cephcluster rook-ceph --wait=true --timeout=10m
+oc -n rook-ceph get pods -l app=rook-ceph-cleanup
+```
+
+### Option B: Manual disk cleanup
+
+If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
 2. After the namespace is removed, clean the OSD disks:

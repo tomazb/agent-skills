@@ -184,6 +184,28 @@ def check_required_sections(skill_text: str) -> list[str]:
 
 PHRASE_SCAN_EXCLUDES = {"README.md", "CHANGELOG.md"}
 
+# Patterns that must NOT appear in the skill's markdown (regressions fixed in v1.1.0).
+FORBIDDEN_CONTENT_PATTERNS = [
+    (
+        re.compile(r"^\s*type:\s*s3\b", re.MULTILINE),
+        "invalid CephObjectStore gateway field 'type: s3' (no such field)",
+    ),
+    (
+        re.compile(r"^\s*port:\s*80\s*$", re.MULTILINE),
+        "RGW 'port: 80' (non-root RGW cannot bind privileged ports on OpenShift; use 8080)",
+    ),
+    (
+        re.compile(r"^\s*securePort:\s*443\s*$", re.MULTILINE),
+        "RGW 'securePort: 443' (use a non-privileged port such as 8443 on OpenShift)",
+    ),
+]
+
+# Substrings that must appear somewhere in the skill's markdown.
+REQUIRED_CONTENT_SUBSTRINGS = [
+    ("autoscale", "PG autoscaler guidance (the autoscaler is on by default)"),
+    ("operator-openshift.yaml", "OpenShift operator manifest with dedicated SCC"),
+]
+
 
 def package_markdown_text(root: Path) -> str:
     return "\n".join(
@@ -202,6 +224,27 @@ def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
     if missing:
         return [f"Missing {label} guidance: {', '.join(missing)}"]
     return []
+
+
+def check_content_regressions(root: Path) -> list[str]:
+    issues: list[str] = []
+    files = [
+        path
+        for path in sorted(root.rglob("*.md"))
+        if path.name not in PHRASE_SCAN_EXCLUDES
+    ]
+    for path in files:
+        text = read_text(path)
+        rel = str(path.relative_to(root))
+        for pattern, label in FORBIDDEN_CONTENT_PATTERNS:
+            if pattern.search(text):
+                issues.append(f"{rel}: forbidden pattern — {label}")
+
+    all_text = "\n".join(read_text(path) for path in files)
+    for needle, label in REQUIRED_CONTENT_SUBSTRINGS:
+        if needle not in all_text:
+            issues.append(f"Missing required guidance: {label} ('{needle}')")
+    return issues
 
 
 def check_version_sync(root: Path) -> list[str]:
@@ -298,6 +341,7 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_phrase_group(all_text, CEPH_SERVICE_PHRASES, "Ceph service types"))
     issues.extend(check_phrase_group(all_text, OPENSHIFT_PHRASES, "OpenShift SCC/MachineConfig"))
     issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
+    issues.extend(check_content_regressions(root))
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill_file:

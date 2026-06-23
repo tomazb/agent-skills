@@ -117,3 +117,44 @@ def test_readme_missing_version_marker_fails(validator, package_factory):
     )
     issues = validator.validate_root(root)
     assert any("missing 'Current version" in issue for issue in issues)
+
+
+def test_forbidden_gateway_type_s3_fails(validator, package_factory, reference_text):
+    text = reference_text() + "\nspec:\n  gateway:\n    type: s3\n"
+    root = package_factory(reference_content=text)
+    issues = validator.validate_root(root)
+    assert any("type: s3" in issue for issue in issues)
+
+
+def test_forbidden_rgw_privileged_http_port_fails(validator, package_factory, reference_text):
+    text = reference_text() + "\nspec:\n  gateway:\n    port: 80\n"
+    root = package_factory(reference_content=text)
+    issues = validator.validate_root(root)
+    assert any("port: 80" in issue for issue in issues)
+
+
+def test_forbidden_rgw_privileged_secure_port_fails(validator, package_factory, reference_text):
+    text = reference_text() + "\nspec:\n  gateway:\n    securePort: 443\n"
+    root = package_factory(reference_content=text)
+    issues = validator.validate_root(root)
+    assert any("securePort: 443" in issue for issue in issues)
+
+
+def test_non_privileged_rgw_ports_pass(validator, package_factory, reference_text):
+    text = reference_text() + "\nspec:\n  gateway:\n    port: 8080\n    securePort: 8443\n"
+    root = package_factory(reference_content=text)
+    assert validator.check_content_regressions(root) == []
+
+
+def test_missing_autoscaler_guidance_fails(validator, package_factory, reference_text):
+    text = reference_text().replace("autoscale", "manual-pg")
+    root = package_factory(reference_content=text)
+    issues = validator.validate_root(root)
+    assert any("PG autoscaler" in issue for issue in issues)
+
+
+def test_missing_operator_openshift_guidance_fails(validator, package_factory, reference_text):
+    text = reference_text().replace("operator-openshift.yaml", "operator.yaml")
+    root = package_factory(reference_content=text)
+    issues = validator.validate_root(root)
+    assert any("operator-openshift.yaml" in issue for issue in issues)

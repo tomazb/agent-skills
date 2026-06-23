@@ -46,6 +46,10 @@ Grant privileged SCC temporarily.
 Do not downgrade. Read release notes. Check HEALTH_OK and active+clean.
 
 For upgrade, verify HEALTH_OK and active+clean.
+
+Leave the PG autoscaler on; check `ceph osd pool autoscale-status`.
+
+On OpenShift, install with operator-openshift.yaml for the dedicated rook-ceph SCC.
 """
 
 SKILL_TEMPLATE = """\
