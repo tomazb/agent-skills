@@ -5,7 +5,7 @@ import json
 import re
 from pathlib import Path
 
-EXPECTED_NAME = "openshift-rook-ceph"
+EXPECTED_NAME = "openshift-rook"
 FENCE_RE = re.compile(r"^\s*```")
 FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
 
@@ -172,7 +172,11 @@ def check_expected_references(root: Path) -> list[str]:
 
 
 def check_required_sections(skill_text: str) -> list[str]:
-    missing = [section for section in REQUIRED_SKILL_SECTIONS if section not in skill_text]
+    missing = [
+        section
+        for section in REQUIRED_SKILL_SECTIONS
+        if not re.search(r"^" + re.escape(section) + r"\s*$", skill_text, re.MULTILINE)
+    ]
     if missing:
         return [f"SKILL.md is missing required sections: {', '.join(missing)}"]
     return []

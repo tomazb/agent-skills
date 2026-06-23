@@ -112,12 +112,13 @@ def main() -> int:
     )
     parser.add_argument("--namespace", default="rook-smoke", help="Smoke test namespace")
     parser.add_argument(
-        "--storage-class", default="rook-ceph-block", help="StorageClass name"
+        "--storage-class", default=None, help="StorageClass name (defaults: rbd=rook-ceph-block, cephfs=rook-cephfs)"
     )
     parser.add_argument("--output", required=True, help="Output YAML path")
     args = parser.parse_args()
 
-    render_smoke_manifest(args.mode, args.namespace, args.storage_class, args.output)
+    storage_class = args.storage_class or ("rook-ceph-block" if args.mode == "rbd" else "rook-cephfs")
+    render_smoke_manifest(args.mode, args.namespace, storage_class, args.output)
     print(f"Smoke manifest written to {args.output}")
     return 0
 

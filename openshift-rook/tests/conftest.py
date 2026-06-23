@@ -50,7 +50,7 @@ For upgrade, verify HEALTH_OK and active+clean.
 
 SKILL_TEMPLATE = """\
 ---
-name: openshift-rook-ceph
+name: openshift-rook
 description: Use when planning, installing, or troubleshooting Rook Ceph on OpenShift.
 ---
 
@@ -83,7 +83,7 @@ Output guidance.
 def _make_skill_text(name: str = vsp.EXPECTED_NAME, missing_sections: list[str] | None = None) -> str:
     text = SKILL_TEMPLATE
     if name != vsp.EXPECTED_NAME:
-        text = text.replace("name: openshift-rook-ceph", f"name: {name}")
+        text = text.replace("name: openshift-rook", f"name: {name}")
     if missing_sections:
         for section in missing_sections:
             text = text.replace(f"## {section.lstrip('# ').strip()}", "")
@@ -106,7 +106,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         skill_text: str | None = None,
         reference_content: str | None = None,
     ) -> Path:
-        root = tmp_path / "openshift-rook-ceph"
+        root = tmp_path / "openshift-rook"
         root.mkdir()
 
         refs = root / "references"
@@ -121,7 +121,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "package.json").write_text(
             json.dumps(
                 {
-                    "name": "openshift-rook-ceph",
+                    "name": "openshift-rook",
                     "version": "1.0.0",
                     "description": "Rook Ceph lifecycle",
                 }
