@@ -90,9 +90,15 @@ To replace a failed disk in a VG:
 
 2. Evacuate any LVs from the failing PV if possible (for thick LVs, this may require data migration). For thin pool volumes, the data is spread across the VG and cannot be easily evacuated from a single PV.
 
-3. Remove the old PV from the VG:
+3. Resolve the old PV to a stable path, verify there are no remaining extents, and remove it from the VG. Do not continue if `vgreduce` fails:
    ```bash
-   oc debug "node/${NODE}" -- chroot /host bash -c "vgreduce vg1 /dev/old-disk || true"
+   OLD_DISK="/dev/disk/by-id/<old-disk-id>"
+   oc debug "node/${NODE}" -- chroot /host bash -c "
+     set -e
+     readlink -f '${OLD_DISK}'
+     pvdisplay -m '${OLD_DISK}'
+     vgreduce vg1 '${OLD_DISK}'
+   "
    ```
 
 4. Update the `LVMCluster` CR to replace the old disk path with the new one.

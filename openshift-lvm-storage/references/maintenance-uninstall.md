@@ -35,7 +35,8 @@ After reboot, the `LVMCluster` should reconcile automatically. Verify:
 ```bash
 oc -n openshift-storage get lvmcluster lvmcluster -o wide
 oc get nodes <node>
-oc -n openshift-storage get pods -l app=topolvm-csi -o wide
+oc -n openshift-storage get pods -o wide
+oc -n openshift-storage get daemonset,deployment -o wide
 ```
 
 ## Disk Removal from VG
@@ -75,7 +76,17 @@ oc -n openshift-storage delete subscription lvms-operator
 oc -n openshift-storage delete csv <lvms-operator-csv-name>
 ```
 
-### Remove the Namespace
+### Remove the Namespace Only If Dedicated
+
+Do not delete `openshift-storage` until you prove it is dedicated to LVMS. Clusters commonly share this namespace with ODF or other storage operators.
+
+```bash
+oc -n openshift-storage get all,subscription,csv,operatorgroup
+oc api-resources --api-group=topolvm.io --verbs=list -o name
+oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name
+```
+
+If non-LVMS resources are present, leave the namespace in place and remove only LVMS-owned resources. Delete the namespace only after explicit confirmation that it is dedicated to LVMS:
 
 ```bash
 oc delete namespace openshift-storage --wait=false
@@ -86,7 +97,8 @@ If the namespace is stuck in `Terminating` due to finalizers, check for remainin
 
 ```bash
 oc -n openshift-storage get all
-oc api-resources --api-group=topolvm.io --verbs=list | awk '{print $1}' | xargs -I {} oc -n openshift-storage get {} 2>/dev/null || true
+oc api-resources --api-group=topolvm.io --verbs=list -o name | xargs -I {} oc -n openshift-storage get {} 2>/dev/null || true
+oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name | xargs -I {} oc -n openshift-storage get {} 2>/dev/null || true
 ```
 
 ## Host-Level Cleanup (Manual)
@@ -144,6 +156,7 @@ Or manually verify:
 
 ```bash
 oc api-resources --api-group=topolvm.io
+oc api-resources --api-group=lvm.topolvm.io
 oc get csidriver topolvm.io 2>/dev/null || true
 oc get sc | grep lvms || true
 oc get pv,pvc -A | grep topolvm || true

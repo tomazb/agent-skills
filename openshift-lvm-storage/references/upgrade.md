@@ -9,9 +9,13 @@ Run these checks before any upgrade step. Do not proceed unless all `LogicalVolu
 ```bash
 oc -n openshift-storage get lvmcluster lvmcluster -o wide
 oc -n openshift-storage get logicalvolumes.topolvm.io -o wide
-oc get pv,pvc -A -o wide | grep -E 'Bound|Available'
+oc get pv,pvc -A -o wide
+oc get pvc -A --no-headers | awk '$3 != "Bound" { print; bad=1 } END { exit bad }'
+oc get pv --no-headers | awk '$5 !~ /^(Bound|Available)$/ { print; bad=1 } END { exit bad }'
 oc -n openshift-storage get pods -o wide
 ```
+
+The two `awk` checks print unhealthy rows and exit nonzero if any PVC is not `Bound` or any PV is not `Bound`/`Available`.
 
 Verify cluster health from the node:
 

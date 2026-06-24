@@ -4,17 +4,13 @@
 Produces a Namespace, PVC, and Pod that are compatible with OpenShift's
 restricted-v2 PodSecurity. The pod runs as non-root with no capabilities.
 """
+
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
-from typing import Any
 
-try:
-    import yaml
-except ImportError as exc:  # pragma: no cover - exercised only without PyYAML
-    raise SystemExit("PyYAML is required: python3 -m pip install pyyaml") from exc
+SMOKE_IMAGE = "registry.access.redhat.com/ubi9/ubi-minimal:9.5"
 
 
 FS_POD = """\
@@ -26,7 +22,7 @@ metadata:
 spec:
   containers:
     - name: writer
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: {smoke_image}
       command: ["sh", "-c", "echo ok > /data/probe && sleep 3600"]
       volumeMounts:
         - name: data
@@ -55,7 +51,7 @@ metadata:
 spec:
   containers:
     - name: writer
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: {smoke_image}
       command: ["sh", "-c", "test -b /dev/block-device && echo 'block device present' && sleep 3600"]
       volumeDevices:
         - name: block-data
@@ -129,17 +125,21 @@ def render(mode: str, namespace: str, storage_class: str) -> str:
     parts = [
         NAMESPACE.format(namespace=namespace),
         pvc_template.format(namespace=namespace, storage_class=storage_class),
-        pod_template.format(namespace=namespace),
+        pod_template.format(namespace=namespace, smoke_image=SMOKE_IMAGE),
     ]
     return "---\n".join(parts)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Render LVMS smoke manifest")
-    parser.add_argument("--mode", required=True, choices=["fs", "block"], help="Smoke test mode")
+    parser.add_argument(
+        "--mode", required=True, choices=["fs", "block"], help="Smoke test mode"
+    )
     parser.add_argument("--namespace", required=True, help="Smoke test namespace")
     parser.add_argument("--storage-class", required=True, help="StorageClass name")
-    parser.add_argument("--output", required=True, type=Path, help="Output manifest path")
+    parser.add_argument(
+        "--output", required=True, type=Path, help="Output manifest path"
+    )
     args = parser.parse_args()
 
     manifest = render(args.mode, args.namespace, args.storage_class)

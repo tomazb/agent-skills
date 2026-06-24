@@ -5,6 +5,7 @@ Supports patching LVMCluster CRs for device class settings, thin pool config,
 node selectors, and StorageClass parameters. Used for install-time manifest
 preparation before `oc apply`.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -22,11 +23,7 @@ STORAGECLASS_KIND = "StorageClass"
 
 
 def _find_documents(docs: list[Any], *, kind: str) -> list[dict[str, Any]]:
-    return [
-        doc
-        for doc in docs
-        if isinstance(doc, dict) and doc.get("kind") == kind
-    ]
+    return [doc for doc in docs if isinstance(doc, dict) and doc.get("kind") == kind]
 
 
 def _patch_lvmcluster_thin_pool(
@@ -50,15 +47,34 @@ def _patch_lvmcluster_thin_pool(
     for dc in device_classes:
         if not isinstance(dc, dict):
             continue
-        thin_pool = dc.setdefault("thinPoolConfig", {})
+        dc_name = str(dc.get("name", "<unknown>"))
+        if "thinPoolConfig" not in dc:
+            raise ValueError(
+                "cannot create thinPoolConfig for deviceClass "
+                f"{dc_name!r}; add thinPoolConfig.name and "
+                "thinPoolConfig.overprovisionRatio to the manifest first"
+            )
+        thin_pool = dc.get("thinPoolConfig")
         if not isinstance(thin_pool, dict):
-            continue
+            raise ValueError(
+                f"thinPoolConfig for deviceClass {dc_name!r} must be a mapping"
+            )
         if overprovision_ratio is not None:
             thin_pool["overprovisionRatio"] = overprovision_ratio
             patched = True
         if size_percent is not None:
             thin_pool["sizePercent"] = size_percent
             patched = True
+        missing = [
+            field
+            for field in ("name", "overprovisionRatio")
+            if field not in thin_pool or thin_pool[field] in (None, "")
+        ]
+        if missing:
+            raise ValueError(
+                f"thinPoolConfig for deviceClass {dc_name!r} must include "
+                "name and overprovisionRatio"
+            )
     return patched
 
 
@@ -105,10 +121,14 @@ def _patch_lvmcluster_default(doc: dict[str, Any], default: bool) -> bool:
     device_classes = storage.get("deviceClasses", [])
     if not isinstance(device_classes, list):
         return False
+    valid_device_classes = [dc for dc in device_classes if isinstance(dc, dict)]
+    if default and len(valid_device_classes) > 1:
+        raise ValueError(
+            "--device-class-default true cannot be applied to multiple deviceClasses; "
+            "set the desired default in the manifest explicitly"
+        )
     patched = False
-    for dc in device_classes:
-        if not isinstance(dc, dict):
-            continue
+    for dc in valid_device_classes:
         dc["default"] = default
         patched = True
     return patched
@@ -145,11 +165,17 @@ def patch_documents(
             continue
         if doc.get("kind") == LVMCLUSTER_KIND:
             patched = False
-            if _patch_lvmcluster_thin_pool(doc, overprovision_ratio=overprovision_ratio, size_percent=size_percent):
+            if _patch_lvmcluster_thin_pool(
+                doc, overprovision_ratio=overprovision_ratio, size_percent=size_percent
+            ):
                 patched = True
-            if _patch_lvmcluster_device_selector(doc, paths=device_paths, force_wipe=force_wipe):
+            if _patch_lvmcluster_device_selector(
+                doc, paths=device_paths, force_wipe=force_wipe
+            ):
                 patched = True
-            if device_class_default is not None and _patch_lvmcluster_default(doc, device_class_default):
+            if device_class_default is not None and _patch_lvmcluster_default(
+                doc, device_class_default
+            ):
                 patched = True
             if patched:
                 report["lvmcluster_patched"] += 1
@@ -185,7 +211,9 @@ def parse_size_percent(value: str) -> int:
     # LVMS thinPoolConfig.sizePercent is constrained to 10-90 by the CRD schema.
     parsed = parse_int(value)
     if not 10 <= parsed <= 90:
-        raise argparse.ArgumentTypeError(f"size-percent must be between 10 and 90, got {parsed}")
+        raise argparse.ArgumentTypeError(
+            f"size-percent must be between 10 and 90, got {parsed}"
+        )
     return parsed
 
 
@@ -193,38 +221,89 @@ def parse_overprovision_ratio(value: str) -> int:
     # LVMS thinPoolConfig.overprovisionRatio must be a positive integer.
     parsed = parse_int(value)
     if parsed < 1:
-        raise argparse.ArgumentTypeError(f"overprovision-ratio must be >= 1, got {parsed}")
+        raise argparse.ArgumentTypeError(
+            f"overprovision-ratio must be >= 1, got {parsed}"
+        )
     return parsed
 
 
+def parse_stable_device_path(value: str) -> str:
+    stable_prefixes = ("/dev/disk/by-id/", "/dev/disk/by-path/")
+    if not value.startswith(stable_prefixes):
+        raise argparse.ArgumentTypeError(
+            "device paths must use stable /dev/disk/by-id/ or /dev/disk/by-path/ entries"
+        )
+    return value
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Patch LVMS manifests for OpenShift/OKD")
+    parser = argparse.ArgumentParser(
+        description="Patch LVMS manifests for OpenShift/OKD"
+    )
     parser.add_argument("--input", required=True, type=Path, help="Input manifest path")
-    parser.add_argument("--output", required=True, type=Path, help="Output manifest path")
-    parser.add_argument("--overprovision-ratio", type=parse_overprovision_ratio, help="Thin pool over-provisioning ratio (>= 1)")
-    parser.add_argument("--size-percent", type=parse_size_percent, help="Thin pool size percent of VG (10-90)")
-    parser.add_argument("--device-paths", nargs="+", help="Disk paths for deviceSelector")
-    parser.add_argument("--force-wipe", choices=["true", "false"], help="Enable forceWipeDevicesAndDestroyAllData")
-    parser.add_argument("--device-class-default", choices=["true", "false"], help="Set default flag on deviceClasses")
-    parser.add_argument("--storage-class-fs-type", choices=["ext4", "xfs"], help="Set StorageClass filesystem type")
+    parser.add_argument(
+        "--output", required=True, type=Path, help="Output manifest path"
+    )
+    parser.add_argument(
+        "--overprovision-ratio",
+        type=parse_overprovision_ratio,
+        help="Thin pool over-provisioning ratio (>= 1)",
+    )
+    parser.add_argument(
+        "--size-percent",
+        type=parse_size_percent,
+        help="Thin pool size percent of VG (10-90)",
+    )
+    parser.add_argument(
+        "--device-paths",
+        nargs="+",
+        type=parse_stable_device_path,
+        help="Stable disk paths for deviceSelector (/dev/disk/by-id or /dev/disk/by-path)",
+    )
+    parser.add_argument(
+        "--force-wipe",
+        choices=["true", "false"],
+        help="Enable forceWipeDevicesAndDestroyAllData",
+    )
+    parser.add_argument(
+        "--device-class-default",
+        choices=["true", "false"],
+        help="Set default flag on deviceClasses",
+    )
+    parser.add_argument(
+        "--storage-class-fs-type",
+        choices=["ext4", "xfs"],
+        help="Set StorageClass filesystem type",
+    )
     args = parser.parse_args()
 
     docs = load_documents(args.input)
-    force_wipe_bool = {"true": True, "false": False}.get(args.force_wipe) if args.force_wipe else None
-    device_class_default_bool = {"true": True, "false": False}.get(args.device_class_default) if args.device_class_default else None
-
-    docs, report = patch_documents(
-        docs,
-        overprovision_ratio=args.overprovision_ratio,
-        size_percent=args.size_percent,
-        device_paths=args.device_paths,
-        force_wipe=force_wipe_bool,
-        device_class_default=device_class_default_bool,
-        storage_class_fs_type=args.storage_class_fs_type,
+    force_wipe_bool = (
+        {"true": True, "false": False}.get(args.force_wipe) if args.force_wipe else None
+    )
+    device_class_default_bool = (
+        {"true": True, "false": False}.get(args.device_class_default)
+        if args.device_class_default
+        else None
     )
 
+    try:
+        docs, report = patch_documents(
+            docs,
+            overprovision_ratio=args.overprovision_ratio,
+            size_percent=args.size_percent,
+            device_paths=args.device_paths,
+            force_wipe=force_wipe_bool,
+            device_class_default=device_class_default_bool,
+            storage_class_fs_type=args.storage_class_fs_type,
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+
     args.output.write_text(dump_documents(docs), encoding="utf-8")
-    print(f"Patched {report['lvmcluster_patched']} LVMCluster(s), {report['storageclass_patched']} StorageClass(es)")
+    print(
+        f"Patched {report['lvmcluster_patched']} LVMCluster(s), {report['storageclass_patched']} StorageClass(es)"
+    )
     return 0
 
 

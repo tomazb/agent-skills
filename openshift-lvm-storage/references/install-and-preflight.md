@@ -14,13 +14,16 @@ oc get sc
 oc get ns openshift-storage || true
 oc -n openshift-storage get operatorgroup 2>/dev/null || true
 oc -n openshift-storage get subscription,csv 2>/dev/null || true
-oc -n openshift-storage get pods,lvmclusters.topolvm.io,logicalvolumes.topolvm.io 2>/dev/null || true
+oc -n openshift-storage get pods 2>/dev/null || true
+oc -n openshift-storage get lvmclusters.lvm.topolvm.io 2>/dev/null || true
+oc -n openshift-storage get logicalvolumes.topolvm.io 2>/dev/null || true
 ```
 
 Also discover leftovers from a previous lifecycle before reinstalling:
 
 ```bash
 oc api-resources --api-group=topolvm.io
+oc api-resources --api-group=lvm.topolvm.io
 oc get sc
 oc get machineconfig | grep -i lvm || true
 oc get pv,pvc -A -o wide
