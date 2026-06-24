@@ -1,0 +1,45 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lvms-smoke
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: lvms-smoke-pvc
+  namespace: lvms-smoke
+spec:
+  accessModes:
+    - ReadWriteOnce
+  # Replace with the StorageClass on the target cluster (e.g. the operator-created lvms-<vg>).
+  storageClassName: lvms-vg1
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: lvms-smoke-writer
+  namespace: lvms-smoke
+spec:
+  containers:
+    - name: writer
+      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      command: ["sh", "-c", "echo ok > /data/probe && sleep 3600"]
+      volumeMounts:
+        - name: data
+          mountPath: /data
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+  volumes:
+    - name: data
+      persistentVolumeClaim:
+        claimName: lvms-smoke-pvc
+  restartPolicy: Never
