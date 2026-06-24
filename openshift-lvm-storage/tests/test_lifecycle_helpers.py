@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import subprocess
 import textwrap
 
@@ -116,7 +117,7 @@ def test_parse_stable_device_path_accepts_by_id_and_by_path():
 
 
 def test_parse_stable_device_path_rejects_volatile_paths():
-    with pytest.raises(Exception, match="/dev/disk/by-id"):
+    with pytest.raises(argparse.ArgumentTypeError, match="/dev/disk/by-id"):
         plm.parse_stable_device_path("/dev/sda")
 
 
