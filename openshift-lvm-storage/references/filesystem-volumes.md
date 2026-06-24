@@ -68,7 +68,7 @@ metadata:
 spec:
   containers:
     - name: app
-      image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+      image: registry.access.redhat.com/ubi9/ubi-minimal:9.5
       command: ["sh", "-c", "sleep 3600"]
       volumeMounts:
         - name: data

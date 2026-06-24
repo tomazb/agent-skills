@@ -77,11 +77,29 @@ Input guidance.
 Output guidance.
 """
 
+DEFAULT_SKILL_DESCRIPTION = (
+    "Use when planning, installing, or troubleshooting LVMS on OpenShift."
+)
 
-def _make_skill_text(name: str = vsp.EXPECTED_NAME, missing_sections: list[str] | None = None) -> str:
+
+def _make_skill_text(
+    name: str = vsp.EXPECTED_NAME,
+    description: str | None = DEFAULT_SKILL_DESCRIPTION,
+    missing_sections: list[str] | None = None,
+) -> str:
     text = SKILL_TEMPLATE
     if name != vsp.EXPECTED_NAME:
         text = text.replace("name: openshift-lvm-storage", f"name: {name}")
+    if description is None:
+        text = text.replace(
+            "description: Use when planning, installing, or troubleshooting LVMS on OpenShift.\n",
+            "",
+        )
+    else:
+        text = text.replace(
+            "description: Use when planning, installing, or troubleshooting LVMS on OpenShift.",
+            f"description: {description}",
+        )
     if missing_sections:
         for section in missing_sections:
             text = text.replace(f"## {section.lstrip('# ').strip()}", "")
@@ -110,12 +128,16 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         refs = root / "references"
         refs.mkdir()
 
-        (root / "SKILL.md").write_text(skill_text or make_skill_text(), encoding="utf-8")
+        (root / "SKILL.md").write_text(
+            skill_text or make_skill_text(), encoding="utf-8"
+        )
         (root / "README.md").write_text(
             "# OpenShift LVM Storage\n\nCurrent version: **1.0.0**\n", encoding="utf-8"
         )
         (root / "VERSION").write_text("1.0.0\n", encoding="utf-8")
-        (root / "CHANGELOG.md").write_text("# Changelog\n\n## 1.0.0\n\n- Initial.\n", encoding="utf-8")
+        (root / "CHANGELOG.md").write_text(
+            "# Changelog\n\n## 1.0.0\n\n- Initial.\n", encoding="utf-8"
+        )
         (root / "package.json").write_text(
             json.dumps(
                 {

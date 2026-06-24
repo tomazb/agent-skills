@@ -98,7 +98,7 @@ After a node reboot, check:
 After uninstall, confirm:
 
 - `openshift-storage` namespace is absent (or empty if reused).
-- `oc api-resources --api-group=topolvm.io` returns no resources.
+- `oc api-resources --api-group=topolvm.io` and `oc api-resources --api-group=lvm.topolvm.io` return no resources.
 - `csidriver/topolvm.io` is absent.
 - No StorageClass uses `provisioner: topolvm.io`.
 - No PV/PVC uses a TopoLVM StorageClass.

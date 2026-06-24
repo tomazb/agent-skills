@@ -4,95 +4,212 @@ set -euo pipefail
 # Read-only post-uninstall audit for LVMS / TopoLVM on OpenShift/OKD.
 # This script checks for leftover resources after an LVMS uninstall.
 
+FAILED=0
+QUERY_RESULT=""
+
+fail() {
+  echo "FAIL: $*"
+  FAILED=1
+}
+
+warn() {
+  echo "WARN: $*"
+}
+
+ok() {
+  echo "OK: $*"
+}
+
+is_not_found() {
+  case "$1" in
+    *NotFound*|*not\ found*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+require_command() {
+  local cmd="$1"
+  if ! command -v "$cmd" >/dev/null 2>&1; then
+    fail "$cmd CLI is required but not installed"
+    return 1
+  fi
+}
+
+check_api_group() {
+  local group="$1"
+  local resources
+
+  if ! resources=$(oc api-resources --api-group="$group" --verbs=list -o name 2>&1); then
+    fail "$group API resource discovery failed: $resources"
+    return
+  fi
+
+  if [ -n "$resources" ]; then
+    warn "$group API resources still exist:"
+    echo "$resources"
+  else
+    ok "no $group API resources found"
+  fi
+}
+
+check_absent_resource() {
+  local label="$1"
+  local ok_message="$2"
+  shift 2
+
+  local output
+  if output=$(oc get "$@" 2>&1); then
+    warn "$label still exists"
+    [ -n "$output" ] && echo "$output"
+  elif is_not_found "$output"; then
+    ok "$ok_message"
+  else
+    fail "$label lookup failed: $output"
+  fi
+}
+
+query_json() {
+  local label="$1"
+  local jq_filter="$2"
+  shift 2
+
+  local json
+  local output
+  QUERY_RESULT=""
+
+  if ! json=$("$@" -o json 2>&1); then
+    fail "$label query failed: $json"
+    return 1
+  fi
+
+  if ! output=$(jq -r "$jq_filter" <<<"$json" 2>&1); then
+    fail "$label jq filter failed: $output"
+    return 1
+  fi
+
+  QUERY_RESULT="$output"
+}
+
+check_json_list() {
+  local label="$1"
+  local ok_message="$2"
+  local jq_filter="$3"
+  shift 3
+
+  if query_json "$label" "$jq_filter" "$@"; then
+    if [ -n "$QUERY_RESULT" ]; then
+      warn "$label still exist:"
+      echo "$QUERY_RESULT"
+    else
+      ok "$ok_message"
+    fi
+  fi
+}
+
+count_nonempty_lines() {
+  local value="$1"
+  local count=0
+  local line
+
+  while IFS= read -r line; do
+    if [ -n "$line" ]; then
+      count=$((count + 1))
+    fi
+  done <<<"$value"
+
+  echo "$count"
+}
+
 echo "=== LVMS Post-Uninstall Audit ==="
 
-LVM_RESOURCES=$(oc api-resources --api-group=topolvm.io --verbs=list -o name 2>/dev/null || true)
-if [ -n "$LVM_RESOURCES" ]; then
-  echo "WARN: topolvm.io API resources still exist:"
-  echo "$LVM_RESOURCES"
+require_command oc || exit 1
+require_command jq || exit 1
+
+if ! OC_USER=$(oc whoami 2>&1); then
+  fail "unable to contact the cluster with oc whoami: $OC_USER"
+  exit 1
+fi
+
+check_api_group topolvm.io
+check_api_group lvm.topolvm.io
+
+echo
+check_absent_resource "csidriver/topolvm.io" "csidriver/topolvm.io absent" csidriver topolvm.io
+
+echo
+check_json_list \
+  "TopoLVM StorageClasses" \
+  "no TopoLVM StorageClasses found" \
+  '.items[] | select(.provisioner == "topolvm.io") | .metadata.name' \
+  oc get sc
+
+echo
+check_json_list \
+  "TopoLVM PVs" \
+  "no TopoLVM PVs found" \
+  '.items[] | select(.spec.csi // {} | .driver == "topolvm.io") | .metadata.name' \
+  oc get pv
+
+echo
+check_json_list \
+  "LVMS PVCs" \
+  "no LVMS PVCs found" \
+  '.items[] | select(((.spec.storageClassName // "") | contains("lvms")) or ((.spec.storageClassName // "") | contains("topolvm"))) | .metadata.namespace + "/" + .metadata.name' \
+  oc get pvc -A
+
+echo
+check_json_list \
+  "TopoLVM/LVMS SCCs" \
+  "no TopoLVM/LVMS SCCs found" \
+  '.items[] | select((.metadata.name | contains("topolvm")) or (.metadata.name | contains("lvms"))) | .metadata.name' \
+  oc get scc
+
+echo
+NAMESPACE_OUTPUT=""
+if NAMESPACE_OUTPUT=$(oc get namespace openshift-storage 2>&1); then
+  warn "openshift-storage namespace still exists"
+  echo "$NAMESPACE_OUTPUT"
+  if ! STORAGE_OUTPUT=$(oc -n openshift-storage get all 2>&1); then
+    fail "openshift-storage workload listing failed: $STORAGE_OUTPUT"
+  elif [ -n "$STORAGE_OUTPUT" ]; then
+    echo "$STORAGE_OUTPUT"
+  fi
+elif is_not_found "$NAMESPACE_OUTPUT"; then
+  ok "openshift-storage namespace absent"
 else
-  echo "OK: no topolvm.io API resources found"
+  fail "openshift-storage namespace lookup failed: $NAMESPACE_OUTPUT"
 fi
 
 echo
-if oc get csidriver topolvm.io &>/dev/null; then
-  echo "WARN: csidriver/topolvm.io still exists"
-else
-  echo "OK: csidriver/topolvm.io absent"
-fi
+check_json_list \
+  "LVMS CSVs" \
+  "no LVMS CSVs found" \
+  '.items[] | select(.metadata.name | contains("lvms")) | .metadata.namespace + "/" + .metadata.name' \
+  oc get csv -A
 
 echo
-SCS=$(oc get sc -o json | jq -r '.items[] | select(.provisioner == "topolvm.io") | .metadata.name' 2>/dev/null || true)
-if [ -n "$SCS" ]; then
-  echo "WARN: TopoLVM StorageClasses still exist:"
-  echo "$SCS"
-else
-  echo "OK: no TopoLVM StorageClasses found"
-fi
+check_json_list \
+  "LVMS Subscriptions" \
+  "no LVMS Subscriptions found" \
+  '.items[] | select(.metadata.name | contains("lvms")) | .metadata.namespace + "/" + .metadata.name' \
+  oc get subscription -A
 
 echo
-PVS=$(oc get pv -o json | jq -r '.items[] | select(.spec.csi // {} | .driver == "topolvm.io") | .metadata.name' 2>/dev/null || true)
-if [ -n "$PVS" ]; then
-  echo "WARN: TopoLVM PVs still exist:"
-  echo "$PVS"
-else
-  echo "OK: no TopoLVM PVs found"
-fi
-
-echo
-PVCS=$(oc get pvc -A -o json | jq -r '.items[] | select((.spec.storageClassName // "") | contains("lvms") or contains("topolvm")) | .metadata.namespace + "/" + .metadata.name' 2>/dev/null || true)
-if [ -n "$PVCS" ]; then
-  echo "WARN: LVMS PVCs still exist:"
-  echo "$PVCS"
-else
-  echo "OK: no LVMS PVCs found"
-fi
-
-echo
-SCCS=$(oc get scc -o json | jq -r '.items[] | select(.metadata.name | contains("topolvm") or contains("lvms")) | .metadata.name' 2>/dev/null || true)
-if [ -n "$SCCS" ]; then
-  echo "WARN: TopoLVM/LVMS SCCs still exist:"
-  echo "$SCCS"
-else
-  echo "OK: no TopoLVM/LVMS SCCs found"
-fi
-
-echo
-if oc get namespace openshift-storage &>/dev/null; then
-  echo "WARN: openshift-storage namespace still exists"
-  oc -n openshift-storage get all 2>/dev/null || true
-else
-  echo "OK: openshift-storage namespace absent"
-fi
-
-echo
-CSVS=$(oc get csv -A -o json | jq -r '.items[] | select(.metadata.name | contains("lvms")) | .metadata.namespace + "/" + .metadata.name' 2>/dev/null || true)
-if [ -n "$CSVS" ]; then
-  echo "WARN: LVMS CSVs still exist:"
-  echo "$CSVS"
-else
-  echo "OK: no LVMS CSVs found"
-fi
-
-echo
-SUBS=$(oc get subscription -A -o json | jq -r '.items[] | select(.metadata.name | contains("lvms")) | .metadata.namespace + "/" + .metadata.name' 2>/dev/null || true)
-if [ -n "$SUBS" ]; then
-  echo "WARN: LVMS Subscriptions still exist:"
-  echo "$SUBS"
-else
-  echo "OK: no LVMS Subscriptions found"
-fi
-
-echo
-DEFAULT_SCS=$(oc get sc -o json | jq -r '.items[] | select(.metadata.annotations."storageclass.kubernetes.io/is-default-class" == "true") | .metadata.name' 2>/dev/null || true)
-COUNT=$(echo "$DEFAULT_SCS" | grep -c . || true)
-if [ "$COUNT" -eq 1 ]; then
-  echo "OK: exactly one default StorageClass: $DEFAULT_SCS"
-elif [ "$COUNT" -eq 0 ]; then
-  echo "WARN: no default StorageClass found"
-else
-  echo "WARN: multiple default StorageClasses found:"
-  echo "$DEFAULT_SCS"
+if query_json \
+  "default StorageClasses" \
+  '.items[] | select((.metadata.annotations?["storageclass.kubernetes.io/is-default-class"] == "true") or (.metadata.annotations?["storageclass.beta.kubernetes.io/is-default-class"] == "true")) | .metadata.name' \
+  oc get sc; then
+  DEFAULT_SCS="$QUERY_RESULT"
+  COUNT=$(count_nonempty_lines "$DEFAULT_SCS")
+  if [ "$COUNT" -eq 1 ]; then
+    ok "exactly one default StorageClass: $DEFAULT_SCS"
+  elif [ "$COUNT" -eq 0 ]; then
+    warn "no default StorageClass found"
+  else
+    warn "multiple default StorageClasses found:"
+    echo "$DEFAULT_SCS"
+  fi
 fi
 
 echo "=== Audit Complete ==="
+exit "$FAILED"
