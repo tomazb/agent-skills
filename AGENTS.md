@@ -5,6 +5,7 @@ This repository stores reusable agent skills. Each skill should live in its own 
 ## Skill Inventory
 - `openshift-rook` — Use when planning, installing, configuring, upgrading, expanding, shrinking, backing up, restoring, maintaining, validating, or troubleshooting Rook Ceph on OpenShift/OKD for SNO or multi-node clusters.
 - `openshift-longhorn` — Longhorn lifecycle on OpenShift/OKD (existing).
+- `openshift-lvm-storage` — Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting LVM Storage (LVMS) on OpenShift/OKD for SNO or multi-node clusters.
 
 ## Skill Authoring Conventions
 - Write skill descriptions in `Use when...` form so they describe triggering conditions, not workflow summaries.

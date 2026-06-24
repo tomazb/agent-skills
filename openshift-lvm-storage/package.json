@@ -1,0 +1,22 @@
+{
+  "name": "openshift-lvm-storage",
+  "version": "1.0.1",
+  "description": "OpenShift/OKD LVM Storage (LVMS) lifecycle skill covering discovery, install, volume group provisioning, filesystem volumes, block volumes, volume group expand/shrink, upgrade, backup/restore, maintenance, uninstall, validation, hardening, and troubleshooting.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q"
+  },
+  "keywords": [
+    "openshift",
+    "okd",
+    "lvm",
+    "lvms",
+    "topolvm",
+    "csi",
+    "storage",
+    "sno",
+    "thin-pool",
+    "volume-group",
+    "lifecycle"
+  ]
+}
