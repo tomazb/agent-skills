@@ -30,12 +30,16 @@ def make_skill(tmp_path: Path, *, name: str = "demo-skill") -> Path:
     return skill_dir
 
 
-def test_validate_skill_dir_compiles_python_under_tools(tmp_path):
+def load_collection_validator():
     repo_root = Path(__file__).resolve().parents[1]
-    module = load_module(
+    return load_module(
         repo_root / "scripts" / "validate_skill_collection.py",
         "validate_skill_collection",
     )
+
+
+def test_validate_skill_dir_compiles_python_under_tools(tmp_path):
+    module = load_collection_validator()
 
     skill_dir = make_skill(tmp_path)
     (skill_dir / "tools").mkdir(parents=True)
@@ -50,11 +54,7 @@ def test_validate_skill_dir_compiles_python_under_tools(tmp_path):
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash executable not found")
 def test_validate_skill_dir_checks_shell_entrypoints_under_tools(tmp_path):
-    repo_root = Path(__file__).resolve().parents[1]
-    module = load_module(
-        repo_root / "scripts" / "validate_skill_collection.py",
-        "validate_skill_collection",
-    )
+    module = load_collection_validator()
 
     skill_dir = make_skill(tmp_path)
     (skill_dir / "tools").mkdir(parents=True)
@@ -71,11 +71,7 @@ def test_validate_skill_dir_checks_shell_entrypoints_under_tools(tmp_path):
 
 
 def test_validate_skill_dir_accepts_shell_only_tools_directory(tmp_path):
-    repo_root = Path(__file__).resolve().parents[1]
-    module = load_module(
-        repo_root / "scripts" / "validate_skill_collection.py",
-        "validate_skill_collection",
-    )
+    module = load_collection_validator()
 
     skill_dir = make_skill(tmp_path)
     (skill_dir / "tools").mkdir(parents=True)
@@ -92,11 +88,7 @@ def test_validate_skill_dir_accepts_shell_only_tools_directory(tmp_path):
 
 
 def test_validate_agent_skill_spec_surfaces_reference_errors(tmp_path):
-    repo_root = Path(__file__).resolve().parents[1]
-    module = load_module(
-        repo_root / "scripts" / "validate_skill_collection.py",
-        "validate_skill_collection",
-    )
+    module = load_collection_validator()
     skill_dir = make_skill(tmp_path)
 
     issues = module.validate_agent_skill_spec(
@@ -111,17 +103,71 @@ def test_validate_agent_skill_spec_surfaces_reference_errors(tmp_path):
 
 
 def test_validate_agent_skill_spec_reports_missing_dependency(tmp_path, monkeypatch):
-    repo_root = Path(__file__).resolve().parents[1]
-    module = load_module(
-        repo_root / "scripts" / "validate_skill_collection.py",
-        "validate_skill_collection",
-    )
+    module = load_collection_validator()
     skill_dir = make_skill(tmp_path)
     monkeypatch.setattr(module, "_skills_ref_validate", None)
 
     issues = module.validate_agent_skill_spec(skill_dir, tmp_path)
 
     assert issues == [
-        "demo-skill/SKILL.md: skills-ref is required for Agent Skills spec validation; "
-        "install requirements-dev.txt"
+        "demo-skill/SKILL.md: skills-ref and PyYAML are required for Agent Skills "
+        "spec validation; install requirements-dev.txt"
+    ]
+
+
+def test_normalize_legacy_tools_metadata_for_qa_agent(tmp_path):
+    module = load_collection_validator()
+    skill_dir = tmp_path / "qa-agent"
+    metadata = {
+        "name": "qa-agent",
+        "description": "Use when testing.",
+        "tools": ["vscode", "execute", "read"],
+    }
+
+    normalized, issues = module.normalize_legacy_tools_metadata(metadata, skill_dir)
+
+    assert issues == []
+    assert normalized == {
+        "name": "qa-agent",
+        "description": "Use when testing.",
+        "allowed-tools": "vscode execute read",
+    }
+    assert "tools" in metadata  # input is not mutated
+
+
+def test_normalize_legacy_tools_metadata_rejects_new_legacy_use(tmp_path):
+    module = load_collection_validator()
+    skill_dir = tmp_path / "new-skill"
+
+    _, issues = module.normalize_legacy_tools_metadata(
+        {
+            "name": "new-skill",
+            "description": "Use when testing.",
+            "tools": ["read"],
+        },
+        skill_dir,
+    )
+
+    assert issues == [
+        "Unexpected legacy frontmatter field 'tools'. Use the Agent Skills "
+        "'allowed-tools' field instead."
+    ]
+
+
+def test_normalize_legacy_tools_metadata_rejects_conflicting_fields(tmp_path):
+    module = load_collection_validator()
+    skill_dir = tmp_path / "qa-agent"
+
+    _, issues = module.normalize_legacy_tools_metadata(
+        {
+            "name": "qa-agent",
+            "description": "Use when testing.",
+            "tools": ["read"],
+            "allowed-tools": "read",
+        },
+        skill_dir,
+    )
+
+    assert issues == [
+        "Frontmatter cannot contain both legacy 'tools' and 'allowed-tools'."
     ]
