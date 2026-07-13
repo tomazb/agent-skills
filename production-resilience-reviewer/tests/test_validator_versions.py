@@ -63,6 +63,13 @@ def test_readme_version_match(validator, package_factory):
     assert validator.check_readme_version(root) == []
 
 
+def test_readme_version_allows_trailing_whitespace(validator, package_factory):
+    root = package_factory(
+        readme_text="# README\n\nCurrent version: **1.2.3**  \t\n",
+    )
+    assert validator.check_readme_version(root) == []
+
+
 def test_readme_version_mismatch(validator, package_factory):
     root = package_factory(
         readme_text="# README\n\nCurrent version: **9.9.9**\n",
