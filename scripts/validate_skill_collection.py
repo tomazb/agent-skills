@@ -39,6 +39,14 @@ def fence_count_ok(text: str) -> bool:
     return fences % 2 == 0
 
 
+def display_path(path: Path, root: Path) -> str:
+    """Return a repository-relative path when possible, otherwise an absolute path."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def find_skill_dirs(repo_root: Path) -> list[Path]:
     return sorted(
         skill_file.parent
@@ -48,7 +56,7 @@ def find_skill_dirs(repo_root: Path) -> list[Path]:
 
 
 def validate_markdown_file(path: Path, root: Path) -> list[str]:
-    rel = path.relative_to(root)
+    rel = display_path(path, root)
     issues: list[str] = []
     text = read_text(path)
 
@@ -103,7 +111,7 @@ def normalize_legacy_tools_metadata(
         ]
 
     tools = normalized.pop("tools")
-    if isinstance(tools, list) and all(
+    if isinstance(tools, list) and tools and all(
         isinstance(tool, str) and tool.strip() for tool in tools
     ):
         normalized["allowed-tools"] = " ".join(tool.strip() for tool in tools)
@@ -123,7 +131,7 @@ def validate_agent_skill_spec(
     validator: SkillSpecValidator | None = None,
 ) -> list[str]:
     """Validate SKILL.md with skills-ref, including one scoped legacy alias."""
-    rel = skill_dir.relative_to(repo_root)
+    rel = display_path(skill_dir, repo_root)
 
     if validator is not None:
         try:
@@ -190,7 +198,13 @@ def validate_skill_dir(
     spec_validator: SkillSpecValidator | None = None,
 ) -> list[str]:
     issues: list[str] = []
-    issues.extend(validate_agent_skill_spec(skill_dir, repo_root, spec_validator))
+    issues.extend(
+        validate_agent_skill_spec(
+            skill_dir,
+            repo_root,
+            validator=spec_validator,
+        )
+    )
 
     for md_file in sorted(skill_dir.rglob("*.md")):
         issues.extend(validate_markdown_file(md_file, repo_root))
@@ -198,7 +212,7 @@ def validate_skill_dir(
     references_dir = skill_dir / "references"
     if references_dir.exists() and not any(references_dir.glob("*.md")):
         issues.append(
-            f"{references_dir.relative_to(repo_root)}: directory exists but contains no markdown files"
+            f"{display_path(references_dir, repo_root)}: directory exists but contains no markdown files"
         )
 
     for python_dir_name in ("scripts", "tools"):
@@ -210,13 +224,13 @@ def validate_skill_dir(
         shell_files = sorted(python_dir.rglob("*.sh"))
         if not python_files and not shell_files:
             issues.append(
-                f"{python_dir.relative_to(repo_root)}: directory exists but contains no Python or shell files"
+                f"{display_path(python_dir, repo_root)}: directory exists but contains no Python or shell files"
             )
         for python_file in python_files:
             try:
                 py_compile.compile(str(python_file), doraise=True)
             except py_compile.PyCompileError as error:
-                issues.append(f"{python_file.relative_to(repo_root)}: {error.msg}")
+                issues.append(f"{display_path(python_file, repo_root)}: {error.msg}")
 
         for shell_file in shell_files:
             try:
@@ -230,7 +244,7 @@ def validate_skill_dir(
                 continue
             if result.returncode != 0:
                 shell_error = result.stderr.strip() or "shell syntax check failed"
-                issues.append(f"{shell_file.relative_to(repo_root)}: {shell_error}")
+                issues.append(f"{display_path(shell_file, repo_root)}: {shell_error}")
 
     return issues
 
