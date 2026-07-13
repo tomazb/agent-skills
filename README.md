@@ -124,16 +124,18 @@ skill-name/
 
 ## Validation
 
-Install the development/CI dependencies, then run the repository validator and tests:
+Install the development/CI dependencies, then run the repository validator and all root/per-skill tests:
 
 ```bash
 python3 -m pip install -r requirements-dev.txt
 python3 scripts/validate_skill_collection.py
-pytest -q
+python3 scripts/run_test_suite.py
 ```
 
 The collection validator uses the official `skills-ref` library for Agent Skills frontmatter and
-naming validation, then applies repository-specific Markdown and script checks.
+naming validation, then applies repository-specific Markdown and script checks. The test runner
+executes each top-level suite in a separate pytest process because independently packaged skills
+can intentionally reuse helper module names.
 
 For a package-specific validation pass:
 
