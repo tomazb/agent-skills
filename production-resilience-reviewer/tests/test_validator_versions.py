@@ -56,3 +56,44 @@ def test_changelog_version_missing_changelog(validator, package_factory):
     root = package_factory(include_version=True, include_changelog=False)
     issues = validator.check_changelog_version(root)
     assert issues == ["Missing CHANGELOG.md file."]
+
+
+def test_readme_version_match(validator, package_factory):
+    root = package_factory()
+    assert validator.check_readme_version(root) == []
+
+
+def test_readme_version_allows_trailing_whitespace(validator, package_factory):
+    root = package_factory(
+        readme_text="# README\n\nCurrent version: **1.2.3**  \t\n",
+    )
+    assert validator.check_readme_version(root) == []
+
+
+def test_readme_version_mismatch(validator, package_factory):
+    root = package_factory(
+        readme_text="# README\n\nCurrent version: **9.9.9**\n",
+    )
+    issues = validator.check_readme_version(root)
+    assert issues == [
+        "README.md current version (9.9.9) and VERSION (1.2.3) are out of sync."
+    ]
+
+
+def test_readme_version_missing_marker(validator, package_factory):
+    root = package_factory(readme_text="# README\n")
+    issues = validator.check_readme_version(root)
+    assert issues == [
+        "README.md does not contain a 'Current version: **<version>**' marker."
+    ]
+
+
+def test_readme_version_missing_readme(validator, package_factory):
+    root = package_factory(include_readme=False)
+    issues = validator.check_readme_version(root)
+    assert issues == ["Missing README.md file."]
+
+
+def test_readme_version_missing_version_file_is_noop(validator, package_factory):
+    root = package_factory(include_version=False)
+    assert validator.check_readme_version(root) == []

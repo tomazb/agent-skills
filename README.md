@@ -85,15 +85,15 @@ Version-discovery and upgrade-path skill for OpenShift releases using Red Hat AP
 
 ### [Production Resilience Reviewer](production-resilience-reviewer/)
 
-Senior-level production resilience and failure-mode review for code, services, and system designs. Acts as a hybrid Staff SRE, Principal Engineer, and Incident Commander — finding every way code can fail in production and providing actionable fixes with priority rankings.
+Senior-level production resilience and failure-mode review for code, services, and system designs. Acts as a hybrid Staff SRE, Principal Engineer, and Incident Commander — finding material production failure modes and providing evidence-calibrated fixes with priority rankings.
 
 **Key capabilities:**
 
-- Reviews code through **eleven failure lenses**: dependency failure, load & concurrency, network & latency, data freshness & consistency, retry & backpressure, debuggability, observability & alerting, change management & rollback safety, fault domains & disaster recovery, security & abuse as reliability, and quota & limit exhaustion
-- Calibrates severity using impact, likelihood, blast radius, and detectability
+- Reviews code through **twelve failure lenses**: dependency failure, load & concurrency, network & latency, data freshness & consistency, retry & backpressure, debuggability, observability & alerting, change management & rollback safety, fault domains & disaster recovery, security & abuse as reliability, quota & limit exhaustion, and complexity tax & architecture fit
+- Calibrates severity using impact, likelihood, blast radius, detectability, recoverability, and existing controls
 - Provides two review modes: **Quick** (top risks, fast pass) and **Full** (deep analysis with validation and monitoring plans)
-- Includes specialized detection of common AI-generated code blind spots
-- Ships with reference checklists for dependency patterns, data consistency, observability, change management, disaster recovery, security/abuse resilience, quota exhaustion, severity calibration, and validation/monitoring patterns
+- Applies heightened resilience scrutiny when code is identified as AI-generated without inferring authorship from code smells
+- Ships with reference checklists for all twelve lenses, severity calibration, and validation/monitoring patterns
 
 ### [QA Agent](qa-agent/)
 
@@ -124,17 +124,24 @@ skill-name/
 
 ## Validation
 
-Skills include validation tooling to check package integrity:
+Install the development/CI dependencies, then run the repository validator and all root/per-skill tests:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 scripts/validate_skill_collection.py
+python3 scripts/run_test_suite.py
+```
+
+The collection validator uses the official `skills-ref` library for Agent Skills frontmatter and
+naming validation, then applies repository-specific Markdown and script checks. The test runner
+executes each top-level suite in a separate pytest process because independently packaged skills
+can intentionally reuse helper module names.
+
+For a package-specific validation pass:
 
 ```bash
 cd production-resilience-reviewer
 bash tools/validate_skill_package.sh
-```
-
-For a lightweight repo-wide validation pass across all skill directories:
-
-```bash
-python3 scripts/validate_skill_collection.py
 ```
 
 ## Packaging
