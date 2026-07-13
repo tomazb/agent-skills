@@ -9,6 +9,9 @@ NUM_HEADER_RE = re.compile(r"^##\s+(\d+)\.\s+")
 FENCE_RE = re.compile(r"^\s*```")
 ORDERED_LINE_RE = re.compile(r"^(\d+)\.\s+\S")
 LENS_HEADER_RE = re.compile(r"^### Lens (\d+):")
+README_VERSION_RE = re.compile(
+    r"^Current version:\s+\*\*([^*]+)\*\*$", flags=re.M
+)
 
 EXPECTED_REFERENCES = [
     "references/checklist-change-management.md",
@@ -48,6 +51,27 @@ REQUIRED_RESILIENCE_GUIDANCE_PHRASES = [
     "Can the expensive path be bounded, simplified, or removed?",
 ]
 
+REQUIRED_CORRECTNESS_GUIDANCE_PHRASES = [
+    "not merely `5xx`",
+    "Request and trace IDs belong in logs, traces, and error context — not metric labels",
+    "Do not prescribe a numeric timeout",
+    "Absence of retries is not automatically a defect",
+    "do not infer authorship from code smells",
+]
+
+UNSAFE_GUIDANCE_PATTERNS = [
+    "If 3+ of these 11 signals",
+    "├─ 5xx → Retry with backoff",
+    "retry only at outermost layer",
+    "Logs, metrics, and error payloads include the same primary request identifier",
+    "If a label can have more than ~100 unique values",
+    "load test at 1×/5×/10×",
+    "at least quarterly for critical paths",
+    "30-50% on critical dependencies",
+    "timeout=5, idempotency_key=request_id",
+    "@retry(",
+]
+
 UNSUPPORTED_COMPLEXITY_CLAIMS = [
     "DZone 2024",
     "CNCF 2025 Survey",
@@ -76,18 +100,14 @@ def fence_count_ok(text: str) -> bool:
 
 def find_leaked_toc_titles(text: str) -> list[str]:
     """
-    Heuristic detector for the specific regression we saw:
-    section-numbered items like '7. Something' appearing *immediately under* a numbered section header,
-    typically matching the next section numbers.
-
-    This avoids flagging legitimate step lists (which usually start at 1) and ignores content inside code fences.
+    Detect section-numbered TOC entries accidentally pasted immediately below a
+    numbered section header. Ignore content inside fenced code blocks.
     """
     lines = text.splitlines()
     issues: list[str] = []
     in_code = False
 
     def next_nonempty_after(line_idx: int) -> tuple[int, str] | None:
-        # This search is intentionally exclusive of line_idx (starts at line_idx + 1).
         scan_idx = line_idx + 1
         while scan_idx < len(lines):
             stripped = lines[scan_idx].strip()
@@ -119,10 +139,10 @@ def find_leaked_toc_titles(text: str) -> list[str]:
 
         if int(first_item_match.group(1)) >= header_num + 1:
             issues.append(
-                f"Possible leaked TOC title under numbered header at line {header_line_idx + 1}: '{first_item_line}'"
+                "Possible leaked TOC title under numbered header at "
+                f"line {header_line_idx + 1}: '{first_item_line}'"
             )
 
-            # Keep scanning consecutive leaked TOC entries.
             current_scan_idx = first_item_line_idx
             while True:
                 next_candidate = next_nonempty_after(current_scan_idx)
@@ -138,7 +158,8 @@ def find_leaked_toc_titles(text: str) -> list[str]:
                     break
 
                 issues.append(
-                    f"Possible leaked TOC title under numbered header at line {header_line_idx + 1}: '{next_item_line}'"
+                    "Possible leaked TOC title under numbered header at "
+                    f"line {header_line_idx + 1}: '{next_item_line}'"
                 )
                 current_scan_idx = next_item_line_idx
 
@@ -146,7 +167,7 @@ def find_leaked_toc_titles(text: str) -> list[str]:
 
 
 def check_lens_headings(skill_md_text: str) -> list[str]:
-    """Ensure SKILL.md contains Lens 1..12 headings (prevents accidental deletions)."""
+    """Ensure SKILL.md contains Lens 1..12 headings."""
     lens_nums = sorted(
         int(n) for n in re.findall(LENS_HEADER_RE.pattern, skill_md_text, flags=re.M)
     )
@@ -174,7 +195,8 @@ def check_lens_spacing(skill_md_text: str) -> list[str]:
 
         if blank_lines != 1:
             issues.append(
-                f"SKILL.md lens heading at line {i + 1} must be followed by exactly 1 blank line (found {blank_lines})."
+                f"SKILL.md lens heading at line {i + 1} must be followed by "
+                f"exactly 1 blank line (found {blank_lines})."
             )
     return issues
 
@@ -199,7 +221,8 @@ def check_resilience_guidance_guards(
         if phrase not in normalized_skill_text:
             if phrase == REQUIRED_RESILIENCE_GUIDANCE_PHRASES[0]:
                 issues.append(
-                    "SKILL.md: description must target production architecture trade-offs affecting resilience, operability, cost, or failure modes."
+                    "SKILL.md: description must target production architecture trade-offs "
+                    "affecting resilience, operability, cost, or failure modes."
                 )
             else:
                 issues.append(f"SKILL.md: missing resilience guidance phrase: {phrase}")
@@ -216,8 +239,28 @@ def check_resilience_guidance_guards(
     return issues
 
 
+def check_correctness_guidance_guards(
+    skill_md_text: str, reference_texts: dict[str, str]
+) -> list[str]:
+    """Prevent regressions to unsafe universal retry, metric, SLO, and provenance rules."""
+    issues: list[str] = []
+    normalized_skill_text = " ".join(skill_md_text.split())
+
+    for phrase in REQUIRED_CORRECTNESS_GUIDANCE_PHRASES:
+        if phrase not in normalized_skill_text:
+            issues.append(f"SKILL.md: missing correctness guidance phrase: {phrase}")
+
+    documents = {"SKILL.md": skill_md_text, **reference_texts}
+    for path, text in documents.items():
+        for pattern in UNSAFE_GUIDANCE_PATTERNS:
+            if pattern in text:
+                issues.append(f"{path}: unsafe resilience guidance pattern: {pattern}")
+
+    return issues
+
+
 def check_version_sync(root: Path) -> list[str]:
-    """Ensure VERSION file and package.json version field are in sync."""
+    """Ensure VERSION and package.json version are in sync."""
     issues: list[str] = []
     version_file = root / "VERSION"
     pkg_file = root / "package.json"
@@ -245,7 +288,7 @@ def check_version_sync(root: Path) -> list[str]:
 
 
 def check_changelog_version(root: Path) -> list[str]:
-    """Ensure CHANGELOG.md includes a heading for the VERSION value."""
+    """Ensure CHANGELOG.md includes a heading for VERSION."""
     issues: list[str] = []
     version_file = root / "VERSION"
     changelog_file = root / "CHANGELOG.md"
@@ -263,9 +306,36 @@ def check_changelog_version(root: Path) -> list[str]:
             return issues
 
     issues.append(
-        f"CHANGELOG.md does not contain a heading for VERSION '{version}' (expected one of: {sorted(headings)})."
+        f"CHANGELOG.md does not contain a heading for VERSION '{version}' "
+        f"(expected one of: {sorted(headings)})."
     )
     return issues
+
+
+def check_readme_version(root: Path) -> list[str]:
+    """Require README.md and keep its Current version marker in sync with VERSION."""
+    readme_file = root / "README.md"
+    version_file = root / "VERSION"
+
+    if not readme_file.exists():
+        return ["Missing README.md file."]
+    if not version_file.exists():
+        return []
+
+    match = README_VERSION_RE.search(read_text(readme_file))
+    if not match:
+        return [
+            "README.md does not contain a 'Current version: **<version>**' marker."
+        ]
+
+    readme_version = match.group(1).strip()
+    version = read_text(version_file).strip()
+    if readme_version != version:
+        return [
+            f"README.md current version ({readme_version}) and VERSION ({version}) "
+            "are out of sync."
+        ]
+    return []
 
 
 def check_markdown_file(path: Path, root: Path) -> list[str]:
@@ -306,6 +376,7 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_expected_references(root))
     issues.extend(check_version_sync(root))
     issues.extend(check_changelog_version(root))
+    issues.extend(check_readme_version(root))
 
     complexity_ref = root / "references/checklist-complexity-tax.md"
     if skill.exists() and complexity_ref.exists():
@@ -313,6 +384,16 @@ def validate_root(root: Path) -> list[str]:
             check_resilience_guidance_guards(
                 read_text(skill), read_text(complexity_ref)
             )
+        )
+
+    if skill.exists():
+        reference_texts = {
+            ref: read_text(root / ref)
+            for ref in EXPECTED_REFERENCES
+            if (root / ref).exists()
+        }
+        issues.extend(
+            check_correctness_guidance_guards(read_text(skill), reference_texts)
         )
 
     for md_file in sorted(root.rglob("*.md")):
