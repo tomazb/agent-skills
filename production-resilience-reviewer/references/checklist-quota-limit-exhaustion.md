@@ -34,6 +34,7 @@ You cannot protect what you have not inventoried.
 - Global quotas shared across staging/prod
 - "Soft" limits that become hard under retry storms
 - Background jobs consuming the same quota budget as user traffic
+- Limit-increase lead time that exceeds the time-to-exhaust forecast
 
 ---
 
@@ -43,15 +44,20 @@ Capacity planning should include normal growth and failure-mode amplification.
 
 ### Budgeting Checklist
 - [ ] Quota budgets are allocated by criticality (interactive traffic first)
-- [ ] Headroom targets are defined (for example 30-50% on critical dependencies)
+- [ ] Headroom targets are derived from peak forecast, burst shape, retry/failover
+  amplification, scaling or quota-increase lead time, and desired recovery margin
 - [ ] Retry amplification is accounted for in quota models
 - [ ] Burst policy exists (what traffic can be delayed/dropped first)
-- [ ] Automated limit increase process is documented and tested
+- [ ] Automated or manual limit-increase process is documented and tested
 - [ ] Planned launches/migrations include quota impact review
+- [ ] Headroom assumptions are revalidated after architecture, traffic, or provider-limit changes
+
+Do not use one universal headroom percentage. State the demand model and operational lead time
+that justify the selected target.
 
 ### Severity Guidance
-- No headroom policy on critical dependency: usually **P1-HIGH**
-- Exhaustion likely to hard-fail core path without fallback: often **P0/P1** based on blast radius
+- No headroom policy on a critical dependency: usually **P1-HIGH** when exhaustion is credible
+- Exhaustion likely to hard-fail a core path without fallback: often **P0/P1** based on blast radius
 
 ---
 
@@ -60,17 +66,19 @@ Capacity planning should include normal growth and failure-mode amplification.
 When limits are hit, the system needs predictable behavior, not cascading failure.
 
 ### Exhaustion Checklist
-- [ ] Quota nearing-hard-limit is visible via telemetry and alerts
+- [ ] Quota nearing-hard-limit is visible via telemetry and forecast alerts
 - [ ] Backpressure/admission control activates before saturation collapse
-- [ ] Responses communicate retryability clearly (429/503 + retry hints when safe)
-- [ ] Mutating paths have bounded retry budgets
+- [ ] Responses communicate retryability clearly (429/503 + retry guidance when safe)
+- [ ] Mutating paths have bounded, deadline-aware retry budgets
 - [ ] Non-critical work can be queued, delayed, or dropped first
 - [ ] Recovery behavior after quota reset is controlled (no thundering herd)
+- [ ] First attempts retain capacity when retry traffic rises
 
 ### Anti-Patterns
 - Infinite retries on quota/limit errors
 - Shared queue growth with no depth cap
-- Treating quota errors as generic 500s (hides root cause)
+- Treating quota errors as generic 500s
+- Honoring `Retry-After` beyond the caller's deadline or local capacity budget
 
 ---
 
@@ -81,9 +89,10 @@ Cost incidents are reliability incidents when they force emergency shutdowns or 
 ### Cost Guardrail Checklist
 - [ ] Per-tenant or per-feature spend budgets exist where applicable
 - [ ] High-cost operations have volume caps or approvals
-- [ ] Circuit breaker exists for runaway high-cost loops
+- [ ] A bounded emergency control exists for runaway high-cost loops
 - [ ] "Safe mode" can disable non-essential expensive features quickly
 - [ ] Cost anomaly detection alerts route to operators with clear actions
+- [ ] Cost controls cannot silently corrupt or abandon mutating work
 
 ---
 
@@ -92,11 +101,11 @@ Cost incidents are reliability incidents when they force emergency shutdowns or 
 External quota behavior must be first-class in client design.
 
 ### Third-Party Quota Checklist
-- [ ] Client distinguishes 429/limit errors from transient 5xx
-- [ ] Retry strategy uses jitter/backoff and hard ceilings
+- [ ] Client distinguishes 429/limit errors from specific transient server failures
+- [ ] Retry strategy honors provider guidance within hard attempt, deadline, and capacity ceilings
 - [ ] Idempotency and deduplication are enforced on retried mutations
 - [ ] Fallback/degraded behavior is documented for sustained quota pressure
-- [ ] Contract limits and upgrade paths are known (who to call, expected response time)
+- [ ] Contract limits, increase paths, and provider response times are known
 - [ ] Quota exhaustion does not silently corrupt business state
 
 ---
@@ -109,6 +118,7 @@ External quota behavior must be first-class in client design.
 - [ ] Escalation contacts and limit-increase process are current
 - [ ] Post-incident reconciliation process is defined for dropped/deferred work
 - [ ] SLO/SLA communications plan exists for sustained limit events
+- [ ] Recovery removes temporary throttles gradually to avoid rebound overload
 
 ---
 
@@ -118,17 +128,19 @@ See also `references/validation-monitoring-patterns.md` for shared patterns and 
 
 ### Validation Ideas (Quota-Focused)
 - [ ] Fault-inject quota responses (429, resource exhausted, ENOSPC, too many connections)
-- [ ] Load tests that intentionally approach quota boundaries
+- [ ] Load tests approach the derived quota boundary under normal, burst, retry, and failover demand
 - [ ] Retry-budget exhaustion tests on mutating flows
 - [ ] Graceful-degradation drill (disable non-critical paths under pressure)
-- [ ] Recovery test after quota reset to verify no retry storm rebound
+- [ ] Recovery test after quota reset to verify no retry-storm rebound
+- [ ] Limit-increase or emergency-capacity procedure rehearsal where business-critical
 
 ### Monitoring Ideas (Quota-Focused)
-- [ ] Quota utilization % and projected time-to-exhaust
+- [ ] Quota utilization and projected time-to-exhaust with forecast assumptions
 - [ ] Resource saturation (connections, IOPS, disk, FD, queue depth)
-- [ ] Quota/error reason counters by dependency and endpoint
-- [ ] Retry amplification counters and budget consumption
+- [ ] Quota/error reason counters by dependency and normalized endpoint
+- [ ] Retry amplification counters, first-attempt capacity, and budget consumption
 - [ ] Cost anomaly indicators and emergency guardrail activations
+- [ ] Time from limit-increase request to usable capacity
 
 ---
 
@@ -138,7 +150,7 @@ See also `references/validation-monitoring-patterns.md` for shared patterns and 
 ```markdown
 [QUOTA]
 Finding: <quota or hard-limit exhaustion risk>
-Evidence: <dependency/resource limits, traffic pattern, retry behavior, missing guardrails>
+Evidence: <dependency/resource limits, demand model, retry behavior, missing guardrails>
 Why it matters: <service collapse, cascading retries, cost spike, user-facing outage>
 Recommendation: <inventory + alerts + backpressure + degradation + budget controls>
 Validation: <quota fault injection + load-to-limit test + recovery drill>
