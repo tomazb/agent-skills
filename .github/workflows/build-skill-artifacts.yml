@@ -34,7 +34,15 @@ jobs:
         run: python3 production-resilience-reviewer/tools/validate_skill_package.py
 
       - name: Run test suite
-        run: pytest -q
+        run: pytest -q --junitxml=pytest-results.xml
+
+      - name: Upload pytest results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-results
+          path: pytest-results.xml
+          if-no-files-found: error
 
       - name: Build .skill artifacts
         run: python3 scripts/build_skill_artifacts.py
