@@ -102,6 +102,23 @@ def test_validate_agent_skill_spec_surfaces_reference_errors(tmp_path):
     ]
 
 
+def test_validate_agent_skill_spec_handles_unrelated_display_root(tmp_path):
+    module = load_collection_validator()
+    skill_root = tmp_path / "skills"
+    display_root = tmp_path / "other-root"
+    skill_dir = make_skill(skill_root)
+
+    issues = module.validate_agent_skill_spec(
+        skill_dir,
+        display_root,
+        validator=lambda _path: ["demo issue"],
+    )
+
+    assert issues == [
+        f"{skill_dir}/SKILL.md: Agent Skills spec: demo issue"
+    ]
+
+
 def test_validate_agent_skill_spec_reports_missing_dependency(tmp_path, monkeypatch):
     module = load_collection_validator()
     skill_dir = make_skill(tmp_path)
@@ -133,6 +150,24 @@ def test_normalize_legacy_tools_metadata_for_qa_agent(tmp_path):
         "allowed-tools": "vscode execute read",
     }
     assert "tools" in metadata  # input is not mutated
+
+
+def test_normalize_legacy_tools_metadata_rejects_empty_list(tmp_path):
+    module = load_collection_validator()
+    skill_dir = tmp_path / "qa-agent"
+
+    _, issues = module.normalize_legacy_tools_metadata(
+        {
+            "name": "qa-agent",
+            "description": "Use when testing.",
+            "tools": [],
+        },
+        skill_dir,
+    )
+
+    assert issues == [
+        "Legacy 'tools' must be a non-empty string or a list of non-empty strings."
+    ]
 
 
 def test_normalize_legacy_tools_metadata_rejects_new_legacy_use(tmp_path):
