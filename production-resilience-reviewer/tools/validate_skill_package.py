@@ -10,7 +10,7 @@ FENCE_RE = re.compile(r"^\s*```")
 ORDERED_LINE_RE = re.compile(r"^(\d+)\.\s+\S")
 LENS_HEADER_RE = re.compile(r"^### Lens (\d+):")
 README_VERSION_RE = re.compile(
-    r"^Current version:\s+\*\*([^*]+)\*\*$", flags=re.M
+    r"^Current version:\s+\*\*([^*]+)\*\*\s*$", flags=re.M
 )
 
 EXPECTED_REFERENCES = [
