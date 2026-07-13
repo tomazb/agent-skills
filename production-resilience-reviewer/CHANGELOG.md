@@ -1,5 +1,21 @@
 # Changelog
 
+## 5.5.1
+
+- Corrected retry guidance to classify failures by operation and provider contract instead of treating every `5xx` as retryable.
+- Resolved retry-placement contradictions: retries now belong at the layer that owns semantic idempotency, failure classification, and the remaining end-to-end deadline; aggregate attempts across SDKs, proxies, services, queues, and clients.
+- Replaced the two-timeout rule with a bounded total-operation deadline plus protocol-appropriate phase limits, cancellation propagation, and streaming idle-timeout guidance.
+- Corrected request/trace correlation guidance: identifiers belong in logs, traces, and error context, never metric labels; use exemplars where supported.
+- Replaced the fixed metric-cardinality threshold with dimension-product, traffic, retention, and backend-budget analysis.
+- Replaced the unsafe percentile/remaining-budget SLO example with a good-event SLI and volume-aware multi-window burn-rate guidance.
+- Replaced fictional retry-decorator code with explicitly conceptual, deadline-aware pseudocode using a stable business-operation idempotency key and aggregate retry budget.
+- Removed the heuristic that inferred AI authorship from three code smells. Heightened review now applies only when code is identified as AI-generated, and the same resilience checks apply to all code.
+- Removed universal load multipliers, pool percentages, DR cadence, and quota-headroom percentages; numeric recommendations must state their objective, measurement, provider constraint, or assumption.
+- Corrected the repository README from eleven to twelve failure lenses and documented the architecture-fit lens.
+- Hardened package validation with README/version synchronization and regression guards for the corrected retry, telemetry, SLO, numeric-default, and provenance rules.
+- Replaced the repository's ad hoc frontmatter parser with the official `skills-ref` validator, pinned the validation dependency, and added focused tests.
+- Updated CI to install declared validation dependencies and run the full pytest suite before building artifacts.
+
 ## 5.5.0
 
 - Added Lens 12: **Complexity Tax & Architecture Fit** to `SKILL.md` — an evidence-calibrated lens that challenges whether architectural decisions match observed constraints and create unnecessary failure surface area.
@@ -24,6 +40,7 @@
 - Updated test suite to expect errors instead of no-ops for missing-file edge cases.
 
 ## 5.3.2
+
 - Fixed `Fix:` → `Recommendation:` in Lens 9, 10, 11 condensed examples to match Lens 8 style (review finding).
 - Removed orphaned trigger phrases from `README.md` that no longer appeared in `SKILL.md` frontmatter.
 - Added 5.3.0 and 5.3.1 to `README.md` "Recent highlights" section.
@@ -31,6 +48,7 @@
 - Improved scanability of Severity Calibration section (added sub-heading for priority definitions).
 
 ## 5.3.1
+
 - Improved skill triggering and applicability guidance:
   - Refactored `SKILL.md` frontmatter description to start with "Use when..." and emphasize trigger conditions.
   - Added explicit "Skip this skill for" exclusions (non-production artifacts, throwaway prototypes, one-off no-SLA scripts).
@@ -44,6 +62,7 @@
 - Synced package README usage guidance with SKILL trigger/exclusion semantics.
 
 ## 5.3.0
+
 - Validator hardening and maintainability:
   - Refactored validator checks to use consistent list-returning interfaces.
   - Added `validate_root()` orchestration helper for cleaner composition and testing.
@@ -62,6 +81,7 @@
   - documented validator tests and centralized version bump workflow
 
 ## 5.2.0
+
 - Added Lens 9: **Fault Domains & Disaster Recovery** to `SKILL.md` with RPO/RTO, backup/restore, replay, and failover checks.
 - Added Lens 10: **Security & Abuse as Reliability** to `SKILL.md` with auth fail-open and abuse-path resilience checks.
 - Added Lens 11: **Quota & Limit Exhaustion** to `SKILL.md` with quota inventory, saturation behavior, and cost/rate guardrails.
@@ -76,6 +96,7 @@
 - Updated README to document the 11-lens framework and new reference material.
 
 ## 5.1.0
+
 - Added condensed `[CATEGORY]` examples to Lenses 3 (Network), 4 (Data), 5 (Retry), and 7 (Observability) for consistency with Lenses 1, 2, 6, 8.
 - Validator: added reference file existence check (catches renamed/deleted reference files).
 - Validator: added VERSION ↔ package.json version sync check.
@@ -86,12 +107,14 @@
 - Populated `package.json` with name, version, description, and keywords.
 
 ## 5.0.0
+
 - Restored Lens 2 (Load & Concurrency) as a first-class lens in `SKILL.md`.
 - Moved the `[LOAD]` example under Lens 2 and restored a `[DEPENDENCY]` example under Lens 1.
 - Restored the concrete BAD/OKAY/GOOD 3 AM error-message progression under Lens 6.
 - Enhanced the validation tool to ensure all eight lens headings are present (prevents this regression).
 
 ## 4.0.0
+
 - Added `references/checklist-change-management.md` (Lens 8 deep-dive).
 - Added cross-links in all reference checklists to:
   - `references/severity-calibration.md`
@@ -102,5 +125,6 @@
 - Added a lightweight validation script: `tools/validate_skill_package.py`.
 
 ## 3.x
+
 - Introduced Lens 8 (Change Management & Rollback Safety) and extracted severity + validation/monitoring details into references.
 - Fixed markdown formatting issues (stray TOC lines, missing trailing newlines, code fence termination).
