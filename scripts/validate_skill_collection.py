@@ -6,9 +6,18 @@ import py_compile
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
+
+try:
+    from skills_ref import validate as _skills_ref_validate
+except ImportError:  # pragma: no cover - exercised by the CLI error path
+    _skills_ref_validate = None
 
 
 FENCE_RE = re.compile(r"^\s*```")
+
+
+SkillSpecValidator = Callable[[Path], list[str]]
 
 
 def read_text(path: Path) -> str:
@@ -23,22 +32,6 @@ def ends_with_newline(path: Path) -> bool:
 def fence_count_ok(text: str) -> bool:
     fences = sum(1 for line in text.splitlines() if FENCE_RE.match(line))
     return fences % 2 == 0
-
-
-def parse_frontmatter(skill_text: str) -> dict[str, str] | None:
-    lines = skill_text.splitlines()
-    if len(lines) < 3 or lines[0].strip() != "---":
-        return None
-
-    frontmatter: dict[str, str] = {}
-    for line in lines[1:]:
-        if line.strip() == "---":
-            return frontmatter
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        frontmatter[key.strip()] = value.strip()
-    return None
 
 
 def find_skill_dirs(repo_root: Path) -> list[Path]:
@@ -62,28 +55,46 @@ def validate_markdown_file(path: Path, root: Path) -> list[str]:
     return issues
 
 
-def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
-    issues: list[str] = []
-    skill_file = skill_dir / "SKILL.md"
-    skill_text = read_text(skill_file)
-    frontmatter = parse_frontmatter(skill_text)
+def validate_agent_skill_spec(
+    skill_dir: Path,
+    repo_root: Path,
+    validator: SkillSpecValidator | None = None,
+) -> list[str]:
+    """Validate SKILL.md using the official Agent Skills reference library."""
+    selected_validator = validator if validator is not None else _skills_ref_validate
+    rel = skill_dir.relative_to(repo_root)
 
-    if frontmatter is None:
-        issues.append(f"{skill_file.relative_to(repo_root)}: missing or invalid YAML frontmatter")
-    else:
-        if frontmatter.get("name") != skill_dir.name:
-            issues.append(
-                f"{skill_file.relative_to(repo_root)}: frontmatter name '{frontmatter.get('name', '')}' does not match directory '{skill_dir.name}'"
-            )
-        if not frontmatter.get("description"):
-            issues.append(f"{skill_file.relative_to(repo_root)}: missing frontmatter description")
+    if selected_validator is None:
+        return [
+            f"{rel}/SKILL.md: skills-ref is required for Agent Skills spec validation; "
+            "install requirements-dev.txt"
+        ]
+
+    try:
+        spec_issues = selected_validator(skill_dir)
+    except Exception as error:  # defensive: a validator crash should fail closed
+        return [f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"]
+
+    return [f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues]
+
+
+def validate_skill_dir(
+    skill_dir: Path,
+    repo_root: Path,
+    *,
+    spec_validator: SkillSpecValidator | None = None,
+) -> list[str]:
+    issues: list[str] = []
+    issues.extend(validate_agent_skill_spec(skill_dir, repo_root, spec_validator))
 
     for md_file in sorted(skill_dir.rglob("*.md")):
         issues.extend(validate_markdown_file(md_file, repo_root))
 
     references_dir = skill_dir / "references"
     if references_dir.exists() and not any(references_dir.glob("*.md")):
-        issues.append(f"{references_dir.relative_to(repo_root)}: directory exists but contains no markdown files")
+        issues.append(
+            f"{references_dir.relative_to(repo_root)}: directory exists but contains no markdown files"
+        )
 
     for python_dir_name in ("scripts", "tools"):
         python_dir = skill_dir / python_dir_name
