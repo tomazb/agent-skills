@@ -42,13 +42,17 @@ This file expands the summary in `SKILL.md`.
 - Never lower below:
   - **P0** for financial inconsistency, data corruption, security/permission bypass,
     or irreversible destructive migration risk
-  - **P1** for missing timeouts/retries/error handling on a customer-facing critical
-    dependency unless strong mitigating context exists
+  - **P1** for confirmed absence of bounded deadlines or required failure handling on a
+    customer-facing critical dependency when no effective mitigating control exists
 
 ## Calibration Notes
 
 - Treat code smells (missing timeout, broad catch, no retry budget) as **signals**, not
   automatic severity.
+- Do not treat absence of retries as an automatic defect. Retrying can amplify overload,
+  duplicate mutations, or consume the remaining request deadline.
+- A control that is not visible in the provided snippet is an **evidence gap**, not confirmed
+  absence. Check client wrappers, shared configuration, middleware, and platform policy when available.
 - A tiny internal script and a checkout/payment path should not receive the same severity
   for the same implementation gap.
 - If you are unsure, state assumptions explicitly (traffic, criticality, user impact,
