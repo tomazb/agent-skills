@@ -9,12 +9,17 @@ from pathlib import Path
 from typing import Callable
 
 try:
+    import yaml
     from skills_ref import validate as _skills_ref_validate
+    from skills_ref.validator import validate_metadata as _skills_ref_validate_metadata
 except ImportError:  # pragma: no cover - exercised by the CLI error path
+    yaml = None
     _skills_ref_validate = None
+    _skills_ref_validate_metadata = None
 
 
 FENCE_RE = re.compile(r"^\s*```")
+LEGACY_TOOLS_FIELD_SKILLS = {"qa-agent"}
 
 
 SkillSpecValidator = Callable[[Path], list[str]]
@@ -55,25 +60,125 @@ def validate_markdown_file(path: Path, root: Path) -> list[str]:
     return issues
 
 
+def parse_frontmatter_with_yaml(skill_file: Path) -> tuple[dict[str, object] | None, list[str]]:
+    """Parse YAML frontmatter with PyYAML for repository compatibility checks."""
+    if yaml is None:
+        return None, ["PyYAML is required; install requirements-dev.txt"]
+
+    content = read_text(skill_file)
+    if not content.startswith("---"):
+        return None, ["SKILL.md must start with YAML frontmatter (---)"]
+
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None, ["SKILL.md frontmatter not properly closed with ---"]
+
+    try:
+        metadata = yaml.safe_load(parts[1])
+    except yaml.YAMLError as error:
+        return None, [f"Invalid YAML in frontmatter: {error}"]
+
+    if not isinstance(metadata, dict):
+        return None, ["SKILL.md frontmatter must be a YAML mapping"]
+
+    return metadata, []
+
+
+def normalize_legacy_tools_metadata(
+    metadata: dict[str, object], skill_dir: Path
+) -> tuple[dict[str, object], list[str]]:
+    """Map the single documented legacy `tools` field to spec `allowed-tools`."""
+    normalized = dict(metadata)
+    if "tools" not in normalized:
+        return normalized, []
+
+    if skill_dir.name not in LEGACY_TOOLS_FIELD_SKILLS:
+        return normalized, [
+            "Unexpected legacy frontmatter field 'tools'. Use the Agent Skills "
+            "'allowed-tools' field instead."
+        ]
+    if "allowed-tools" in normalized:
+        return normalized, [
+            "Frontmatter cannot contain both legacy 'tools' and 'allowed-tools'."
+        ]
+
+    tools = normalized.pop("tools")
+    if isinstance(tools, list) and all(
+        isinstance(tool, str) and tool.strip() for tool in tools
+    ):
+        normalized["allowed-tools"] = " ".join(tool.strip() for tool in tools)
+    elif isinstance(tools, str) and tools.strip():
+        normalized["allowed-tools"] = tools.strip()
+    else:
+        return normalized, [
+            "Legacy 'tools' must be a non-empty string or a list of non-empty strings."
+        ]
+
+    return normalized, []
+
+
 def validate_agent_skill_spec(
     skill_dir: Path,
     repo_root: Path,
     validator: SkillSpecValidator | None = None,
 ) -> list[str]:
-    """Validate SKILL.md using the official Agent Skills reference library."""
-    selected_validator = validator if validator is not None else _skills_ref_validate
+    """Validate SKILL.md with skills-ref, including one scoped legacy alias."""
     rel = skill_dir.relative_to(repo_root)
 
-    if selected_validator is None:
+    if validator is not None:
+        try:
+            spec_issues = validator(skill_dir)
+        except Exception as error:
+            return [
+                f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
+            ]
         return [
-            f"{rel}/SKILL.md: skills-ref is required for Agent Skills spec validation; "
-            "install requirements-dev.txt"
+            f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues
         ]
 
-    try:
-        spec_issues = selected_validator(skill_dir)
-    except Exception as error:  # defensive: a validator crash should fail closed
-        return [f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"]
+    if (
+        _skills_ref_validate is None
+        or _skills_ref_validate_metadata is None
+        or yaml is None
+    ):
+        return [
+            f"{rel}/SKILL.md: skills-ref and PyYAML are required for Agent Skills "
+            "spec validation; install requirements-dev.txt"
+        ]
+
+    skill_file = skill_dir / "SKILL.md"
+    metadata, parse_issues = parse_frontmatter_with_yaml(skill_file)
+    if parse_issues:
+        return [
+            f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in parse_issues
+        ]
+    assert metadata is not None
+
+    # All standard skills go through the exact public skills-ref validator. The
+    # qa-agent package predates the spec and has one declared `tools` alias; for
+    # that package only, normalize the field and run the same official metadata
+    # checks without weakening validation for new skills.
+    if "tools" not in metadata:
+        try:
+            spec_issues = _skills_ref_validate(skill_dir)
+        except Exception as error:
+            return [
+                f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
+            ]
+    else:
+        normalized, compatibility_issues = normalize_legacy_tools_metadata(
+            metadata, skill_dir
+        )
+        if compatibility_issues:
+            spec_issues = compatibility_issues
+        else:
+            try:
+                spec_issues = _skills_ref_validate_metadata(normalized, skill_dir)
+            except Exception as error:
+                return [
+                    f"{rel}/SKILL.md: skills-ref compatibility validation failed "
+                    f"unexpectedly: {error}"
+                ]
 
     return [f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues]
 
