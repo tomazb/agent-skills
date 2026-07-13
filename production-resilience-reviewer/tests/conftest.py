@@ -59,8 +59,10 @@ def package_factory(tmp_path, validator):
         include_version: bool = True,
         include_changelog: bool = True,
         include_package_json: bool = True,
+        include_readme: bool = True,
         changelog_text: str | None = None,
         package_json_text: str | None = None,
+        readme_text: str | None = None,
     ) -> Path:
         nonlocal counter
         counter += 1
@@ -69,7 +71,11 @@ def package_factory(tmp_path, validator):
 
         content = skill_text if skill_text is not None else make_skill_text()
         (root / "SKILL.md").write_text(content, encoding="utf-8")
-        (root / "README.md").write_text("# README\n", encoding="utf-8")
+
+        if include_readme:
+            if readme_text is None:
+                readme_text = "# README\n\nCurrent version: **1.2.3**\n"
+            (root / "README.md").write_text(readme_text, encoding="utf-8")
 
         if include_references:
             for rel in validator.EXPECTED_REFERENCES:
