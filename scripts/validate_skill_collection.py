@@ -6,9 +6,23 @@ import py_compile
 import re
 import subprocess
 from pathlib import Path
+from typing import Callable
+
+try:
+    import yaml
+    from skills_ref import validate as _skills_ref_validate
+    from skills_ref.validator import validate_metadata as _skills_ref_validate_metadata
+except ImportError:  # pragma: no cover - exercised by the CLI error path
+    yaml = None
+    _skills_ref_validate = None
+    _skills_ref_validate_metadata = None
 
 
 FENCE_RE = re.compile(r"^\s*```")
+LEGACY_TOOLS_FIELD_SKILLS = {"qa-agent"}
+
+
+SkillSpecValidator = Callable[[Path], list[str]]
 
 
 def read_text(path: Path) -> str:
@@ -25,20 +39,12 @@ def fence_count_ok(text: str) -> bool:
     return fences % 2 == 0
 
 
-def parse_frontmatter(skill_text: str) -> dict[str, str] | None:
-    lines = skill_text.splitlines()
-    if len(lines) < 3 or lines[0].strip() != "---":
-        return None
-
-    frontmatter: dict[str, str] = {}
-    for line in lines[1:]:
-        if line.strip() == "---":
-            return frontmatter
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        frontmatter[key.strip()] = value.strip()
-    return None
+def display_path(path: Path, root: Path) -> str:
+    """Return a repository-relative path when possible, otherwise an absolute path."""
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
 
 
 def find_skill_dirs(repo_root: Path) -> list[Path]:
@@ -50,7 +56,7 @@ def find_skill_dirs(repo_root: Path) -> list[Path]:
 
 
 def validate_markdown_file(path: Path, root: Path) -> list[str]:
-    rel = path.relative_to(root)
+    rel = display_path(path, root)
     issues: list[str] = []
     text = read_text(path)
 
@@ -62,28 +68,152 @@ def validate_markdown_file(path: Path, root: Path) -> list[str]:
     return issues
 
 
-def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
-    issues: list[str] = []
-    skill_file = skill_dir / "SKILL.md"
-    skill_text = read_text(skill_file)
-    frontmatter = parse_frontmatter(skill_text)
+def parse_frontmatter_with_yaml(skill_file: Path) -> tuple[dict[str, object] | None, list[str]]:
+    """Parse YAML frontmatter with PyYAML for repository compatibility checks."""
+    if yaml is None:
+        return None, ["PyYAML is required; install requirements-dev.txt"]
 
-    if frontmatter is None:
-        issues.append(f"{skill_file.relative_to(repo_root)}: missing or invalid YAML frontmatter")
+    content = read_text(skill_file)
+    if not content.startswith("---"):
+        return None, ["SKILL.md must start with YAML frontmatter (---)"]
+
+    parts = content.split("---", 2)
+    if len(parts) < 3:
+        return None, ["SKILL.md frontmatter not properly closed with ---"]
+
+    try:
+        metadata = yaml.safe_load(parts[1])
+    except yaml.YAMLError as error:
+        return None, [f"Invalid YAML in frontmatter: {error}"]
+
+    if not isinstance(metadata, dict):
+        return None, ["SKILL.md frontmatter must be a YAML mapping"]
+
+    return metadata, []
+
+
+def normalize_legacy_tools_metadata(
+    metadata: dict[str, object], skill_dir: Path
+) -> tuple[dict[str, object], list[str]]:
+    """Map the single documented legacy `tools` field to spec `allowed-tools`."""
+    normalized = dict(metadata)
+    if "tools" not in normalized:
+        return normalized, []
+
+    if skill_dir.name not in LEGACY_TOOLS_FIELD_SKILLS:
+        return normalized, [
+            "Unexpected legacy frontmatter field 'tools'. Use the Agent Skills "
+            "'allowed-tools' field instead."
+        ]
+    if "allowed-tools" in normalized:
+        return normalized, [
+            "Frontmatter cannot contain both legacy 'tools' and 'allowed-tools'."
+        ]
+
+    tools = normalized.pop("tools")
+    if isinstance(tools, list) and tools and all(
+        isinstance(tool, str) and tool.strip() for tool in tools
+    ):
+        normalized["allowed-tools"] = " ".join(tool.strip() for tool in tools)
+    elif isinstance(tools, str) and tools.strip():
+        normalized["allowed-tools"] = tools.strip()
     else:
-        if frontmatter.get("name") != skill_dir.name:
-            issues.append(
-                f"{skill_file.relative_to(repo_root)}: frontmatter name '{frontmatter.get('name', '')}' does not match directory '{skill_dir.name}'"
-            )
-        if not frontmatter.get("description"):
-            issues.append(f"{skill_file.relative_to(repo_root)}: missing frontmatter description")
+        return normalized, [
+            "Legacy 'tools' must be a non-empty string or a list of non-empty strings."
+        ]
+
+    return normalized, []
+
+
+def validate_agent_skill_spec(
+    skill_dir: Path,
+    repo_root: Path,
+    validator: SkillSpecValidator | None = None,
+) -> list[str]:
+    """Validate SKILL.md with skills-ref, including one scoped legacy alias."""
+    rel = display_path(skill_dir, repo_root)
+
+    if validator is not None:
+        try:
+            spec_issues = validator(skill_dir)
+        except Exception as error:
+            return [
+                f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
+            ]
+        return [
+            f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues
+        ]
+
+    if (
+        _skills_ref_validate is None
+        or _skills_ref_validate_metadata is None
+        or yaml is None
+    ):
+        return [
+            f"{rel}/SKILL.md: skills-ref and PyYAML are required for Agent Skills "
+            "spec validation; install requirements-dev.txt"
+        ]
+
+    skill_file = skill_dir / "SKILL.md"
+    metadata, parse_issues = parse_frontmatter_with_yaml(skill_file)
+    if parse_issues:
+        return [
+            f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in parse_issues
+        ]
+    assert metadata is not None
+
+    # All standard skills go through the exact public skills-ref validator. The
+    # qa-agent package predates the spec and has one declared `tools` alias; for
+    # that package only, normalize the field and run the same official metadata
+    # checks without weakening validation for new skills.
+    if "tools" not in metadata:
+        try:
+            spec_issues = _skills_ref_validate(skill_dir)
+        except Exception as error:
+            return [
+                f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
+            ]
+    else:
+        normalized, compatibility_issues = normalize_legacy_tools_metadata(
+            metadata, skill_dir
+        )
+        if compatibility_issues:
+            spec_issues = compatibility_issues
+        else:
+            try:
+                spec_issues = _skills_ref_validate_metadata(normalized, skill_dir)
+            except Exception as error:
+                return [
+                    f"{rel}/SKILL.md: skills-ref compatibility validation failed "
+                    f"unexpectedly: {error}"
+                ]
+
+    return [f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues]
+
+
+def validate_skill_dir(
+    skill_dir: Path,
+    repo_root: Path,
+    *,
+    spec_validator: SkillSpecValidator | None = None,
+) -> list[str]:
+    issues: list[str] = []
+    issues.extend(
+        validate_agent_skill_spec(
+            skill_dir,
+            repo_root,
+            validator=spec_validator,
+        )
+    )
 
     for md_file in sorted(skill_dir.rglob("*.md")):
         issues.extend(validate_markdown_file(md_file, repo_root))
 
     references_dir = skill_dir / "references"
     if references_dir.exists() and not any(references_dir.glob("*.md")):
-        issues.append(f"{references_dir.relative_to(repo_root)}: directory exists but contains no markdown files")
+        issues.append(
+            f"{display_path(references_dir, repo_root)}: directory exists but contains no markdown files"
+        )
 
     for python_dir_name in ("scripts", "tools"):
         python_dir = skill_dir / python_dir_name
@@ -94,13 +224,13 @@ def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
         shell_files = sorted(python_dir.rglob("*.sh"))
         if not python_files and not shell_files:
             issues.append(
-                f"{python_dir.relative_to(repo_root)}: directory exists but contains no Python or shell files"
+                f"{display_path(python_dir, repo_root)}: directory exists but contains no Python or shell files"
             )
         for python_file in python_files:
             try:
                 py_compile.compile(str(python_file), doraise=True)
             except py_compile.PyCompileError as error:
-                issues.append(f"{python_file.relative_to(repo_root)}: {error.msg}")
+                issues.append(f"{display_path(python_file, repo_root)}: {error.msg}")
 
         for shell_file in shell_files:
             try:
@@ -114,7 +244,7 @@ def validate_skill_dir(skill_dir: Path, repo_root: Path) -> list[str]:
                 continue
             if result.returncode != 0:
                 shell_error = result.stderr.strip() or "shell syntax check failed"
-                issues.append(f"{shell_file.relative_to(repo_root)}: {shell_error}")
+                issues.append(f"{display_path(shell_file, repo_root)}: {shell_error}")
 
     return issues
 

@@ -2,17 +2,26 @@
 
 ## TLDR
 
-A senior-level AI skill that reviews code, services, and system designs for production resilience through **twelve failure lenses** (dependency, load, network, data, retry, debuggability, observability, change management, disaster recovery, security-abuse reliability, quota exhaustion, complexity tax & architecture fit). It finds every way your code can fail in production and provides actionable fixes with priority rankings—especially valuable for catching AI-generated code blind spots and challenging over-engineered architectures.
+A senior-level AI skill that reviews code, services, workflows, deployments, and system designs
+for production resilience through **twelve failure lenses**. It identifies material,
+evidence-backed failure modes and provides actionable fixes with calibrated priorities,
+validation plans, and production verification.
 
 ---
 
 ## Overview
 
-The **Production Resilience Reviewer** acts as a hybrid Staff SRE, Principal Engineer, and Incident Commander. Its core philosophy: production resilience isn't about preventing all failures—it's about **controlling the blast radius** when failures inevitably happen.
+The **Production Resilience Reviewer** acts as a hybrid Staff SRE, Principal Engineer, and
+Incident Commander. Its core philosophy: production resilience is not about preventing every
+failure—it is about **controlling blast radius and recovery** when failures occur.
 
-Every external call will eventually fail. Every dependency will eventually be slow. Every assumption about data shape will eventually be violated. The question is never "will this fail?" but "when this fails, what happens to the user, the system, and the on-call engineer—and how quickly can we recover?"
+Every external call will eventually fail. Every dependency will eventually be slow. Every
+assumption about data shape will eventually be violated. The question is not only "will this
+fail?" but "when this fails, what happens to the user, the system, and the on-call engineer—and
+how quickly can we recover?"
 
-This skill systematically analyzes code to answer that question across twelve critical failure domains — including an evidence-calibrated architecture-fit lens that challenges whether the chosen architecture is creating unnecessary complexity.
+The reviewer distinguishes confirmed defects from assumptions and evidence gaps. A control that
+is not visible in a pasted snippet is not automatically absent from the production system.
 
 ---
 
@@ -20,71 +29,74 @@ This skill systematically analyzes code to answer that question across twelve cr
 
 ### Twelve Failure Lenses
 
-The skill applies a comprehensive framework to every review:
+1. **Dependency Failure** — What happens when external services are unavailable or return bad outcomes?
+2. **Load & Concurrency** — What fails under expected peak, planned growth, and failure-amplified demand?
+3. **Network & Latency** — Are remote operations bounded by propagated deadlines and appropriate phase limits?
+4. **Data Freshness & Consistency** — What happens when data is stale, duplicated, reordered, or concurrently changed?
+5. **Retry & Backpressure** — Are retries safe, classified, deadline-aware, and bounded across all layers?
+6. **Debuggability** — Can an on-call engineer reconstruct the failure quickly and safely?
+7. **Observability & Alerting** — Do signals show user impact, correctness, saturation, and actionable SLO burn?
+8. **Change Management & Rollback Safety** — What happens during mixed-version rollout, migration, and rollback?
+9. **Fault Domains & Disaster Recovery** — Can the workflow meet approved RPO/RTO under realistic recovery conditions?
+10. **Security & Abuse as Reliability** — Can hostile traffic, auth failure, or a noisy tenant take down shared paths?
+11. **Quota & Limit Exhaustion** — What happens when provider, resource, or cost budgets are exhausted?
+12. **Complexity Tax & Architecture Fit** — Is the architecture reducing risk or adding unsupported failure surface?
 
-1. **Dependency Failure** - What happens when external services are down?
-2. **Load & Concurrency** - What happens at 1,000× traffic?
-3. **Network & Latency** - What happens when the network is slow?
-4. **Data Freshness & Consistency** - What happens when data is stale?
-5. **Retry & Backpressure** - What happens when systems retry aggressively?
-6. **Debuggability** - What error messages help at 3 AM?
-7. **Observability & Alerting** - What metrics show health in production?
-8. **Change Management & Rollback Safety** - What happens during deployments?
-9. **Fault Domains & Disaster Recovery** - What happens if an AZ/region/control plane fails?
-10. **Security & Abuse as Reliability** - What happens under hostile traffic and auth failures?
-11. **Quota & Limit Exhaustion** - What happens when quotas, pools, or budgets run out?
-12. **Complexity Tax & Architecture Fit** - Is the architecture paying for complexity it doesn't need?
+### Evidence-Calibrated Severity
 
-### Severity Calibration
+Findings are calibrated using **impact × likelihood × blast radius × detectability**, adjusted for:
 
-Findings are calibrated using **impact × likelihood × blast radius × detectability**, with context-aware adjustments for:
-- User impact (internal vs customer-facing)
-- Operation type (read-only vs mutating)
-- Data sensitivity (metadata vs money/auth)
-- Blast radius (single user vs system-wide)
-- Frequency (rare vs hot path)
+- User and business impact
+- Read-only versus mutating or irreversible behavior
+- Money, authorization, compliance, and other sensitive data
+- Frequency and traffic exposure
+- Recoverability and reconciliation difficulty
+- Existing controls and the strength of available evidence
+
+Missing retries are not automatically a defect. Missing deadlines, error handling, or other
+controls are reported as confirmed only when the reviewed evidence establishes their absence.
 
 ### Two Review Modes
 
-- **Quick Mode** - Fast senior-level pass for snippets/functions; focuses on top 3-5 risks
-- **Full Mode** - Deep production-readiness review for services/handlers; includes validation and monitoring plans
+- **Quick Mode** — A concise senior pass for snippets and small functions, focused on the top 3–5 risks.
+- **Full Mode** — A deeper review for services, workflows, migrations, and designs, including fix sequencing, rollout gates, validation, and monitoring.
 
-### AI-Generated Code Detection
+### AI-Generated Code Review
 
-Specialized awareness of common AI code blind spots:
-- Happy-path bias (missing error handling)
-- Placeholder try/catch blocks
-- Missing timeouts
-- Hardcoded configuration
-- Unbounded operations
-- Missing idempotency
-- Zero observability
-- Unsafe rollout assumptions
+When the user identifies code as AI-generated, the skill applies heightened scrutiny to common
+incomplete production boundaries: error and cancellation paths, implicit client defaults,
+unbounded work, unsafe mutation retries, missing operational signals, and rollout assumptions.
+It applies the same checks to all code and does **not** infer authorship from names, TODOs, or code smells.
 
 ---
 
 ## Review Output
 
-Each finding includes:
-- **Evidence** - Specific code path or behavior
-- **Why it matters** - User impact, blast radius, incident risk
-- **Recommendation** - Concrete fix with implementation guidance
-- **Validation** - Tests/simulations to prove the fix works
-- **Monitoring** - Metrics/alerts/dashboards for production visibility
-- **Priority** - P0 (critical) through P3 (low)
+High-priority findings include:
+
+- **Finding** — The concrete production weakness
+- **Evidence** — The code path, configuration, design fact, or explicit condition supporting it
+- **Why it matters** — The causal failure chain and user/business impact
+- **Recommendation** — The smallest effective and operable control
+- **Validation** — A test or drill that recreates the failure and proves the fix
+- **Monitoring** — Signals that detect regression and show production impact
+- **Priority** — P0 through P3, calibrated to context
+
+The reviewer states material assumptions and evidence gaps rather than converting missing context
+into confirmed defects.
 
 ---
 
 ## Package Structure
 
-```
+```text
 production-resilience-reviewer/
-├── SKILL.md                # Core skill definition and instructions
-├── README.md               # This file
-├── package.json            # Package metadata
-├── VERSION                 # Current version
-├── CHANGELOG.md            # Version history
-├── references/             # Deep-dive reference materials
+├── SKILL.md
+├── README.md
+├── package.json
+├── VERSION
+├── CHANGELOG.md
+├── references/
 │   ├── checklist-dependency.md
 │   ├── checklist-data.md
 │   ├── checklist-debuggability.md
@@ -98,7 +110,8 @@ production-resilience-reviewer/
 │   ├── checklist-complexity-tax.md
 │   ├── severity-calibration.md
 │   └── validation-monitoring-patterns.md
-└── tools/                  # Validation and utilities
+├── tests/
+└── tools/
     ├── bump_version.py
     ├── validate_skill_package.py
     └── validate_skill_package.sh
@@ -108,44 +121,54 @@ production-resilience-reviewer/
 
 ## Reference Materials
 
-The `references/` directory contains deep-dive checklists and patterns:
+The `references/` directory provides focused deep dives:
 
-- **`checklist-dependency.md`** - Extended dependency failure patterns and mitigations
-- **`checklist-data.md`** - Data consistency, caching, and freshness patterns
-- **`checklist-observability.md`** - Metrics, logging, alerting, and dashboarding patterns
-- **`checklist-change-management.md`** - Rollout, migration, and rollback safety (Lens 8 deep-dive)
-- **`checklist-disaster-recovery.md`** - Fault domains, RPO/RTO, backup/restore, failover, and replay safety (Lens 9 deep-dive)
-- **`checklist-security-abuse-reliability.md`** - Auth fail-open, abuse resistance, and secure degradation (Lens 10 deep-dive)
-- **`checklist-quota-limit-exhaustion.md`** - Quota/resource exhaustion and cost/rate guardrails (Lens 11 deep-dive)
-- **`checklist-complexity-tax.md`** - Evidence-calibrated architecture fit, distributed monolith signals, event-driven sprawl, platform fit, orchestration, AI workflow complexity, and cost model (Lens 12 deep-dive)
-- **`severity-calibration.md`** - Full severity/context matrix and adjustment rules
-- **`validation-monitoring-patterns.md`** - Validation and monitoring patterns by failure type
+- **Dependency and network** — Failure classification, end-to-end deadlines, phase limits, retries, circuits, and fallbacks
+- **Load and data** — Queue bounds, pool saturation, fan-out, concurrency, caching, consistency, races, and migrations
+- **Operability** — Error context, trace correlation, metrics, cardinality, SLOs, alerting, dashboards, and runbooks
+- **Change and recovery** — Mixed versions, expand/contract, rollback, RPO/RTO, restore, replay, failover, and failback
+- **Abuse and exhaustion** — Auth fail-open, tenant isolation, quotas, headroom, admission control, and cost protection
+- **Architecture fit** — Evidence-first evaluation of service boundaries, orchestration, platform maturity, and complexity cost
+- **Shared calibration** — Severity rules plus validation and monitoring patterns
 
-These references are consulted when deeper analysis is needed for specific failure domains.
+Numeric timeouts, retry counts, pool thresholds, headroom targets, alert thresholds, and drill
+cadences are treated as contextual decisions. Examples are starting points, not universal policy.
 
 ---
 
 ## Usage
 
-AI coding agents should trigger this skill when users request:
-- Production-readiness, resilience, or failure-mode review of code/services/designs
-- Reliability analysis for error handling, retries, timeouts, circuit breakers, graceful degradation, or observability
-- Operational risk review around deploy/rollback safety, DR (RPO/RTO), abuse resilience, or quota exhaustion
-- Production architecture trade-offs affecting resilience, operability, cost, or failure modes; complexity tax analysis; or architecture-fit review
-- Extra scrutiny of AI-generated code for common resilience blind spots
+AI coding agents should trigger this skill for:
 
-Skip this skill for:
-- Non-production artifacts
-- Throwaway prototypes
-- One-off scripts with no SLA or user impact
+- Production-readiness, resilience, or failure-mode reviews
+- Error handling, remote deadlines, retries, backpressure, degradation, or observability analysis
+- Deployment, migration, rollback, DR, abuse, quota, or cost-resilience review
+- Architecture trade-offs that materially affect resilience, operability, cost, or failure amplification
+- Extra resilience scrutiny when the user identifies code as AI-generated
 
-See `SKILL.md` for complete agent instructions and the full review framework.
+Skip this skill for non-production artifacts, throwaway prototypes, and one-off scripts with no
+SLA or meaningful user impact.
+
+See `SKILL.md` for the complete agent instructions.
 
 ---
 
 ## Validation
 
-Run the validation tool to check package integrity:
+From the repository root, install the development dependencies and run all checks:
+
+```bash
+python3 -m pip install -r requirements-dev.txt
+python3 scripts/validate_skill_collection.py
+python3 production-resilience-reviewer/tools/validate_skill_package.py
+python3 scripts/run_test_suite.py
+```
+
+The repository test runner executes root tests and every top-level skill suite in separate pytest
+processes. This preserves package isolation for self-contained skills that intentionally reuse
+helper module names such as `validate_skill_package` or `render_smoke_manifest`.
+
+From inside this package, the self-contained package validator can also run directly:
 
 ```bash
 bash tools/validate_skill_package.sh
@@ -153,86 +176,85 @@ bash tools/validate_skill_package.sh
 python3 tools/validate_skill_package.py
 ```
 
-Run validator regression tests:
-
-```bash
-pytest -q
-```
-
 ### Validation Contract
 
-The package validator enforces these rules:
+The package validator enforces:
 
-- **Required files**: VERSION, package.json, CHANGELOG.md, SKILL.md, README.md — missing any raises an explicit error.
-- **VERSION ↔ package.json sync**: The `version` field in `package.json` must exactly match the content of `VERSION`.
-- **VERSION ↔ CHANGELOG.md heading**: `CHANGELOG.md` must contain a `## {version}` or `## v{version}` heading matching the current `VERSION`.
-- **SKILL.md structure**: Must contain all twelve Lens headings with proper spacing; line count must stay under the configured limit.
-- **Reference files**: All expected reference files in `references/` must exist.
-- **Markdown hygiene**: Every `.md` file must end with a newline, have balanced code fences, and no leaked TOC titles.
+- **Required files** — `VERSION`, `package.json`, `CHANGELOG.md`, `SKILL.md`, and `README.md`
+- **Version synchronization** — `VERSION`, `package.json`, the current changelog heading, and the README current-version marker agree
+- **SKILL.md structure** — All twelve lens headings exist with valid spacing and the configured line budget
+- **Reference inventory** — Every expected deep-dive reference exists
+- **Correctness guards** — Unsafe blanket retry, metric-label, hard-coded-threshold, SLO, and AI-provenance rules cannot silently return
+- **Markdown hygiene** — Trailing newlines, balanced fences, and leaked-TOC checks
+
+The repository-level validator uses the official `skills-ref` library for Agent Skills
+frontmatter and naming validation.
 
 ---
 
 ## Version Management
 
-Update all version surfaces in one command:
+Update all version surfaces with:
 
 ```bash
 python3 tools/bump_version.py <new-version>
 ```
 
-This updates:
-- `VERSION`
-- `package.json`
-- `README.md` "Current version" line
+This updates `VERSION`, `package.json`, and the README current-version marker. Add the matching
+`CHANGELOG.md` heading before validation.
 
 ---
 
 ## Version History
 
-Current version: **5.5.0**
+Current version: **5.5.1**
 
 See [CHANGELOG.md](CHANGELOG.md) for detailed version history.
 
 Recent highlights:
-- **5.5.0** - Added Lens 12 (Complexity Tax & Architecture Fit) — evidence-calibrated architecture-fit review with deep-dive reference
-- **5.4.0** - Enhanced AI-generated code detection, added Lens 2/3/6 deep-dive checklists
-- **5.3.1** - Aligned lens example style (Risk/Recommendation), refined trigger guidance, consolidated severity calibration
-- **5.3.0** - Validator refactor with regression tests, version bump tooling, expanded Lenses 9-11 guidance
-- **5.2.0** - Added Lenses 9-11 (Disaster Recovery, Security/Abuse Reliability, Quota Exhaustion) and deep-dive references
-- **5.1.0** - Added condensed examples across all lenses; enhanced validation
-- **5.0.0** - Restored Load & Concurrency as first-class lens
+
+- **5.5.1** — Corrected retry/deadline, telemetry-cardinality, SLO, severity, AI-provenance, and numeric-default guidance; hardened validation and CI
+- **5.5.0** — Added Lens 12, Complexity Tax & Architecture Fit
+- **5.4.0** — Expanded AI-code review areas and added Lens 2/3/6 deep-dive references
+- **5.3.0** — Refactored package validation and added regression tests
+- **5.2.0** — Added disaster recovery, security/abuse, and quota-exhaustion lenses
 
 ---
 
 ## Example Review Output (Condensed)
 
-```
+```markdown
 ## Review Summary (Quick Mode)
 
 **Verdict**: NEEDS-WORK
 **Risk Level**: HIGH
-**Context Assumptions**: User-facing API endpoint, moderate traffic
+**Material assumption**: The shared payment client has no additional idempotency or reconciliation layer.
 
 ### Top Findings
-[P0-CRITICAL] POST /payments → Stripe: missing timeouts + retry without 
-idempotency key → double-charge risk. Add connect=3s/read=10s timeouts; 
-use idempotency key; bounded retries with exponential backoff+jitter.
 
-[P1-HIGH] getUserProfile() hot path: 3 sequential DB queries → pool 
-saturation at scale. Batch queries; tune pool limits; cache stable data.
+[P0-CRITICAL] Payment mutation is retried after an ambiguous post-send deadline without a
+stable payment-operation idempotency key. A provider commit followed by caller timeout can lead
+to a second charge. Bound the total operation, classify transient failures, preserve one
+operation key across attempts, and reconcile unknown outcomes before resubmission.
 
-[P1-HIGH] Missing RED metrics on checkout endpoint. Add request rate,
-error rate, duration histogram; emit order_success_total counter.
+[P1-HIGH] Three sequential database calls and an unbounded response create a credible pool-wait
+and memory-growth path. Batch queries, cap result size, and align concurrency with measured
+downstream capacity.
+
+[P1-HIGH] Checkout has no good-event SLI or order-success guardrail. Define the user-visible good
+outcome, add bounded RED/business signals, and route volume-aware burn alerts to an actionable runbook.
 
 ### Validation Before Shipping
-- Simulate Stripe timeout/429/500; prove no duplicate charges
-- Load test at 5× traffic; verify pool saturation <80%
-- Synthetic error → verify alert fires
 
-### Monitoring After Deploy
-- payment_failures_total{reason}, reconciliation_queue_depth
-- db_pool_in_use, request_latency_p95
-- checkout_request_duration_seconds, order_success_total
+- Inject a deadline after the provider commits; prove repeated attempts cannot create another charge.
+- Test expected peak, planned growth, and dependency-slowdown demand; verify the approved latency objective and pool-wait headroom.
+- Seed a checkout failure; verify trace continuity, dashboard impact, alert routing, and runbook action.
+
+### Production Verification
+
+- Ambiguous payment outcomes, deduplication hits, and reconciliation failures
+- Pool wait, pool use, bounded result-size rejection, and request latency distributions
+- Good checkout events / valid checkout events, order success, and dependency deadline classification
 ```
 
 ---
@@ -241,4 +263,6 @@ error rate, duration histogram; emit order_success_total counter.
 
 > "The question is never 'will this fail?' but 'when this fails, what happens to the user, the system, and the on-call engineer—and how quickly can we recover?'"
 
-This skill embodies the mindset of a senior engineer who has been paged at 3 AM and knows that production resilience comes from controlling blast radius, not preventing all failures.
+The skill embodies the mindset of a senior engineer who has been paged at 3 AM and knows that
+resilience comes from bounded blast radius, observable recovery, and controls the operating team
+can safely use during an incident.

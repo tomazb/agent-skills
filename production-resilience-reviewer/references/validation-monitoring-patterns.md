@@ -14,14 +14,16 @@ Choose the validation method that best matches the failure mode:
 - Property-based tests for invariants (idempotency, monotonicity, round-trip correctness)
 
 ### Integration / Dependency Validation
-- Integration test with dependency timeout / 5xx / malformed response
-- Retry behavior test (backoff + jitter + max retries respected)
-- Circuit breaker open/half-open/close transitions
+- Integration test with dependency phase timeout, total deadline, selected transient failure,
+  malformed response, and ambiguous post-send outcome
+- Retry classification test (safe operation, retryable error, backoff/jitter, deadline, and budget)
+- Circuit breaker open/half-open/close transitions based on aggregated dependency evidence
 - Deadline propagation test across service boundaries
-- Fallback behavior test (cache/default/degraded mode)
+- Fallback behavior test (cache/default/degraded/queued mode)
 
 ### Load / Concurrency Validation
-- Load test at 1x / 5x / 10x expected traffic
+- Test expected peak, planned growth, stress, and failure-amplified scenarios derived from the
+  demand model; do not rely on a universal traffic multiplier
 - Soak test for resource leaks (memory, file handles, connections)
 - Contention test for locks/pools
 - Queue depth growth test and backpressure behavior
@@ -30,9 +32,9 @@ Choose the validation method that best matches the failure mode:
 ### Change / Rollout / Migration Validation
 - Mixed-version deploy compatibility test
 - Migration dry-run / backfill rehearsal (idempotent reruns)
-- Rollback rehearsal after partial rollout
+- Rollback rehearsal after partial rollout and new-format writes
 - Feature-flag on/off behavior test
-- Canary success criteria verification before wider rollout
+- Canary success and stop criteria verification before wider rollout
 
 ## Monitoring Patterns (What to Ask For)
 
@@ -41,8 +43,8 @@ Monitoring should prove the change is safe in production and make failures debug
 ### Core Technical Signals
 - Request rate / error rate / latency (RED) on impacted endpoints
 - Resource utilization / saturation / errors (USE): CPU, memory, pools, queue depth
-- Dependency-specific metrics (timeouts, 4xx/5xx, rate limits, circuit breaker state)
-- Bounded-cardinality labels only (no raw user IDs / unbounded inputs)
+- Dependency-specific metrics (deadlines, classified failures, rate limits, circuit state)
+- Bounded-cardinality dimensions only; keep request/trace IDs in logs and traces
 
 ### Business & Correctness Guardrails
 - Business KPI guardrails (orders, payments, signups, fulfillment)
@@ -59,62 +61,74 @@ Monitoring should prove the change is safe in production and make failures debug
 
 ### Logs / Traces / Debuggability
 - Structured logs with correlation/trace IDs
-- Error classification fields (`timeout`, `upstream_5xx`, `validation_error`, etc.)
+- Error classification fields (`deadline_exceeded`, `upstream_503`, `validation_error`, etc.)
 - Trace propagation verified end-to-end on changed path
+- Metric exemplars linked to traces where supported
 - Actionable runbook links from alerts
 
 ## Practical Rule of Thumb
 
 For every **P0/P1** recommendation, include:
-1. **How to prove the fix works before deploy** (validation)
-2. **How to detect regressions after deploy** (monitoring)
+1. **How to recreate the failure and prove the fix before deploy** (validation)
+2. **How to detect user/business regression after deploy** (monitoring)
 
-Tailor the choices to the lens involved (dependency, data, observability, or change management)
-instead of using a generic checklist for every finding.
+Tailor the choices to the failure chain instead of attaching a generic checklist to every finding.
+Do not prescribe a numeric timeout, retry count, pool limit, headroom target, alert threshold, or
+drill cadence without stating the objective, measurement, provider constraint, or assumption used
+to derive it. Values in examples are illustrative only.
 
 ## Before / After: Common Fixes
 
 Concrete examples of transforming fragile patterns into resilient ones.
 
-### Cardinality explosion → bounded labels
+### Cardinality explosion → bounded dimensions
 
 **Before:**
 ```
 http_requests_total{user_id="u-38291", endpoint="/api/search"}
 ```
-Unbounded `user_id` label — 1M users = 1M time series per metric. Prometheus TSDB grows without limit; query performance degrades, memory spikes, compaction stalls.
+Unbounded `user_id` creates a new time series per label combination and can make ingestion,
+retention, and queries prohibitively expensive.
 
 **After:**
 ```
-http_requests_total{user_tier="free", endpoint="/api/search"}
+http_requests_total{user_tier="free", route="/api/search"}
 ```
-Bounded label with known cardinality (`free|paid|enterprise`). Same operational insight for capacity planning, dramatically reduced storage and query cost.
+The bounded tier and normalized route preserve aggregate capacity insight. Put a specific user or
+request identifier in logs/traces, and use an exemplar to link a representative measurement to a
+trace when supported.
 
 ---
 
-### Missing SLI → actionable SLI-based alert
+### Raw latency metric → good-event SLI and burn-rate alert
 
 **Before:**
 ```
 histogram: http_request_duration_seconds
-# No SLO target, no error budget, no alert.
-# Team checks Grafana manually after incidents.
+# No definition of a good request, no SLO, no actionable alert.
 ```
-Raw latency metric with no defined good/bad threshold. Team discovers problems from user complaints, not monitoring.
+A histogram alone does not define the user promise or distinguish acceptable from unacceptable
+outcomes.
 
-**After:**
+**After (conceptual configuration):**
+```text
+SLI = good checkout requests / valid checkout requests
+Good = correct response completed within the agreed latency objective
+SLO = target and window approved for this customer workflow
+
+Alert policy:
+- Page only when both a short window and a longer confirmation window show a burn rate
+  that would exhaust the error budget too quickly.
+- Create a ticket for sustained low burn that threatens the SLO window without requiring
+  immediate response.
+- Add minimum-event or synthetic-signal handling for low-traffic services.
 ```
-sli:checkout_latency:p99 < 500ms  # SLO target
-alert: SLOBudgetBurn
-  expr: sli:checkout_latency:budget_remaining < 0.9  # 10% budget consumed
-  for: 5m
-  labels: { severity: warning }
-```
-SLI tied to user-visible outcome. Error budget alert fires before users notice. On-call knows exactly what threshold was breached and how much budget remains.
+The objective, burn-rate thresholds, and windows must be derived from the SLO and response policy,
+not copied from this example.
 
 ---
 
-### Unbounded retry → budgeted retry with backoff
+### Unbounded retry → classified, deadline-aware, budgeted retry
 
 **Before:**
 ```python
@@ -125,31 +139,51 @@ while True:
     except Exception:
         time.sleep(1)  # fixed delay, infinite retries
 ```
-Infinite retries with fixed 1s delay. During outage: every caller hammers the failing service, preventing recovery. No jitter = thundering herd on retry.
+Infinite retries with a fixed delay can hammer a failing service, outlive the caller's deadline,
+and repeat mutations whose first outcome is unknown.
 
-**After:**
+**After (conceptual pseudocode — adapt to the concrete client/runtime):**
 ```python
-@retry(
-    max_attempts=3,
-    backoff=exponential(base=1, max=30),
-    jitter=True,
-    retry_budget=0.2,  # max 20% of requests can be retries
-    on_exhausted=circuit_breaker.open
-)
-def call_service():
-    response = client.post(url, timeout=5, idempotency_key=request_id)
-    return response
+operation_id = payment.operation_id  # stable across all attempts for this business operation
+
+for attempt in range(policy.max_attempts):
+    remaining = request_deadline.remaining()
+    if remaining <= policy.minimum_attempt_budget:
+        raise DeadlineExceeded()
+
+    try:
+        return client.charge(
+            payment,
+            idempotency_key=operation_id,
+            total_timeout=remaining,
+        )
+    except ProviderError as error:
+        final_attempt = attempt + 1 == policy.max_attempts
+        if final_attempt or not retry_classifier.is_transient(error):
+            raise
+        if not retry_budget.try_consume():
+            raise RetryBudgetExhausted() from error
+
+        sleep(
+            policy.backoff.next_delay(
+                attempt=attempt,
+                retry_after=error.retry_after,
+                remaining_budget=request_deadline.remaining(),
+            )
+        )
 ```
-Bounded retries with exponential backoff + jitter. Retry budget prevents amplification. Circuit breaker stops retries when downstream is confirmed unhealthy. Idempotency key makes retries safe for mutating operations.
+The retrying layer must own operation semantics, failure classification, and the remaining deadline.
+Circuit state should be driven by aggregated dependency health, not opened merely because one
+request exhausted its attempts.
 
 ## Common Monitoring Anti-Patterns
 
 Patterns that create a false sense of observability or actively harm incident response.
 
-- **Cardinality bombs** — Using raw user IDs, request paths, or UUIDs as metric labels. TSDB grows unbounded; queries slow to a crawl; memory pressure forces restarts.
-- **Alert-on-everything** — Alerting on every individual error instead of error rate or budget burn. On-call fatigue → alerts get ignored → real incidents missed.
-- **Dashboard-only monitoring** — Metrics and dashboards exist but no alerts are configured. Requires a human to stare at screens 24/7 to detect problems.
-- **Missing business metrics** — Plenty of technical signals (CPU, memory, latency) but no business KPIs (orders, revenue, signups). Cannot determine whether users are actually affected.
-- **Log-based alerting as primary signal** — Using log grep or log pattern matching as the main alerting mechanism. Brittle, high-latency, hard to tune, impossible to aggregate.
-- **Percentage-only thresholds** — "Alert if error rate > 5%" without considering request volume. 1 error out of 20 requests triggers the same as 5,000 errors out of 100,000.
-- **No baseline or historical context** — Metrics without comparison to historical norms. "Is 200ms latency good or bad?" is unanswerable without knowing that yesterday's p99 was 50ms.
+- **Cardinality bombs** — Raw user IDs, request IDs, UUIDs, arbitrary paths, or error strings as metric dimensions.
+- **Alert-on-everything** — Paging on individual errors instead of material impact or budget burn.
+- **Dashboard-only monitoring** — Metrics exist but no actionable detection path is configured.
+- **Missing business metrics** — Technical health cannot show whether the workflow users care about succeeds.
+- **Log-based alerting as the primary signal** — Brittle pattern matching replaces stable metrics/SLIs.
+- **Percentage-only thresholds** — A percentage alert ignores sample size and behaves badly at low volume.
+- **No baseline or objective** — A value cannot be judged without expected behavior, capacity, or an SLO.

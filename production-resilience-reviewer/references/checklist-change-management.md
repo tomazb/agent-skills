@@ -108,12 +108,17 @@ Prefer **expand/contract** for production safety: additive changes first, destru
 
 ## 5. Rollout Strategies & Guardrails
 
-### Rollout Options (in increasing risk)
+### Rollout Options
 - [ ] Dark launch (deploy but off)
-- [ ] Canary (small %)
-- [ ] Progressive ramp (5% → 25% → 50% → 100%)
-- [ ] One region/zone first
-- [ ] Full rollout (avoid for risky changes)
+- [ ] Canary to a bounded cohort
+- [ ] Progressive ramp with cohort sizes and dwell times derived from change risk, signal volume,
+  rollback speed, and the time needed to observe delayed failures
+- [ ] One region/zone first when it provides meaningful fault-domain isolation
+- [ ] Full rollout only when the evidence and reversibility justify it
+
+Do not copy a universal percentage sequence. A low-traffic service may need a larger cohort to
+produce useful evidence, while an irreversible or high-blast-radius change may require a much
+smaller first exposure.
 
 ### Guardrails Checklist
 - [ ] Rollout has explicit success metrics (technical + business)

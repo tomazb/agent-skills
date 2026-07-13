@@ -27,7 +27,7 @@ Error chains should preserve both technical root cause and business context.
 - [ ] Critical identifiers are included in sanitized form (order ID, tenant ID, request ID)
 - [ ] Retry attempts/current state are included for transient failure paths
 - [ ] Error messages distinguish user error vs dependency/system failure
-- [ ] No broad \"failed\" messages without scope or actionability
+- [ ] No broad "failed" messages without scope or actionability
 
 ### Anti-Patterns
 - Re-throwing as generic exception and discarding original cause
@@ -71,7 +71,9 @@ A failure that cannot be traced across boundaries is expensive to debug.
 - [ ] Correlation/request IDs are generated at ingress if absent
 - [ ] IDs are propagated across sync and async boundaries
 - [ ] Trace/span context is forwarded to downstream services
-- [ ] Logs, metrics, and error payloads include the same primary request identifier
+- [ ] Logs, traces, and error payloads include the same primary request identifier
+- [ ] Metrics use only bounded dimensions; request/trace IDs are not metric labels
+- [ ] Metric exemplars link representative measurements to traces where the telemetry stack supports them
 - [ ] Background tasks maintain parent linkage where operationally useful
 - [ ] ID format and header conventions are standardized
 
@@ -79,6 +81,7 @@ A failure that cannot be traced across boundaries is expensive to debug.
 - Dependency error logs cannot be joined to caller logs
 - Retry logs lack a stable request identifier
 - Incident timeline reconstruction requires guesswork
+- Request or trace IDs appear as high-cardinality metric labels
 
 ---
 
@@ -125,6 +128,7 @@ See also `references/validation-monitoring-patterns.md` for shared patterns and 
 ### Validation Ideas (Debuggability-Focused)
 - [ ] Inject representative failures and verify context-rich error chains
 - [ ] Verify correlation IDs persist across service boundaries and async workflows
+- [ ] Verify request/trace IDs do not create metric time-series dimensions
 - [ ] Snapshot-test external error payload schema for consistency
 - [ ] Run grep/lint checks for generic catch-all and swallow patterns
 - [ ] Runbook drill: engineer can diagnose seeded failure within target time
@@ -132,7 +136,7 @@ See also `references/validation-monitoring-patterns.md` for shared patterns and 
 ### Monitoring Ideas (Debuggability-Focused)
 - [ ] Error count by class/code/category and dependency
 - [ ] Unclassified/unknown error ratio alerts
-- [ ] Correlation ID missing-rate in logs/errors
+- [ ] Correlation ID missing-rate in logs, traces, and error payloads
 - [ ] Retry attempt distributions and terminal failure signals
 - [ ] Structured log parsing failure rate (schema drift indicator)
 

@@ -120,9 +120,14 @@ Control-plane outages can block scale-out, rollbacks, and recovery actions.
 ### Operational Readiness Checklist
 - [ ] Primary and backup owners are defined for each DR action
 - [ ] Runbooks include commands, prerequisites, rollback, and verification steps
-- [ ] Drill cadence is scheduled (at least quarterly for critical paths)
+- [ ] Drill cadence is derived from workflow criticality, architecture/change rate, recovery
+  complexity, and how quickly prior evidence becomes stale
+- [ ] Material recovery-path changes trigger a rehearsal before the old evidence is trusted
 - [ ] Drill findings feed backlog with owner + due date
 - [ ] Recovery playbook can be executed by on-call without original implementer
+
+Do not prescribe a universal calendar cadence. State the business objective and change-risk basis
+for the selected drill interval.
 
 ### Drill Levels
 - [ ] Tabletop drill (scenario walkthrough)
