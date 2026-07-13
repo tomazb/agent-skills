@@ -161,8 +161,12 @@ From the repository root, install the development dependencies and run all check
 python3 -m pip install -r requirements-dev.txt
 python3 scripts/validate_skill_collection.py
 python3 production-resilience-reviewer/tools/validate_skill_package.py
-pytest -q
+python3 scripts/run_test_suite.py
 ```
+
+The repository test runner executes root tests and every top-level skill suite in separate pytest
+processes. This preserves package isolation for self-contained skills that intentionally reuse
+helper module names such as `validate_skill_package` or `render_smoke_manifest`.
 
 From inside this package, the self-contained package validator can also run directly:
 
