@@ -134,6 +134,32 @@ oc -n longhorn-system patch settings.longhorn.io v1-data-engine \
 oc -n longhorn-system get instancemanagers.longhorn.io -o wide
 ```
 
+Do not stop at the live `settings.longhorn.io` patch if the install source still
+declares `v1-data-engine: 'true'`. Align the persistent source of truth used by
+the original install method or the setting can drift back on the running
+cluster.
+
+- **Manifest-managed / applied YAML installs**: update
+  `ConfigMap/longhorn-default-setting` and the manifest source that created it
+  so `default-setting.yaml` keeps `v1-data-engine: 'false'` and
+  `v2-data-engine: 'true'`.
+- **Helm-managed installs**: update the Helm values so the rendered default
+  settings keep `v1-data-engine=false`, then reconcile through Helm instead of
+  relying only on a live `Setting` patch.
+
+Validate both the live setting and the persistent source:
+
+```bash
+oc -n longhorn-system get settings.longhorn.io v1-data-engine v2-data-engine -o yaml
+oc -n longhorn-system get configmap longhorn-default-setting -o yaml
+oc -n longhorn-system get instancemanagers.longhorn.io -o wide
+helm get values <release> -n longhorn-system
+```
+
+For manifest-managed installs, `ConfigMap/longhorn-default-setting` is the
+important drift check. For Helm-managed installs, use `helm get values` or the
+rendered chart source that owns the Longhorn default settings.
+
 If switching from automatic filesystem disk discovery to explicit block disks:
 
 ```bash
