@@ -91,12 +91,13 @@ Check:
 - Longhorn V2 block disk `Ready=True` and `Schedulable=True`;
 - `v1-data-engine=false` when the intended end state is V2-only;
 - `v2-data-engine=true`;
-- `data-engine-hugepage-enabled` and `data-engine-memory-size`;
+- `data-engine-hugepage-enabled={"v2":"true"}` and
+  `data-engine-memory-size` matches the intended V2 memory size;
 - V2 StorageClass uses `dataEngine: "v2"` and expected `diskSelector`;
 - no `v1` instance manager remains when the intended end state is V2-only;
 - the persistent default-setting source matches the intended engine policy:
   `ConfigMap/longhorn-default-setting` for manifest-managed installs, or Helm
-  values / rendered chart source for Helm-managed installs.
+  computed values / rendered chart source for Helm-managed installs.
 
 ## Post-Uninstall Validation
 
