@@ -143,8 +143,9 @@ cluster.
   `ConfigMap/longhorn-default-setting` and the manifest source that created it
   so `default-setting.yaml` keeps `v1-data-engine: 'false'` and
   `v2-data-engine: 'true'`.
-- **Helm-managed installs**: update the Helm values so the rendered default
-  settings keep `v1-data-engine=false`, then reconcile through Helm instead of
+- **Helm-managed installs**: update the Helm values so
+  `defaultSettings.v1DataEngine=false` and
+  `defaultSettings.v2DataEngine=true`, then reconcile through Helm instead of
   relying only on a live `Setting` patch.
 
 Validate both the live setting and the persistent source:
@@ -153,12 +154,14 @@ Validate both the live setting and the persistent source:
 oc -n longhorn-system get settings.longhorn.io v1-data-engine v2-data-engine -o yaml
 oc -n longhorn-system get configmap longhorn-default-setting -o yaml
 oc -n longhorn-system get instancemanagers.longhorn.io -o wide
-helm get values <release> -n longhorn-system
+helm get values <release> -n longhorn-system --all
+helm get manifest <release> -n longhorn-system | grep -n "v1-data-engine\\|v2-data-engine"
 ```
 
 For manifest-managed installs, `ConfigMap/longhorn-default-setting` is the
-important drift check. For Helm-managed installs, use `helm get values` or the
-rendered chart source that owns the Longhorn default settings.
+important drift check. For Helm-managed installs, use `helm get values --all`
+or `helm get manifest` so you inspect computed values or rendered output rather
+than only user-supplied overrides.
 
 If switching from automatic filesystem disk discovery to explicit block disks:
 
