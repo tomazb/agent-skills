@@ -87,6 +87,8 @@ oc -n openshift-local-storage get localvolumediscoveryresults -o yaml
 
 ## Provision Local Block PVs
 
+### LocalVolumeSet (default — recommended for most deployments)
+
 Create a `LocalVolumeSet` that selects the intended disks and provisions raw `Block` PVs into a dedicated StorageClass (for example `localblock`). Filter by device attributes rather than naming raw kernel paths so selection is stable across reboots:
 
 ```yaml
@@ -117,29 +119,65 @@ oc get pv | grep localblock
 oc -n openshift-local-storage get localvolumeset localblock -o wide
 ```
 
+### LocalVolume (exception — when other storage systems share the same node)
+
+When the ODF node also runs other storage systems (Longhorn, LVMS, a second Ceph cluster) that consume raw block devices, `LocalVolumeSet` attribute filters (size, type, model) may accidentally match disks that belong to those systems. Use a `LocalVolume` CR with the exact stable device path to select only the intended ODF disk:
+
+```yaml
+apiVersion: local.storage.openshift.io/v1
+kind: LocalVolume
+metadata:
+  name: localblock
+  namespace: openshift-local-storage
+spec:
+  nodeSelector:
+    nodeSelectorTerms:
+    - matchExpressions:
+      - key: cluster.ocs.openshift.io/openshift-storage
+        operator: Exists
+  storageClassDevices:
+  - storageClassName: localblock
+    volumeMode: Block
+    devicePaths:
+    - /dev/disk/by-id/<stable-device-id>
+```
+
+Use `LocalVolumeDiscovery` results and `ls -la /dev/disk/by-id/ | grep <kernel-device>` to confirm the stable ID before filling in the path.
+
 The `StorageCluster` in `references/install-and-preflight.md` then references `storageClassName: localblock` in its `dataPVCTemplate`.
 
 ## Raw Block Cleanup (after explicit confirmation)
 
-If a disk still carries old signatures and must be reused for a new OSD, clean it only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target:
+If a disk still carries old signatures and must be reused for a new OSD, clean it only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target.
+
+**Important:** `wipefs -af` + `sgdisk --zap-all` alone are **not sufficient** for disks that previously held a Ceph BlueStore OSD. BlueStore writes its superblock at the start, midpoint (`size/2 - 2K`), and near the end (`size - 4K`) of the device. `ceph-volume raw list` will detect surviving secondary or tertiary copies even after a partial wipe. Full-disk zeroing is required:
 
 ```bash
+# Standard wipe (removes filesystem signatures and GPT; sufficient for non-Ceph disks)
 oc debug "node/${NODE}" -- chroot /host bash -c "
   set -e
   wipefs -af '${DISK}'
   sgdisk --zap-all '${DISK}'
 "
+
+# Required for disks previously used as Ceph BlueStore OSDs (raw mode)
+# Full-disk zero clears all three BlueStore superblock copies
+oc debug "node/${NODE}" -- chroot /host bash -c "
+  dd if=/dev/zero of='${DISK}' bs=4M status=progress
+  echo 'Full-disk zero complete'
+"
 ```
 
-Verify it is clean:
+Verify it is clean (no signatures, no BlueStore detection):
 
 ```bash
 oc debug "node/${NODE}" -- chroot /host bash -c "
   lsblk -f '${DISK}'
   wipefs -n '${DISK}' || true
-  ceph-volume lvm list '${DISK}' || true
 "
 ```
+
+Note: `ceph-volume` is not available on RHCOS hosts. The OSD prepare job will run `ceph-volume raw list` inside the container and fail if any BlueStore label remains.
 
 ## Validation
 
