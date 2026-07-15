@@ -29,6 +29,22 @@ oc get pv,pvc -A -o wide
 oc get localvolumeset,localvolumediscovery -A 2>/dev/null || true
 ```
 
+### Upstream Rook Conflict Check (SNO / Bare-Metal)
+
+Before installing ODF on a node that has ever run a storage system, check for an upstream (non-OLM) Rook cluster:
+
+```bash
+oc get ns | grep rook
+oc get crd | grep ceph.rook.io
+oc get subscription -A | grep -E 'rook|ceph|odf|ocs' || echo "no relevant OLM subscriptions"
+```
+
+**If an upstream Rook cluster is found with no OLM Subscription**, it is an incompatible non-ODF Rook installation. ODF cannot be installed alongside it — both operators fight over the same CRDs and block device assignments. You must remove the upstream Rook cluster first. See `references/maintenance-uninstall.md` for Rook cleanup steps, and verify:
+
+1. All stale Rook namespaces, CRs, CRDs, and StorageClasses are deleted.
+2. Stale mon host directories (`/var/lib/rook/mon-*/`) are removed from the node **only after confirming the cluster is fully abandoned** (not a recovery candidate). If there is any chance the data is needed, treat the host path as a backup candidate before deletion.
+3. Any OSD disk that was used by the upstream Rook cluster has been fully zeroed — see the Disk Cleanup section in `references/local-storage-disks.md`.
+
 ## Sizing And Prerequisites
 
 - **Node count and failure domains.** Internal-mode production needs at least three OSD nodes spread across three failure domains (host, rack, or zone). Compact 3-node and SNO clusters are supported but are topology constraints, not high availability.
@@ -184,6 +200,8 @@ spec:
 ```
 
 Do not copy `replica: 1` into multi-node production plans without explicit direction. On a single OSD, ODF may need a higher `mon_max_pg_per_osd` ceiling once rbd, cephfs, and RGW pools coexist; raise it deliberately through the documented `StorageCluster` override and record why.
+
+**ODF 4.22 SNO — additional required steps:** ODF 4.22 has known SNO regressions (missing `SINGLE_NODE` auto-detection, empty `topologyKey` bug, pool sizes not reduced for single-OSD). If deploying ODF 4.22, follow the complete procedure documented in `references/validated-odf-sno.md` (ODF 4.22 section) before considering the StorageCluster ready. The steps in that section — including the `SINGLE_NODE=true` CSV patch, placement overrides, and pool size workaround — are 4.22-specific regressions, not general SNO guidance. Re-check ODF release notes when using any other version.
 
 ## Install Validation
 
