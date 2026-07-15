@@ -22,7 +22,7 @@ Check optional routes if the dashboard or RGW was exposed:
 ```bash
 oc -n rook-ceph get route rook-ceph-dashboard -o wide 2>/dev/null || echo "dashboard route not deployed"
 oc -n rook-ceph get route rook-ceph-rgw -o wide 2>/dev/null || echo "RGW route not deployed"
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api-host || true
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api-host || echo "dashboard Prometheus API host not configured"
 ```
 
 Confirm exactly one default StorageClass when defaulting is expected.
