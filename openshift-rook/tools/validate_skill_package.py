@@ -247,6 +247,168 @@ def check_content_regressions(root: Path) -> list[str]:
     return issues
 
 
+def check_required_reference_guidance(root: Path) -> list[str]:
+    issues: list[str] = []
+
+    _cache: dict[str, str] = {}
+
+    def read_reference(rel: str) -> str:
+        if rel not in _cache:
+            path = root / rel
+            _cache[rel] = read_text(path) if path.exists() else ""
+        return _cache[rel]
+
+    def require(rel: str, label: str, needles: list[str]) -> None:
+        text = read_reference(rel)
+        missing = [needle for needle in needles if needle not in text]
+        if missing:
+            issues.append(f"{rel}: missing {label}: {', '.join(missing)}")
+
+    def require_order(rel: str, label: str, needles: list[str]) -> None:
+        text = read_reference(rel)
+        pos = -1
+        for needle in needles:
+            next_pos = text.find(needle, pos + 1)
+            if next_pos == -1:
+                issues.append(f"{rel}: missing ordered {label}: {needle}")
+                return
+            pos = next_pos
+
+    def forbid_pattern(rel: str, pattern: re.Pattern[str], label: str) -> None:
+        text = read_reference(rel)
+        if pattern.search(text):
+            issues.append(f"{rel}: forbidden {label}")
+
+    require(
+        "references/install-and-preflight.md",
+        "direct-manifest install guidance",
+        [
+            "oc create ns rook-ceph",
+            "csi-operator.yaml",
+            "CephConnection",
+            "/dev/disk/by-id/<stable-disk-id>",
+            "osd_pool_default_size",
+            "mon_warn_on_pool_no_redundancy",
+            "mon_max_pg_per_osd",
+            "ceph mgr module enable rook",
+            "ceph orch set backend rook",
+            "useAllDevices: false",
+        ],
+    )
+    require_order(
+        "references/install-and-preflight.md",
+        "CSI/operator manifest ordering",
+        [
+            "curl -fsSLo /tmp/rook-ceph-csi-operator.yaml",
+            "curl -fsSLo /tmp/rook-ceph-operator.yaml",
+            "oc create ns rook-ceph",
+            "oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml",
+            "oc apply -f /tmp/rook-ceph-common.yaml",
+            "oc apply -f /tmp/rook-ceph-csi-operator.yaml",
+            "oc apply -f /tmp/rook-ceph-operator.yaml",
+        ],
+    )
+    require(
+        "references/upgrade.md",
+        "manifest upgrade guidance",
+        [
+            "csi-operator.yaml",
+            "CephConnection",
+        ],
+    )
+    require_order(
+        "references/upgrade.md",
+        "upgrade CSI/operator ordering",
+        [
+            "curl -fsSLo /tmp/rook-ceph-csi-operator.yaml",
+            "curl -fsSLo /tmp/rook-ceph-operator.yaml",
+            "oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml",
+            "oc apply -f /tmp/rook-ceph-common.yaml",
+            "oc apply -f /tmp/rook-ceph-csi-operator.yaml",
+            "oc apply -f /tmp/rook-ceph-operator.yaml",
+        ],
+    )
+    require(
+        "references/rgw-object-store.md",
+        "RGW OBC/route validation guidance",
+        [
+            "ObjectBucket",
+            "Ceph Object Gateway",
+            "TLS or connection failure",
+            "curl -kI",
+        ],
+    )
+    forbid_pattern(
+        "references/rgw-object-store.md",
+        re.compile(r"HTTP 200", re.MULTILINE),
+        "RGW route validation that requires HTTP 200",
+    )
+    require(
+        "references/validation-hardening.md",
+        "dashboard/orchestrator guidance",
+        [
+            "http-dashboard",
+            "internal Prometheus",
+            "PROMETHEUS_API_HOST",
+            "ceph mgr module enable rook",
+            "ceph orch set backend rook",
+        ],
+    )
+    require(
+        "references/validated-rook-ceph-sno.md",
+        "validated SNO evidence",
+        [
+            "v1.20.2",
+            "v20.2.2",
+            "mon_max_pg_per_osd",
+            "rook-ceph-rgw-obc",
+            "Backend: rook",
+        ],
+    )
+    forbid_pattern(
+        "references/install-and-preflight.md",
+        re.compile(
+            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
+        ),
+        "install guidance that applies operator before csi-operator",
+    )
+    forbid_pattern(
+        "references/install-and-preflight.md",
+        re.compile(
+            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
+        ),
+        "install guidance that applies csi-operator before common.yaml",
+    )
+    forbid_pattern(
+        "references/install-and-preflight.md",
+        re.compile(
+            r"^oc apply -f /tmp/rook-ceph-common\.yaml\s*$.*?oc create ns rook-ceph",
+            re.MULTILINE | re.DOTALL,
+        ),
+        "install guidance that creates namespace after common.yaml",
+    )
+    forbid_pattern(
+        "references/upgrade.md",
+        re.compile(
+            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
+        ),
+        "upgrade guidance that applies operator before csi-operator",
+    )
+    forbid_pattern(
+        "references/upgrade.md",
+        re.compile(
+            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
+        ),
+        "upgrade guidance that applies csi-operator before common.yaml",
+    )
+
+    return issues
+
+
 def check_version_sync(root: Path) -> list[str]:
     version_file = root / "VERSION"
     package_file = root / "package.json"
@@ -342,6 +504,7 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_phrase_group(all_text, OPENSHIFT_PHRASES, "OpenShift SCC/MachineConfig"))
     issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
     issues.extend(check_content_regressions(root))
+    issues.extend(check_required_reference_guidance(root))
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill_file:

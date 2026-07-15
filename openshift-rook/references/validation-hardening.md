@@ -17,6 +17,14 @@ oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
+Check optional routes if the dashboard or RGW was exposed:
+
+```bash
+oc -n rook-ceph get route rook-ceph-dashboard -o wide 2>/dev/null || echo "dashboard route not deployed"
+oc -n rook-ceph get route rook-ceph-rgw -o wide 2>/dev/null || echo "RGW route not deployed"
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api-host || echo "dashboard Prometheus API host not configured"
+```
+
 Confirm exactly one default StorageClass when defaulting is expected.
 
 ## Smoke Test
@@ -51,6 +59,24 @@ oc -n rook-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe
 If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
+
+## Dashboard And Monitoring
+
+- On OpenShift, the working dashboard Route can target the mgr service port named
+  `http-dashboard` with edge termination.
+- If the built-in OpenShift Prometheus API is auth-protected and the Ceph
+  dashboard build does not expose a Prometheus token setting, use an internal
+  Prometheus in the `rook-ceph` namespace and point `PROMETHEUS_API_HOST` at it.
+- If dashboard history must survive pod restarts, run that internal Prometheus as
+  a PVC-backed StatefulSet rather than an ephemeral Deployment.
+- If users rely on the dashboard Orchestrator page or `ceph orch`, enable the
+  Rook backend once per cluster:
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+```
 
 ## Post-Reboot Drift
 
