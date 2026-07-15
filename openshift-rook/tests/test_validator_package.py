@@ -158,3 +158,193 @@ def test_missing_operator_openshift_guidance_fails(validator, package_factory, r
     root = package_factory(reference_content=text)
     issues = validator.validate_root(root)
     assert any("operator-openshift.yaml" in issue for issue in issues)
+
+
+def test_missing_csi_operator_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(install.read_text(encoding="utf-8").replace("csi-operator.yaml", "csi.yaml"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("install-and-preflight.md" in issue and "csi-operator.yaml" in issue for issue in issues)
+
+
+def test_missing_cephconnection_failure_mode_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(install.read_text(encoding="utf-8").replace("CephConnection", "connection CR"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("install-and-preflight.md" in issue and "CephConnection" in issue for issue in issues)
+
+
+def test_missing_namespace_creation_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("oc create ns rook-ceph", "oc create project rook-ceph"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("install-and-preflight.md" in issue and "oc create ns rook-ceph" in issue for issue in issues)
+
+
+def test_missing_sno_pg_ceiling_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("mon_max_pg_per_osd", "pg ceiling"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("install-and-preflight.md" in issue and "mon_max_pg_per_osd" in issue for issue in issues)
+
+
+def test_missing_explicit_sno_device_pinning_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("/dev/disk/by-id/<stable-disk-id>", "/dev/nvme0n1"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "install-and-preflight.md" in issue and "/dev/disk/by-id/<stable-disk-id>" in issue
+        for issue in issues
+    )
+
+
+def test_missing_install_sequence_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "oc apply -f /tmp/rook-ceph-common.yaml",
+            "oc apply -f /tmp/rook-ceph-common-manifest.yaml",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "install-and-preflight.md" in issue and "oc apply -f /tmp/rook-ceph-common.yaml" in issue
+        for issue in issues
+    )
+
+
+def test_missing_dashboard_prometheus_fallback_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8")
+        .replace("internal Prometheus", "internal metrics service")
+        .replace("PROMETHEUS_API_HOST", "dashboard Prometheus host"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("validation-hardening.md" in issue and "internal Prometheus" in issue for issue in issues) or any(
+        "validation-hardening.md" in issue and "PROMETHEUS_API_HOST" in issue for issue in issues
+    )
+
+
+def test_missing_dashboard_route_port_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace("http-dashboard", "dashboard-http"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("validation-hardening.md" in issue and "http-dashboard" in issue for issue in issues)
+
+
+def test_missing_rook_orchestrator_backend_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace("ceph orch set backend rook", "ceph orch backend"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("validation-hardening.md" in issue and "ceph orch set backend rook" in issue for issue in issues)
+
+
+def test_missing_upgrade_csi_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    upgrade = root / "references" / "upgrade.md"
+    upgrade.write_text(upgrade.read_text(encoding="utf-8").replace("csi-operator.yaml", "csi.yaml"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("references/upgrade.md" in issue and "csi-operator.yaml" in issue for issue in issues)
+
+
+def test_missing_upgrade_sequence_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    upgrade = root / "references" / "upgrade.md"
+    upgrade.write_text(
+        upgrade.read_text(encoding="utf-8").replace(
+            "oc apply -f /tmp/rook-ceph-common.yaml",
+            "oc apply -f /tmp/rook-ceph-common-manifest.yaml",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("references/upgrade.md" in issue and "oc apply -f /tmp/rook-ceph-common.yaml" in issue for issue in issues)
+
+
+def test_missing_rgw_route_validation_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    rgw = root / "references" / "rgw-object-store.md"
+    rgw.write_text(
+        rgw.read_text(encoding="utf-8").replace("Ceph Object Gateway", "object gateway"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("references/rgw-object-store.md" in issue and "Ceph Object Gateway" in issue for issue in issues)
+
+
+def test_missing_rgw_non_200_route_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    rgw = root / "references" / "rgw-object-store.md"
+    rgw.write_text(
+        rgw.read_text(encoding="utf-8").replace("TLS or connection failure", "HTTP 200 only"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("references/rgw-object-store.md" in issue and "TLS or connection failure" in issue for issue in issues)
+
+
+def test_forbidden_rgw_http_200_only_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    rgw = root / "references" / "rgw-object-store.md"
+    rgw.write_text(rgw.read_text(encoding="utf-8") + "\nRGW Route returns HTTP 200.\n", encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("references/rgw-object-store.md" in issue and "HTTP 200" in issue for issue in issues)
+
+
+def test_missing_validated_sno_evidence_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    sno = root / "references" / "validated-rook-ceph-sno.md"
+    sno.write_text(sno.read_text(encoding="utf-8").replace("v1.20.2", "v1.x"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("references/validated-rook-ceph-sno.md" in issue and "v1.20.2" in issue for issue in issues)
+
+
+def test_conflicting_install_order_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8")
+        + "\noc apply -f /tmp/rook-ceph-operator.yaml\noc apply -f /tmp/rook-ceph-csi-operator.yaml\n",
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("references/install-and-preflight.md" in issue and "operator before csi-operator" in issue for issue in issues)
+
+
+def test_conflicting_upgrade_order_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    upgrade = root / "references" / "upgrade.md"
+    upgrade.write_text(
+        upgrade.read_text(encoding="utf-8")
+        + "\noc apply -f /tmp/rook-ceph-operator.yaml\noc apply -f /tmp/rook-ceph-csi-operator.yaml\n",
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("references/upgrade.md" in issue and "operator before csi-operator" in issue for issue in issues)

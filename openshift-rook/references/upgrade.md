@@ -58,7 +58,9 @@ helm get values rook-ceph -n rook-ceph > /tmp/rook-current-values.yaml
 
 ### Manifest Upgrade
 
-Download all manifests for the new version and apply CRDs first, then common (RBAC/ServiceAccounts change between versions), then operator:
+Download all manifests for the new version and apply CRDs first, then common
+(RBAC/ServiceAccounts change between versions), then `csi-operator.yaml`, then
+the OpenShift operator manifest:
 
 ```bash
 ROOK_VERSION="v<new-version>"
@@ -66,15 +68,24 @@ curl -fsSLo /tmp/rook-ceph-crds.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/crds.yaml"
 curl -fsSLo /tmp/rook-ceph-common.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml"
+curl -fsSLo /tmp/rook-ceph-csi-operator.yaml \
+  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/csi-operator.yaml"
 curl -fsSLo /tmp/rook-ceph-operator.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 
 oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-common.yaml
 oc apply -f /tmp/rook-ceph-common.yaml
+oc apply --dry-run=server -f /tmp/rook-ceph-csi-operator.yaml
+oc apply -f /tmp/rook-ceph-csi-operator.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-operator.yaml
 oc apply -f /tmp/rook-ceph-operator.yaml
 ```
+
+If a release introduces or updates `csi.ceph.io/v1` resources and you skip
+`csi-operator.yaml`, CephCluster reconciliation can fail with
+`no matches for kind "CephConnection"` even though the operator deployment has
+rolled out.
 
 Wait for the operator to reconcile and check for errors:
 
