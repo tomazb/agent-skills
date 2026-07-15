@@ -80,6 +80,9 @@ ObjectBucket, use `ocs-storagecluster-ceph-rgw`, and manage RGW through
 Use the ocs-osd-removal job with FAILED_OSD_IDS and scale the storageDeviceSets
 count.
 
+## BlueStore cleanup
+For a disk that previously held a Ceph BlueStore OSD, use full-disk zeroing.
+
 ## Uninstall
 Annotate `uninstall.ocs.openshift.io/cleanup-policy` and
 `uninstall.ocs.openshift.io/mode`, then `oc delete storagecluster`. Run
@@ -106,7 +109,7 @@ Use this skill as a lifecycle router.
 
 ## Routing
 
-Routing guidance.
+Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
 
 ## Core Safety Rules
 

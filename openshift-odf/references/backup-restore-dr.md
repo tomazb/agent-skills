@@ -36,9 +36,9 @@ Use the same `VolumeSnapshot` pattern with `volumeSnapshotClassName: ocs-storage
 
 Enable versioning on RGW or MCG buckets via the S3 API or bucket policy. ODF does not manage bucket policies from the `StorageCluster`; use the S3 API against the RGW/MCG endpoint or the Ceph CLI via the toolbox.
 
-## Cluster Backup (ODF CRs)
+## Configuration Snapshot (ODF CRs, Not a Data Backup)
 
-Back up the ODF-owned CRs before major changes. The `StorageCluster` is the source of truth; capture it and the reconciled Rook CRs for reference:
+Capture ODF-owned CRs before major changes. This is a configuration snapshot for comparison and recovery planning, not a recoverable backup: it excludes application data, bucket contents, and credentials.
 
 ```bash
 oc -n openshift-storage get storagecluster -o yaml > /tmp/storagecluster-backup.yaml
@@ -49,12 +49,14 @@ oc -n openshift-storage get cephobjectstore -o yaml > /tmp/cephobjectstore-backu
 oc -n openshift-storage get noobaa,backingstore,bucketclass -o yaml > /tmp/mcg-backup.yaml
 ```
 
-Include the Local Storage Operator objects and the ODF Subscription so the environment can be reconstructed:
+Include the Local Storage Operator objects and the ODF Subscription:
 
 ```bash
 oc -n openshift-local-storage get localvolumeset,localvolumediscovery -o yaml > /tmp/lso-backup.yaml
 oc -n openshift-storage get subscription,operatorgroup -o yaml > /tmp/odf-olm-backup.yaml
 ```
+
+Move the exports from `/tmp` to a durable, encrypted backup destination. Back up application PVC data with supported snapshots or backup tooling, and include regular backups of the NooBaa database PVC when MCG is in use.
 
 ## Regional-DR And Metro-DR
 
@@ -62,12 +64,12 @@ For cross-cluster protection, ODF uses OpenShift DR (Regional-DR with async RBD 
 
 ## Ceph Cluster Recovery
 
-If the Ceph cluster is lost but the OSD data disks and monitor data remain intact, follow the ODF/Rook disaster recovery guide to re-import the cluster. This requires:
+If the Ceph cluster is lost but the OSD data disks and monitor data remain intact, follow the version-specific ODF disaster recovery guide. Do not recreate a `StorageCluster` from these YAML exports alone; the documented recovery flow must restore monitor quorum and map each OSD back to its original device/PV. It requires:
 
 - **Preserving OSD data on disk** — the BlueStore data on each local disk must be intact and the `localblock` PVs must still map to those disks.
 - **Preserving monitor data** — the `monDataDirHostPath` directories (default `/var/lib/rook/mon-*/`) on the node must be intact. If monitor data is gone, OSD re-import alone is insufficient and a more involved recovery procedure is needed.
-- Reinstalling the ODF operator through OLM.
-- Re-creating the `StorageCluster` with the same `monDataDirHostPath` and `localblock` device set so `ocs-operator` re-imports the existing OSDs.
+- Reinstalling the ODF operator through OLM only as instructed by the version-specific recovery guide.
+- Restoring monitor quorum and the original OSD-to-`localblock` PV mappings before bringing the recovered storage system online.
 
 ## DR Output
 

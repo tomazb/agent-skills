@@ -19,6 +19,7 @@ def test_smoke_manifest_rbd_renders(tmp_path):
     assert "rbd-smoke-pvc" in text
     assert "ocs-storagecluster-ceph-rbd" in text
     assert "rbd-smoke-writer" in text
+    assert "echo odf-smoke-ok > /data/smoke-probe && sync && sleep 3600" in text
 
 
 def test_smoke_manifest_cephfs_renders(tmp_path):
@@ -29,6 +30,7 @@ def test_smoke_manifest_cephfs_renders(tmp_path):
     assert "ocs-storagecluster-cephfs" in text
     assert "cephfs-smoke-writer" in text
     assert "ReadWriteMany" in text
+    assert "echo odf-smoke-ok > /data/smoke-probe && sync && sleep 3600" in text
 
 
 def test_smoke_manifest_invalid_mode_raises(tmp_path):
@@ -56,6 +58,11 @@ def test_storagecluster_sno_renders(tmp_path):
 def test_storagecluster_invalid_replica_raises(tmp_path):
     with pytest.raises(ValueError):
         render_storagecluster("n", "openshift-storage", "localblock", 0, 1, str(tmp_path / "out.yaml"))
+
+
+def test_storagecluster_unsupported_replica_raises(tmp_path):
+    with pytest.raises(ValueError, match="1 or 3"):
+        render_storagecluster("n", "openshift-storage", "localblock", 2, 1, str(tmp_path / "out.yaml"))
 
 
 def test_storagecluster_invalid_count_raises(tmp_path):

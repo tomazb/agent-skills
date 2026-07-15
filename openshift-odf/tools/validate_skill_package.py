@@ -348,6 +348,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/cluster-expand-shrink.md",
+        "BlueStore disk reuse guidance",
+        [
+            "BlueStore",
+            "full-disk zero",
+        ],
+    )
+    require(
         "references/maintenance-uninstall.md",
         "ODF uninstall guidance",
         [
@@ -355,6 +363,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "uninstall.ocs.openshift.io/mode",
             "delete storagecluster",
             "post_uninstall_audit.sh",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "BlueStore disk reuse guidance",
+        [
+            "BlueStore",
+            "full-disk zero",
         ],
     )
     require(
@@ -461,6 +477,8 @@ def check_skill_file(root: Path) -> list[str]:
     if line_count > MAX_SKILL_LINES:
         issues.append(f"SKILL.md is {line_count} lines (> {MAX_SKILL_LINES}).")
     issues.extend(check_required_sections(skill_text))
+    if "references/validated-odf-sno.md" not in skill_text:
+        issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
     return issues
 
 

@@ -36,6 +36,14 @@ def test_missing_required_skill_section_fails(validator, package_factory, make_s
     assert any("missing required sections" in issue for issue in issues)
 
 
+def test_missing_validated_sno_routing_fails(validator, package_factory, make_skill_text):
+    root = package_factory(
+        skill_text=make_skill_text().replace("references/validated-odf-sno.md", "SNO evidence")
+    )
+    issues = validator.validate_root(root)
+    assert any("validated ODF SNO routing" in issue for issue in issues)
+
+
 def test_missing_destructive_confirmation_language_fails(validator, package_factory, reference_text):
     text = reference_text().replace("explicit destructive confirmation", "operator approval")
     root = package_factory(reference_content=text)
@@ -243,6 +251,20 @@ def test_missing_osd_removal_guidance_fails(validator, package_factory, referenc
     assert any(
         "cluster-expand-shrink.md" in issue and "ocs-osd-removal" in issue for issue in issues
     )
+
+
+def test_missing_bluestore_disk_reuse_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    for ref in ("maintenance-uninstall.md", "cluster-expand-shrink.md"):
+        path = root / "references" / ref
+        path.write_text(
+            path.read_text(encoding="utf-8").replace("BlueStore", "old Ceph disk"),
+            encoding="utf-8",
+        )
+
+    issues = validator.validate_root(root)
+
+    assert any("BlueStore disk reuse guidance" in issue for issue in issues)
 
 
 def test_missing_uninstall_guidance_fails(validator, package_factory, reference_text):

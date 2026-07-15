@@ -1,10 +1,10 @@
 # Upgrade
 
-Use this runbook for ODF operator and Ceph upgrades on OpenShift/OKD. ODF is upgraded through OLM; the Ceph version is bundled with each ODF release and is not upgraded independently.
+Use this runbook for ODF upgrades on OpenShift/OKD. ODF is upgraded through OLM; for internal and internal-attached deployments, the Ceph version is bundled with each ODF release and is not upgraded independently. For external deployments, upgrade only the ODF service layer here and follow the separate RHCS upgrade procedure for the backend Ceph cluster.
 
 ## Pre-Upgrade Health Check
 
-Run these checks before any upgrade step. Do not proceed unless all PGs are `active+clean` and all OSDs are `up`:
+For internal and internal-attached deployments, run these checks before any upgrade step. Do not proceed unless all PGs are `active+clean` and all OSDs are `up`:
 
 ```bash
 oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
@@ -58,9 +58,9 @@ oc -n openshift-storage rollout status deploy/rook-ceph-operator --timeout=10m
 oc -n openshift-storage get csv,pods -o wide
 ```
 
-## Ceph Upgrade (operator-driven)
+## Ceph Upgrade (operator-driven, internal deployments)
 
-You do not upgrade Ceph directly on ODF. When the ODF operator upgrade completes, `ocs-operator` and `rook-ceph-operator` roll the bundled Ceph image into the mons, OSDs, MDS, and RGW automatically. Watch the `StorageCluster` and `CephCluster` reach Ready and confirm the new Ceph version:
+For internal and internal-attached deployments, do not upgrade Ceph directly on ODF. When the ODF operator upgrade completes, `ocs-operator` and `rook-ceph-operator` roll the bundled Ceph image into the mons, OSDs, MDS, and RGW automatically. Watch the `StorageCluster` and `CephCluster` reach Ready and confirm the new Ceph version:
 
 ```bash
 oc -n openshift-storage wait storagecluster/ocs-storagecluster \

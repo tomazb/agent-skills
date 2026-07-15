@@ -45,6 +45,8 @@ spec:
       reconcileStrategy: manage
 ```
 
+In this and the ODF 4.22 example below, `storage: "1"` is intentional for LSO `localblock` whole-disk Block PVs. It requests the smallest positive capacity so any matching disk-sized PV can bind; the OSD uses that PV's block device.
+
 ## Pool Configuration
 
 - Block pool: `replicated.size: 1`, `requireSafeReplicaSize: false`
@@ -83,7 +85,7 @@ This section documents additional observed evidence and workarounds for ODF 4.22
 - ODF version: 4.22.0 (channel: `stable-4.22`)
 - Topology: Single Node OpenShift (SNO) — `infrastructure.status.controlPlaneTopology: SingleReplica`
 - Deployment mode: internal-attached (Local Storage Operator, `LocalVolume` resource for exact disk selection)
-- Storage services: ceph-rbd, MCG/RGW object (**CephFS not validated in this scenario**)
+- Storage services: ceph-rbd, MCG/RGW object (**CephFS not validated in this scenario**). Do not enable CephFS on ODF 4.22 SNO with these pool-size workarounds until its reconciliation path is fixed and validated.
 
 ## Disk Layout
 

@@ -67,14 +67,25 @@ Use `FORCE_OSD_REMOVAL=true` only when the OSD is already down and you accept th
 
 1. Verify the OSD is down and the disk is truly failed.
 2. Run the `ocs-osd-removal` job above for the failed OSD id.
-3. After the OSD is fully removed, delete the released local PV and clean the disk if reusing it (only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target):
+3. After the OSD is fully removed, delete the released local PV and clean the disk if reusing it (only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target). For a disk that previously held a BlueStore OSD, `wipefs -af` and `sgdisk --zap-all` do not clear labels at the midpoint and end; use full-disk zeroing:
 
 ```bash
 oc debug "node/<node>" -- chroot /host bash -c "
+  set -e
   wipefs -af '/dev/disk/by-id/<disk>'
   sgdisk --zap-all '/dev/disk/by-id/<disk>'
 "
+
+# Required only when the disk previously held a BlueStore OSD:
+oc debug "node/<node>" -- chroot /host bash -c "
+  set -e
+  dd if=/dev/zero of='/dev/disk/by-id/<disk>' bs=4M status=progress
+  sync
+  lsblk -f '/dev/disk/by-id/<disk>'
+"
 ```
+
+Full-disk zeroing can take a long time; see `references/local-storage-disks.md` for rationale and post-wipe checks.
 
 4. Let the Local Storage Operator rediscover and reprovision the replacement disk into `localblock`.
 5. Wait for `ocs-operator` to create a new OSD and for the cluster to rebalance.

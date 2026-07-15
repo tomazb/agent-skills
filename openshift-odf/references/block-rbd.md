@@ -12,7 +12,13 @@ oc get sc ocs-storagecluster-ceph-rbd -o yaml
 
 It provisions RBD volumes from the default `ocs-storagecluster-cephblockpool` with `replicated.size: 3` on multi-node (or `size: 1` on a single-replica SNO cluster). Use it for `ReadWriteOnce` block workloads and databases.
 
-Keep exactly one default StorageClass unless the user explicitly requests another policy. `ocs-storagecluster-ceph-rbd` is not the cluster default unless you annotate it.
+Keep exactly one default StorageClass unless the user explicitly requests another policy. Discover the current default on the target cluster instead of assuming an ODF class is non-default:
+
+```bash
+oc get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}'
+```
+
+Change the default annotation only when the user explicitly requests that policy.
 
 ## Additional Block Pools (managed via StorageCluster)
 

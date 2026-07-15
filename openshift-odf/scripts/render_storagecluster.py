@@ -26,6 +26,8 @@ spec:
         storageClassName: {local_storage_class}
         resources:
           requests:
+            # LSO localblock PVs represent whole disks; "1" intentionally
+            # requests the smallest positive capacity so any disk-sized PV can bind.
             storage: "1"
   managedResources:
     cephBlockPools:
@@ -42,8 +44,8 @@ def render_storagecluster(
     output: str,
 ) -> None:
     """Render an ODF StorageCluster CR. replica=1 is SNO; replica=3 is multi-node."""
-    if replica < 1:
-        raise ValueError("replica must be >= 1")
+    if replica not in {1, 3}:
+        raise ValueError("replica must be 1 or 3 (SNO or multi-node)")
     if count < 1:
         raise ValueError("count must be >= 1")
     yaml = STORAGECLUSTER_TEMPLATE.format(

@@ -45,7 +45,7 @@ Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_
 ```bash
 oc apply -f /tmp/odf-rbd-smoke.yaml
 oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+oc -n odf-rbd-smoke exec rbd-smoke-writer -- cat /data/smoke-probe
 ```
 
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
@@ -53,10 +53,10 @@ Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
 ```bash
 oc apply -f /tmp/odf-cephfs-smoke.yaml
 oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- cat /data/smoke-probe
 ```
 
-If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it.
+If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
