@@ -50,6 +50,34 @@ For upgrade, verify HEALTH_OK and active+clean.
 Leave the PG autoscaler on; check `ceph osd pool autoscale-status`.
 
 On OpenShift, install with operator-openshift.yaml for the dedicated rook-ceph SCC.
+
+Apply `csi-operator.yaml` before `operator-openshift.yaml` or `CephConnection` reconciliation can fail.
+
+Use `curl -fsSLo /tmp/rook-ceph-csi-operator.yaml` before `curl -fsSLo /tmp/rook-ceph-operator.yaml`.
+
+Create the namespace first with `oc create ns rook-ceph`.
+
+Run `oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml`, then `oc apply -f /tmp/rook-ceph-common.yaml`, then `oc apply -f /tmp/rook-ceph-csi-operator.yaml`, then `oc apply -f /tmp/rook-ceph-operator.yaml`.
+
+Apply `oc apply -f /tmp/rook-ceph-csi-operator.yaml` before `oc apply -f /tmp/rook-ceph-operator.yaml`.
+
+Use `useAllDevices: false` when the SNO install pins a dedicated OSD disk.
+
+Use `/dev/disk/by-id/<stable-disk-id>` together with `osd_pool_default_size` and `mon_warn_on_pool_no_redundancy` on the SNO example.
+
+On SNO with RGW, raise `mon_max_pg_per_osd` when the single OSD needs a higher PG ceiling.
+
+If the OpenShift Prometheus API is auth-protected, point `PROMETHEUS_API_HOST` at an `internal Prometheus`.
+
+Expose the dashboard Route through the `http-dashboard` service port.
+
+Run `ceph mgr module enable rook` and `ceph orch set backend rook`.
+
+Validate RGW with `ObjectBucket` state, a `curl -kI` route check, and an HTTP response from `Ceph Object Gateway` instead of a `TLS or connection failure`.
+
+Validated SNO evidence should include `v1.20.2`, `v20.2.2`, `rook-ceph-rgw-obc`, and `Backend: rook`.
+
+Enable orchestration with `ceph orch set backend rook`.
 """
 
 SKILL_TEMPLATE = """\

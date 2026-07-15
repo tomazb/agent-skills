@@ -90,7 +90,7 @@ helm install rook-ceph rook-release/rook-ceph \
 
 ### Direct Manifest Install (OLM or YAML)
 
-For OLM-based installs, use the OperatorHub or an OLM Subscription. For direct manifest installs, pin the version and use the OpenShift operator manifest (`operator-openshift.yaml`), which ships the dedicated SCCs described above:
+For OLM-based installs, use the OperatorHub or an OLM Subscription. For direct manifest installs, pin the version, create the namespace explicitly on a fresh cluster, apply the Ceph CSI operator manifest (`csi-operator.yaml`), then use the OpenShift operator manifest (`operator-openshift.yaml`), which ships the dedicated SCCs described above:
 
 ```bash
 ROOK_VERSION="v<version>"
@@ -98,23 +98,34 @@ curl -fsSLo /tmp/rook-ceph-crds.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/crds.yaml"
 curl -fsSLo /tmp/rook-ceph-common.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/common.yaml"
+curl -fsSLo /tmp/rook-ceph-csi-operator.yaml \
+  "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/csi-operator.yaml"
 curl -fsSLo /tmp/rook-ceph-operator.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 ```
 
-Apply CRDs first (required before common.yaml and operator.yaml), then common, then operator. Apply the CRDs server-side — the Rook CRDs are large and client-side `oc apply` can fail with a `metadata.annotations: Too long` error:
+Create the namespace before `common.yaml` on a fresh cluster. Apply CRDs first (required before common, CSI, and operator manifests), then common, then `csi-operator.yaml`, then the OpenShift operator. Apply the CRDs server-side — the Rook CRDs are large and client-side `oc apply` can fail with a `metadata.annotations: Too long` error:
 
 ```bash
+oc get ns rook-ceph >/dev/null 2>&1 || oc create ns rook-ceph
 oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-common.yaml
 oc apply -f /tmp/rook-ceph-common.yaml
+oc apply --dry-run=server -f /tmp/rook-ceph-csi-operator.yaml
+oc apply -f /tmp/rook-ceph-csi-operator.yaml
 oc apply --dry-run=server -f /tmp/rook-ceph-operator.yaml
 oc apply -f /tmp/rook-ceph-operator.yaml
 ```
 
+Newer Rook releases use `csi.ceph.io/v1` resources such as `CephConnection`,
+`Driver`, and `OperatorConfig`. If `csi-operator.yaml` is omitted, a new
+`CephCluster` can stall with `no matches for kind "CephConnection"` even though
+the main operator deployment is running.
+
 ## CephCluster CR for SNO
 
-On SNO, use a CephCluster with minimal mon/mgr counts and relaxed placement:
+On SNO, use a CephCluster with minimal mon/mgr counts and explicit device
+pinning when the user names a dedicated OSD disk:
 
 ```yaml
 apiVersion: ceph.rook.io/v1
@@ -135,21 +146,30 @@ spec:
     allowMultiplePerNode: true
   dashboard:
     enabled: true
+  cephConfig:
+    global:
+      osd_pool_default_size: "1"
+      mon_warn_on_pool_no_redundancy: "false"
+      mon_max_pg_per_osd: "500"
   storage:
-    useAllNodes: true
-    useAllDevices: true
+    useAllNodes: false
+    useAllDevices: false
     config:
       osdsPerDevice: "1"
-  placement:
-    all:
-      tolerations:
-      - key: "node.ocs.openshift.io/storage"
-        operator: "Equal"
-        value: "true"
-        effect: "NoSchedule"
+    nodes:
+    - name: "<sno-node>"
+      devices:
+      - name: "/dev/disk/by-id/<stable-disk-id>"
 ```
 
-Do not copy `mon.count: 1` or `allowMultiplePerNode: true` into multi-node production plans without explicit direction.
+Prefer explicit `/dev/disk/by-id/...` device pinning when the user has already
+identified one OSD disk. Reserve `useAllDevices: true` for nodes that are
+intentionally dedicated to Ceph. If the SNO node is tainted for storage
+workloads, add the required toleration block explicitly instead of assuming it.
+
+Do not copy `mon.count: 1`, `allowMultiplePerNode: true`, or
+`mon_max_pg_per_osd: "500"` into multi-node production plans without explicit
+direction.
 
 ## CephCluster CR for Multi-Node Production
 
@@ -216,6 +236,17 @@ curl -fsSLo /tmp/rook-ceph-toolbox.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/toolbox.yaml"
 oc apply -f /tmp/rook-ceph-toolbox.yaml
 oc -n rook-ceph rollout status deploy/rook-ceph-tools --timeout=5m
+```
+
+## Enable The Rook Orchestrator Backend
+
+The dashboard Orchestrator page and `ceph orch` commands stay unavailable until
+the mgr uses the Rook backend:
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
 ```
 
 ## Install Validation

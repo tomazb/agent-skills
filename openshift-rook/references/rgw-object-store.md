@@ -82,6 +82,12 @@ spec:
 
 Do not copy `size: 1` or `requireSafeReplicaSize: false` into multi-node production plans without explicit direction.
 
+On SNO, the extra RGW pools can push a single OSD above the default
+`mon_max_pg_per_osd` ceiling once RBD, CephFS, and RGW all coexist. If
+`ceph health detail` warns about too many PGs per OSD, raise
+`CephCluster.spec.cephConfig.global.mon_max_pg_per_osd` deliberately (for
+example `500`) and record why the override is needed.
+
 ## Object Bucket Claim (OBC) StorageClass
 
 Create an OBC StorageClass for S3 bucket provisioning:
@@ -122,6 +128,7 @@ Check RGW health and object store status:
 oc -n rook-ceph get cephobjectstores.ceph.rook.io
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 oc -n rook-ceph get pods -l app=rook-ceph-rgw -o wide
+oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
 Create a test OBC, verify:
@@ -129,7 +136,19 @@ Create a test OBC, verify:
 - OBC is `Bound`.
 - Secret with S3 credentials is created.
 - ConfigMap with bucket endpoint is created.
-- A bucket exists in the RGW object store.
+- The `ObjectBucket` resource exists and is bound to the OBC.
+- The RGW Route returns an HTTP response from `Ceph Object Gateway`
+  (for example `200`, `403`, or `405`) instead of a TLS or connection failure.
+
+Example checks:
+
+```bash
+oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc -o wide
+oc -n rook-rgw-smoke get secret rook-ceph-obc
+oc -n rook-rgw-smoke get configmap rook-ceph-obc
+oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
+curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
+```
 
 ## TLS and Ingress
 
