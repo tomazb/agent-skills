@@ -89,7 +89,7 @@ oc -n openshift-local-storage get localvolumediscoveryresults -o yaml
 
 ### LocalVolumeSet (default — recommended for most deployments)
 
-Create a `LocalVolumeSet` that selects the intended disks and provisions raw `Block` PVs into a dedicated StorageClass (for example `localblock`). Filter by device attributes rather than naming raw kernel paths so selection is stable across reboots:
+Create a `LocalVolumeSet` that selects only the intended ODF disks and provisions raw `Block` PVs into a dedicated StorageClass (for example `localblock`). A `LocalVolumeSet` claims every matching device on selected nodes, so use filters that uniquely identify the dedicated ODF disks; do not apply a broad size-only filter. Use the exact-path `LocalVolume` workflow below when other storage systems share the node:
 
 ```yaml
 apiVersion: local.storage.openshift.io/v1alpha1
@@ -108,15 +108,21 @@ spec:
   deviceInclusionSpec:
     deviceTypes:
     - disk
+    # Replace with attributes from LocalVolumeDiscovery that match only ODF disks.
+    deviceMechanicalProperties:
+    - NonRotational
     minSize: 100Gi
+    models:
+    - <approved-odf-disk-model-substring>
 ```
 
-Validate that PVs were created for each intended disk:
+Before applying, verify that the chosen filters return only disks explicitly allocated to ODF. After applying, validate that every `localblock` PV maps to an intended node and stable disk path; stop and investigate before creating the `StorageCluster` if any PV maps to another disk:
 
 ```bash
 oc get sc localblock
 oc get pv | grep localblock
 oc -n openshift-local-storage get localvolumeset localblock -o wide
+oc get pv -o yaml
 ```
 
 ### LocalVolume (exception — when other storage systems share the same node)
@@ -163,7 +169,9 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 # Required for disks previously used as Ceph BlueStore OSDs (raw mode)
 # Full-disk zero clears all three BlueStore superblock copies
 oc debug "node/${NODE}" -- chroot /host bash -c "
+  set -euo pipefail
   dd if=/dev/zero of='${DISK}' bs=4M status=progress
+  sync
   echo 'Full-disk zero complete'
 "
 ```

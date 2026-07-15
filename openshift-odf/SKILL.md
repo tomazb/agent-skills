@@ -19,19 +19,20 @@ Use this skill as a lifecycle router for Red Hat OpenShift Data Foundation (ODF)
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **Observed SNO configurations or ODF 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.
 
 ## Core Safety Rules
 
-- Never run or recommend `ceph-volume lvm zap`, `wipefs`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.
+- Never run or recommend destructive disk-wiping commands such as `ceph-volume lvm zap`, `wipefs -a`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.
 - Before every destructive disk action, require `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the target.
 - Use stable `/dev/disk/by-id/*` or `/dev/disk/by-path/*` paths for destructive block-device targeting. Never use `/dev/sdX`, `/dev/nvmeXnY`, or guessed paths. Prefer the Local Storage Operator `LocalVolumeSet`/`LocalVolumeDiscovery` to select disks by stable device attributes instead of naming raw kernel devices.
 - Install and upgrade ODF only through OLM: an OperatorHub `Subscription` in the `openshift-storage` namespace. Never apply upstream Rook `operator.yaml`/`crds.yaml` on top of an ODF-managed cluster; it corrupts the CSV/operator state.
 - Do not edit the Rook `CephCluster`, `CephBlockPool`, `CephFilesystem`, or `CephObjectStore` CRs directly on an ODF cluster. `ocs-operator` owns and reconciles them from the `StorageCluster` CR; hand edits are reverted and can break reconciliation. Change behavior through `StorageCluster` (and documented overrides) instead.
-  - **Exception (ODF 4.22 SNO only):** ODF 4.22 has a known regression where pool replica sizes are not reduced for single-OSD SNO deployments. After setting `managedResources.cephBlockPools.reconcileStrategy: ignore` and `managedResources.cephObjectStores.reconcileStrategy: ignore` in the `StorageCluster`, it is necessary to patch the `CephBlockPool` and `CephObjectStore` CRs directly and set pool sizes via `ceph osd pool set`. Document this as a temporary workaround and re-enable `reconcileStrategy: manage` when ODF is upgraded to a version with the fix.
+  - **Exception (ODF 4.22 SNO only):** ODF 4.22 has a known regression where pool replica sizes are not reduced for single-OSD SNO deployments. After setting `managedResources.cephBlockPools.reconcileStrategy: ignore` and `managedResources.cephObjectStores.reconcileStrategy: ignore` in the `StorageCluster`, it is necessary to patch the `CephBlockPool` and `CephObjectStore` CRs directly and set pool sizes via `ceph osd pool set`. Do not enable CephFS with this workaround: its pool-reconciliation path was not validated for ODF 4.22 SNO. Document this as a temporary workaround and re-enable `reconcileStrategy: manage` when ODF is upgraded to a version with the fix.
 - Warn that MachineConfig changes and node drains can reboot nodes. On SNO, that removes API access until the single node returns; wait for MCP recovery and node readiness before continuing.
-- ODF on SNO or compact clusters uses a single replica-1 device set with `replica: 1` (`resiliencePolicy` reduced) and reduced mon/mgr counts. Do not copy these single-node settings into multi-node production plans without explicit direction.
+- ODF on SNO uses a single replica-1 device set with `replica: 1` (`resiliencePolicy` reduced) and reduced mon/mgr counts. A compact three-node cluster remains a multi-node deployment and uses the standard three OSDs across three failure domains. Do not copy single-node settings into a compact or other multi-node production plan without explicit direction.
 - Multi-node production requires at least three OSDs spread across three failure domains and the default replica count of 3 for Ceph data pools. Document explicit exceptions when the user overrides.
-- Keep exactly one default StorageClass unless the user explicitly requests another policy. ODF ships `ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` non-default by default.
+- Keep exactly one default StorageClass unless the user explicitly requests another policy. Discover the current default from the `storageclass.kubernetes.io/is-default-class` annotation; do not assume whether an ODF StorageClass is default on the target platform.
 - Ceph pool parameters are changeable but disruptive, not immutable: `pg_num` (the PG autoscaler is on by default), replica `size`, and failure-domain rules can be modified, but changes trigger expensive rebalancing. Plan them at `StorageCluster` creation time and change them deliberately after verifying cluster health.
 - Do not downgrade the ODF operator or Ceph versions. For upgrades, verify all PGs are active+clean and OSDs are up before proceeding.
 - Document the difference between the ODF operator channel/version and the Ceph (cluster image) version. ODF bundles a specific Ceph version per release; do not mix-and-match.
@@ -56,6 +57,6 @@ For install, upgrade, OSD operations, and operator changes, verify the current R
 - Name the exact reference runbook(s) used.
 - Separate read-only discovery from mutating or destructive actions.
 - Show commands with placeholders for cluster-specific values instead of fabricating node, disk, or version identifiers.
-- Drive changes through the `StorageCluster` CR and OLM Subscription; never hand-edit the ODF-owned Rook CRs.
+- Drive changes through the `StorageCluster` CR and OLM Subscription; never hand-edit the ODF-owned Rook CRs except for the version-scoped ODF 4.22 SNO pool workaround in Core Safety Rules and `references/validated-odf-sno.md`.
 - Include post-change validation and rollback or stop conditions.
 - For production work, include backup, monitoring, and restore validation guidance.

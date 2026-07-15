@@ -39,7 +39,7 @@ oc get crd | grep ceph.rook.io
 oc get subscription -A | grep -E 'rook|ceph|odf|ocs' || echo "no relevant OLM subscriptions"
 ```
 
-**If an upstream Rook cluster is found with no OLM Subscription**, it is an incompatible non-ODF Rook installation. ODF cannot be installed alongside it — both operators fight over the same CRDs and block device assignments. You must remove the upstream Rook cluster first. See `references/maintenance-uninstall.md` for Rook cleanup steps, and verify:
+**If an upstream Rook cluster is found with no OLM Subscription**, it is an incompatible non-ODF Rook installation. ODF cannot be installed alongside it — both operators fight over the same CRDs and block device assignments. You must remove the upstream Rook cluster first using the repository's [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md), not this ODF `maintenance-uninstall.md` runbook. Then verify:
 
 1. All stale Rook namespaces, CRs, CRDs, and StorageClasses are deleted.
 2. Stale mon host directories (`/var/lib/rook/mon-*/`) are removed from the node **only after confirming the cluster is fully abandoned** (not a recovery candidate). If there is any chance the data is needed, treat the host path as a backup candidate before deletion.
@@ -165,6 +165,8 @@ spec:
 ```
 
 `replica: 3` places one OSD per failure domain; `count` is the number of device sets (increase `count` to add capacity in units of three OSDs). Do not lower `replica` below 3 for multi-node production without explicit direction.
+
+`storage: "1"` is intentional with LSO `localblock` whole-disk Block PVs: it requests the smallest positive capacity so any matching disk-sized PV can bind, and the OSD receives that PV's block device. Keep the request no larger than the LSO PV capacity.
 
 ### SNO / Compact Single-Replica
 
