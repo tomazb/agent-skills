@@ -238,17 +238,6 @@ oc apply -f /tmp/rook-ceph-toolbox.yaml
 oc -n rook-ceph rollout status deploy/rook-ceph-tools --timeout=5m
 ```
 
-## Enable The Rook Orchestrator Backend
-
-The dashboard Orchestrator page and `ceph orch` commands stay unavailable until
-the mgr uses the Rook backend:
-
-```bash
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
-```
-
 ## Install Validation
 
 Wait for the operator and cluster to reach a healthy state:
@@ -274,6 +263,18 @@ Before declaring success, verify:
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - Exactly one default StorageClass exists when defaulting is expected.
+
+## Enable The Rook Orchestrator Backend
+
+The dashboard Orchestrator page and `ceph orch` commands stay unavailable until
+the mgr uses the Rook backend. Run this after the CephCluster is Ready and the
+mgr is active:
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+```
 
 ## MachineConfig Discipline
 

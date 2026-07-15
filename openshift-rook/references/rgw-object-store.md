@@ -128,6 +128,11 @@ Check RGW health and object store status:
 oc -n rook-ceph get cephobjectstores.ceph.rook.io
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 oc -n rook-ceph get pods -l app=rook-ceph-rgw -o wide
+```
+
+If an OpenShift Route was deployed (see the TLS and Ingress section below), also check:
+
+```bash
 oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
