@@ -56,7 +56,7 @@ spec:
 
 ## StorageClasses
 
-- `lvms-vg1` remained the default StorageClass.
+- `lvms-vg1` (from a pre-existing LVM Storage install) remained the cluster default StorageClass; ODF did not override it, so exactly one default StorageClass stayed in place.
 - `ocs-storagecluster-ceph-rbd` (non-default RBD).
 - `ocs-storagecluster-cephfs` (non-default CephFS).
 - `ocs-storagecluster-ceph-rgw` (RGW ObjectBucketClaim provisioning).
