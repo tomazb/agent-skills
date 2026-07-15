@@ -227,7 +227,8 @@ def test_missing_mcg_rgw_guidance_fails(validator, package_factory, reference_te
     )
     issues = validator.validate_root(root)
     assert any(
-        "object-mcg-rgw.md" in issue and "openshift-storage.noobaa.io" in issue for issue in issues
+        "object-mcg-rgw.md" in issue and "MCG/RGW OBC validation guidance" in issue
+        for issue in issues
     )
 
 

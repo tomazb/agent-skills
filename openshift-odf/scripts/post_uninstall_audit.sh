@@ -29,7 +29,7 @@ oc get scc | grep -E 'rook-ceph|noobaa' || echo "  ODF SCCs: absent (OK)"
 
 echo ""
 echo "Default StorageClass:"
-oc get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}'
+oc get sc -o jsonpath='{.items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")].metadata.name}' || true
 echo ""
 
 echo ""
