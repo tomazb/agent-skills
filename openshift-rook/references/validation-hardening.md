@@ -11,12 +11,17 @@ oc get sc
 oc -n rook-ceph get pods -o wide
 oc -n rook-ceph get cephcluster -o wide
 oc -n rook-ceph get cephblockpool,cephfilesystem,cephobjectstore -o wide
-oc -n rook-ceph get route rook-ceph-dashboard rook-ceph-rgw 2>/dev/null || true
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd df
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+```
+
+Check optional routes if the dashboard or RGW was exposed:
+
+```bash
+oc -n rook-ceph get route rook-ceph-dashboard -o wide 2>/dev/null || echo "dashboard route not deployed"
+oc -n rook-ceph get route rook-ceph-rgw -o wide 2>/dev/null || echo "RGW route not deployed"
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api-host || true
 ```
 

@@ -15,7 +15,7 @@ cluster.
 ## Disk Layout
 
 - One dedicated NVMe disk for OSD data (SNO has one node, one disk).
-- The cluster used explicit `/dev/disk/by-id/<stable-id>` device pinning instead
+- The cluster used explicit `/dev/disk/by-id/<stable-disk-id>` device pinning instead
   of `useAllDevices: true`.
 
 ## CephCluster Configuration (SNO)
@@ -39,7 +39,7 @@ spec:
     nodes:
     - name: "<sno-node>"
       devices:
-      - name: /dev/disk/by-id/<stable-id>
+      - name: /dev/disk/by-id/<stable-disk-id>
 ```
 
 ## Pool Configuration

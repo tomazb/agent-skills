@@ -76,8 +76,6 @@ Run `ceph mgr module enable rook` and `ceph orch set backend rook`.
 Validate RGW with `ObjectBucket` state, a `curl -kI` route check, and an HTTP response from `Ceph Object Gateway` instead of a `TLS or connection failure`.
 
 Validated SNO evidence should include `v1.20.2`, `v20.2.2`, `rook-ceph-rgw-obc`, and `Backend: rook`.
-
-Enable orchestration with `ceph orch set backend rook`.
 """
 
 SKILL_TEMPLATE = """\

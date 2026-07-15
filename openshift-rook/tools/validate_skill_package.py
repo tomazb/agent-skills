@@ -250,9 +250,13 @@ def check_content_regressions(root: Path) -> list[str]:
 def check_required_reference_guidance(root: Path) -> list[str]:
     issues: list[str] = []
 
+    _cache: dict[str, str] = {}
+
     def read_reference(rel: str) -> str:
-        path = root / rel
-        return read_text(path) if path.exists() else ""
+        if rel not in _cache:
+            path = root / rel
+            _cache[rel] = read_text(path) if path.exists() else ""
+        return _cache[rel]
 
     def require(rel: str, label: str, needles: list[str]) -> None:
         text = read_reference(rel)
@@ -364,40 +368,40 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     forbid_pattern(
         "references/install-and-preflight.md",
         re.compile(
-            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$\n^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
-            re.MULTILINE,
+            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
         ),
         "install guidance that applies operator before csi-operator",
     )
     forbid_pattern(
         "references/install-and-preflight.md",
         re.compile(
-            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$\n^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
-            re.MULTILINE,
+            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
         ),
         "install guidance that applies csi-operator before common.yaml",
     )
     forbid_pattern(
         "references/install-and-preflight.md",
         re.compile(
-            r"^oc apply -f /tmp/rook-ceph-common\.yaml\s*$\n^oc create ns rook-ceph\s*$",
-            re.MULTILINE,
+            r"^oc apply -f /tmp/rook-ceph-common\.yaml\s*$.*?oc create ns rook-ceph",
+            re.MULTILINE | re.DOTALL,
         ),
         "install guidance that creates namespace after common.yaml",
     )
     forbid_pattern(
         "references/upgrade.md",
         re.compile(
-            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$\n^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
-            re.MULTILINE,
+            r"^oc apply -f /tmp/rook-ceph-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
         ),
         "upgrade guidance that applies operator before csi-operator",
     )
     forbid_pattern(
         "references/upgrade.md",
         re.compile(
-            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$\n^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
-            re.MULTILINE,
+            r"^oc apply -f /tmp/rook-ceph-csi-operator\.yaml\s*$.*?^oc apply -f /tmp/rook-ceph-common\.yaml\s*$",
+            re.MULTILINE | re.DOTALL,
         ),
         "upgrade guidance that applies csi-operator before common.yaml",
     )
