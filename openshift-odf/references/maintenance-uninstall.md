@@ -88,14 +88,56 @@ oc -n openshift-local-storage get localvolumeset,localvolume,localvolumediscover
 
 Delete only named `LocalVolumeSet` and `LocalVolumeDiscovery` objects that were dedicated to ODF. Never use `--all`, and do not delete LSO resources when `LocalVolume`, Longhorn, LVMS, or another storage system shares the node or namespace.
 
+### 5. CRD cleanup
+
+OLM removes most CRDs automatically when the operator is uninstalled, but they can linger — especially after forced or manual removal. Check all five API groups:
+
+```bash
+for group in ocs.openshift.io ceph.rook.io noobaa.io csi.ceph.io local.storage.openshift.io; do
+  echo "=== $group ==="; oc get crd 2>/dev/null | grep "$group" || echo "clean"
+done
+```
+
+If any CRDs remain, delete them explicitly. The full set installed by ODF + LSO:
+
+```bash
+oc delete crd \
+  storageclusters.ocs.openshift.io \
+  storagesystems.odf.openshift.io \
+  storageconsumers.ocs.openshift.io \
+  storageclients.ocs.openshift.io \
+  cephblockpools.ceph.rook.io \
+  cephblockpoolradosnamespaces.ceph.rook.io \
+  cephclusters.ceph.rook.io \
+  cephclients.ceph.rook.io \
+  cephfilesystems.ceph.rook.io \
+  cephobjectstores.ceph.rook.io \
+  cephobjectstoreusers.ceph.rook.io \
+  noobaa.noobaa.io \
+  backingstores.noobaa.io \
+  bucketclasses.noobaa.io \
+  namespacestores.noobaa.io \
+  noobaas.noobaa.io \
+  clientprofiles.csi.ceph.io \
+  drivers.csi.ceph.io \
+  localvolumes.local.storage.openshift.io \
+  localvolumesets.local.storage.openshift.io \
+  localvolumediscoveries.local.storage.openshift.io \
+  localvolumediscoveryresults.local.storage.openshift.io \
+  localvolumedevicelinks.local.storage.openshift.io \
+  2>/dev/null; true
+```
+
+CRDs with the `customresourcecleanup.apiextensions.k8s.io` finalizer block until all CR instances are gone. If a CRD stays in `Terminating`, see **Stuck Namespace / Orphaned CRs** below.
+
 ## Post-Uninstall Audit
 
 After uninstall, confirm:
 
-- `openshift-storage` namespace is absent.
-- `oc api-resources --api-group=ocs.openshift.io` and `--api-group=ceph.rook.io` return no leftover ODF/Rook resources in use.
+- `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating).
+- All five CRD groups are clean: `ocs.openshift.io`, `ceph.rook.io`, `noobaa.io`, `csi.ceph.io`, `local.storage.openshift.io`.
 - No StorageClass uses an ODF provisioner (`openshift-storage.rbd.csi.ceph.com`, `openshift-storage.cephfs.csi.ceph.com`, `openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`).
-- No PV/PVC uses an ODF StorageClass.
+- No PV/PVC uses an ODF StorageClass or is stuck Terminating.
 - Exactly one intended default StorageClass remains.
 
 Run the post-uninstall audit script:
@@ -107,12 +149,87 @@ bash scripts/post_uninstall_audit.sh
 Equivalent manual checks:
 
 ```bash
-oc get namespace openshift-storage 2>/dev/null || true
-oc api-resources --api-group=ocs.openshift.io
+# Namespaces
+oc get ns openshift-storage rook-ceph 2>/dev/null || echo "namespaces gone"
+
+# CRDs (all five groups)
+for group in ocs.openshift.io ceph.rook.io noobaa.io csi.ceph.io local.storage.openshift.io; do
+  oc get crd 2>/dev/null | grep "$group" || true
+done
+
+# Orphaned PVCs or stuck Terminating PVCs/PVs
+oc get pvc -A 2>/dev/null | grep -v Bound || echo "no stuck PVCs"
+oc get pv -A  2>/dev/null | grep -v Bound || echo "no stuck PVs"
+
+# StorageClasses and CSI drivers
 oc get sc | grep -E 'openshift-storage|ocs-storagecluster' || true
-oc get pv,pvc -A -o wide | grep -E 'openshift-storage|ocs-storagecluster' || true
 oc get csidriver | grep openshift-storage || true
 ```
+
+## Stuck Namespace / Orphaned CRs
+
+When a namespace is deleted before its CRs are finalized (or when the operator that owns a finalizer is gone), objects can be permanently stuck in `Terminating`.
+
+### Detect orphaned CRs
+
+`oc get pvc -A` and `oc get <crd-kind> -A` will still show objects in a deleted namespace even after `oc get ns` returns NotFound. Check:
+
+```bash
+oc get pvc -A 2>/dev/null | grep -v Bound
+for group in ocs.openshift.io ceph.rook.io noobaa.io csi.ceph.io; do
+  oc get $(oc api-resources --api-group=$group -o name 2>/dev/null | head -1) -A --no-headers 2>/dev/null
+done
+```
+
+### Clear orphaned CRs (namespace already deleted)
+
+The API rejects PATCH/DELETE on objects in a non-existent namespace. Recreate the namespace briefly, strip finalizers, delete objects, then delete the namespace again:
+
+```bash
+NS="openshift-storage"   # or rook-ceph, etc.
+oc create ns $NS
+
+# For each stuck CR type, remove finalizers and delete
+for cr_type in backingstores.noobaa.io bucketclasses.noobaa.io \
+               cephclients.ceph.rook.io storageconsumers.ocs.openshift.io; do
+  for name in $(oc get $cr_type -n $NS --no-headers 2>/dev/null | awk '{print $1}'); do
+    oc patch $cr_type/$name -n $NS --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+    oc delete $cr_type/$name -n $NS --wait=false 2>/dev/null
+  done
+done
+
+# For cluster-scoped CRs (storageclients.ocs.openshift.io):
+for name in $(oc get storageclients.ocs.openshift.io --no-headers 2>/dev/null | awk '{print $1}'); do
+  oc patch storageclients.ocs.openshift.io/$name --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+  oc delete storageclients.ocs.openshift.io/$name --wait=false 2>/dev/null
+done
+
+# Also clear orphaned PVCs (kubernetes.io/pvc-protection finalizer blocks deletion)
+for name in $(oc get pvc -n $NS --no-headers 2>/dev/null | awk '{print $1}'); do
+  oc patch pvc/$name -n $NS --type json -p '[{"op":"remove","path":"/metadata/finalizers/0"}]' 2>/dev/null
+done
+
+oc delete ns $NS --wait=false
+```
+
+### Force-finalize a stuck Terminating namespace
+
+When a namespace is stuck in `Terminating` with `spec.finalizers: [kubernetes]` and all objects are gone, use the `/finalize` subresource to clear the finalizer (requires `oc proxy`):
+
+```bash
+oc proxy --port=8001 &
+sleep 3
+NS="openshift-storage"
+oc get ns $NS -o json | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+d['spec']['finalizers'] = []
+print(json.dumps(d))
+" | curl -s -X PUT "http://localhost:8001/api/v1/namespaces/$NS/finalize" \
+    -H "Content-Type: application/json" -d @-
+```
+
+Repeat for each stuck namespace (`rook-ceph`, `openshift-local-storage`, smoke/test namespaces). The namespace disappears within a few seconds after the finalizer is cleared.
 
 ## Disk Cleanup (Data Loss)
 
