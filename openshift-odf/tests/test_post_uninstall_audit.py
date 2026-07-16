@@ -75,7 +75,7 @@ def test_audit_reports_api_resource_query_failures(tmp_path):
         if args == ["whoami"]:
             print("admin")
             raise SystemExit(0)
-        if args == ["get", "namespace", "openshift-storage"]:
+        if args[:2] == ["get", "namespace"]:
             print("NotFound", file=sys.stderr)
             raise SystemExit(1)
         if args[:1] == ["api-resources"]:
@@ -92,6 +92,42 @@ def test_audit_reports_api_resource_query_failures(tmp_path):
     assert "OK: no ocs.openshift.io API resources found" not in result.stdout
 
 
+def test_audit_fails_for_leftover_api_groups_and_rook_namespace(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_oc(
+        tmp_path,
+        """\
+        args = sys.argv[1:]
+        if args == ["whoami"]:
+            print("admin")
+            raise SystemExit(0)
+        if args == ["get", "namespace", "openshift-storage"]:
+            print("NotFound", file=sys.stderr)
+            raise SystemExit(1)
+        if args == ["get", "namespace", "rook-ceph"]:
+            print("NAME\\nrook-ceph")
+            raise SystemExit(0)
+        if args[:1] == ["api-resources"]:
+            group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
+            if group == "noobaa.io":
+                print("noobaas.noobaa.io")
+            raise SystemExit(0)
+        if args[:1] == ["get"] and "-o" in args:
+            print(json.dumps({"items": []}))
+            raise SystemExit(0)
+        raise SystemExit(0)
+        """,
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: rook-ceph namespace still exists" in result.stdout
+    assert "WARN: noobaa.io API resources still exist:" in result.stdout
+    assert "OK: no csi.ceph.io API resources found" in result.stdout
+    assert "OK: no local.storage.openshift.io API resources found" in result.stdout
+
+
 def test_audit_fails_for_leftover_object_bucket_claims(tmp_path):
     _write_jq_proxy(tmp_path)
     _write_oc(
@@ -103,7 +139,7 @@ def test_audit_fails_for_leftover_object_bucket_claims(tmp_path):
             raise SystemExit(0)
         if args[:1] == ["api-resources"]:
             raise SystemExit(0)
-        if args == ["get", "namespace", "openshift-storage"]:
+        if args[:2] == ["get", "namespace"]:
             print("NotFound", file=sys.stderr)
             raise SystemExit(1)
         if args[:2] == ["get", "obc"] and "-o" in args:
@@ -134,7 +170,7 @@ def test_audit_passes_when_no_odf_residue_remains(tmp_path):
             raise SystemExit(0)
         if args[:1] == ["api-resources"]:
             raise SystemExit(0)
-        if args == ["get", "namespace", "openshift-storage"]:
+        if args[:2] == ["get", "namespace"]:
             print("NotFound", file=sys.stderr)
             raise SystemExit(1)
         if args[:2] == ["get", "sc"] and "-o" in args:
@@ -166,6 +202,11 @@ def test_audit_passes_when_no_odf_residue_remains(tmp_path):
     result = _run_audit(tmp_path)
 
     assert result.returncode == 0
+    assert "OK: openshift-storage namespace absent" in result.stdout
+    assert "OK: rook-ceph namespace absent" in result.stdout
+    assert "OK: no noobaa.io API resources found" in result.stdout
+    assert "OK: no csi.ceph.io API resources found" in result.stdout
+    assert "OK: no local.storage.openshift.io API resources found" in result.stdout
     assert "OK: no ObjectBucketClaims found" in result.stdout
     assert "OK: exactly one default StorageClass: platform-default" in result.stdout
     assert "WARN:" not in result.stdout

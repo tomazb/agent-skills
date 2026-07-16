@@ -144,9 +144,17 @@ check_absent_resource \
   "openshift-storage namespace absent" \
   namespace openshift-storage
 
+check_absent_resource \
+  "rook-ceph namespace" \
+  "rook-ceph namespace absent" \
+  namespace rook-ceph
+
 echo
 check_api_group ocs.openshift.io
 check_api_group ceph.rook.io
+check_api_group noobaa.io
+check_api_group csi.ceph.io
+check_api_group local.storage.openshift.io
 
 echo
 check_json_list \
@@ -168,6 +176,20 @@ check_json_list \
   "no ODF PVCs found" \
   '.items[] | select((.spec.storageClassName // "") | contains("ocs-storagecluster")) | .metadata.namespace + "/" + .metadata.name' \
   oc get pvc -A
+
+echo
+check_json_list \
+  "Terminating PVCs" \
+  "no Terminating PVCs found" \
+  '.items[] | select(.status.phase == "Terminating") | .metadata.namespace + "/" + .metadata.name' \
+  oc get pvc -A
+
+echo
+check_json_list \
+  "Terminating PVs" \
+  "no Terminating PVs found" \
+  '.items[] | select(.status.phase == "Terminating") | .metadata.name' \
+  oc get pv
 
 echo
 check_json_list \
