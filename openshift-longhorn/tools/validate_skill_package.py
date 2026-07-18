@@ -311,7 +311,10 @@ def check_versions_handoff(skill_text: str) -> list[str]:
             "SKILL.md: Required Source Checks missing openshift-versions handoff"
         ]
     lowered = source_checks.lower()
-    if "not cluster upgrade readiness" not in lowered and "release availability" not in lowered:
+    if (
+        "not cluster upgrade readiness" not in lowered
+        or "release availability" not in lowered
+    ):
         return [
             "SKILL.md: Required Source Checks must clarify that release availability "
             "is not cluster upgrade readiness"

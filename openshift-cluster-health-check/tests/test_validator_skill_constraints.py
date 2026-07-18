@@ -69,3 +69,26 @@ def test_missing_storage_handoff_target_fails(validator, package_factory, make_s
     root = package_factory(skill_text=skill_text)
     issues = validator.check_skill_file(root)
     assert any("openshift-odf" in issue for issue in issues)
+
+
+def test_handoff_target_outside_section_does_not_satisfy(
+    validator, package_factory, make_skill_text
+):
+    skill_text = make_skill_text().replace(
+        "- ODF evidence (`StorageCluster`) → `openshift-odf`\n",
+        "- ODF evidence (`StorageCluster`) → elsewhere\n",
+    )
+    skill_text += "\nMention `openshift-odf` outside the handoff section.\n"
+    root = package_factory(skill_text=skill_text)
+    issues = validator.check_skill_file(root)
+    assert any("openshift-odf" in issue for issue in issues)
+
+
+def test_missing_readiness_disclaimer_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace(
+        "Release availability is not cluster upgrade readiness.",
+        "Release availability is documented separately.",
+    )
+    root = package_factory(skill_text=skill_text)
+    issues = validator.check_skill_file(root)
+    assert any("not cluster upgrade readiness" in issue for issue in issues)

@@ -8,7 +8,7 @@ Evidence available on discovery:
 
 - `StorageCluster` exists in `openshift-storage`
 - ODF/OCS Subscription or CSV is present
-- Rook-owned `CephCluster` exists and is reconciled by ODF
+- ODF-managed `CephCluster` exists and is reconciled by ODF
 
 ## Required agent behavior
 
