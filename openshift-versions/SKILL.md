@@ -1,6 +1,6 @@
 ---
 name: openshift-versions
-description: Query Red Hat OpenShift versions via api.openshift.com. Use when users ask about available OpenShift versions, latest patch versions, upgrade paths, ROSA/OSD versions, or channel-specific releases. Supports the public upgrades_info graph endpoint (no auth) and the authenticated clusters_mgmt versions endpoint. Also use when the user asks "what OCP versions exist", "what can I upgrade to", "latest OCP patch", "is 4.x still supported", or any question about OpenShift release availability, upgrade targets, or end-of-life dates — even if they don't name a specific version number.
+description: Use when users ask about available OpenShift versions, latest patch versions, upgrade paths, ROSA/OSD versions, channel-specific releases, end-of-life dates, or phrases like "what OCP versions exist", "what can I upgrade to", "latest OCP patch", or "is 4.x still supported".
 ---
 
 # OpenShift Versions Skill

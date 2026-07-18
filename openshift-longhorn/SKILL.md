@@ -37,6 +37,8 @@ Treat `references/validated-v2-ocp422-sno.md` as observed evidence for one OpenS
 
 For install, upgrade, uninstall, and V2 planning, verify the current Longhorn docs and release notes when network access is available. Use pinned version docs for commands and live cluster discovery for the installed version; do not assume `v1.12.0` is the target unless the user asks for it or the cluster already runs it.
 
+For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-versions`. Release availability is not cluster upgrade readiness and is not Longhorn product compatibility.
+
 ## Inputs To Collect
 
 - Cluster topology: SNO or multi-node, OpenShift/OKD version, node roles, and target MachineConfigPool.

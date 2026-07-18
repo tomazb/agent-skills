@@ -89,4 +89,4 @@ python3 tools/bump_version.py <new-version>
 
 This updates VERSION, package.json, and the README version line.
 
-Current version: **0.1.0**
+Current version: **0.1.1**

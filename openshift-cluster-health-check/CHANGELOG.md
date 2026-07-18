@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.0
+
+- Normalized Use-when description and added Specialist handoffs to storage lifecycle skills and openshift-versions.
+
 ## 1.1.0
 
 - Added edge case handling for limited-access scenarios to `references/output-contract.md`: RBAC restrictions preventing infrastructure detection, missing CRDs for optional components, and partial cluster access scenarios.

@@ -7,6 +7,22 @@ description: Use when planning, installing, configuring, validating, upgrading, 
 
 Use this skill as a lifecycle router for Red Hat OpenShift Data Foundation (ODF) on OpenShift/OKD. Do live discovery first, choose the relevant reference runbook, and write an actionable plan or command sequence with explicit safety gates. ODF is the productized, OLM-managed distribution of Ceph (via Rook) and the Multicloud Object Gateway; manage it through the `odf-operator`/`ocs-operator` and the `StorageCluster` CR, not through raw upstream Rook manifests.
 
+## Product Ownership Gate
+
+Before any install, upgrade, or remediation plan, classify who owns Ceph on the cluster with read-only discovery:
+
+1. Check for a `StorageCluster` and ODF/OCS `Subscription` or CSV evidence.
+2. Check for a `CephCluster` and whether ODF/`ocs-operator` reconciles it.
+3. Do not treat namespace presence alone (`openshift-storage`, `rook-ceph`) as ownership proof.
+
+Classify ownership as **ODF**, **upstream Rook**, **mixed/conflicting**, or **unknown**:
+
+- **ODF**: `StorageCluster` plus ODF/OCS Subscription/CSV evidence → continue with this skill and manage through `StorageCluster`/OLM only.
+- **Upstream Rook**: `CephCluster` without ODF ownership signals → stop ODF layering plans and hand off to `openshift-rook`.
+- **Mixed/conflicting** or **unknown/insufficient access**: stop, report the evidence, and refuse mutating or destructive actions until ownership is resolved.
+
+Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook manifests, or hand-editing ODF-owned Rook CRs until ownership is classified.
+
 ## Routing
 
 - **Discovery, install, or prerequisite planning**: start with `references/install-and-preflight.md`.
@@ -40,6 +56,8 @@ Use this skill as a lifecycle router for Red Hat OpenShift Data Foundation (ODF)
 ## Required Source Checks
 
 For install, upgrade, OSD operations, and operator changes, verify the current Red Hat OpenShift Data Foundation documentation, release notes, and the ODF/OpenShift interoperability matrix when network access is available. Use pinned version docs for commands and live cluster discovery for the installed version; do not assume a specific ODF channel such as `stable-4.16` is the target unless the user asks for it or the cluster already runs it.
+
+For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-versions`. Release availability is not cluster upgrade readiness and is not ODF product compatibility.
 
 ## Inputs To Collect
 

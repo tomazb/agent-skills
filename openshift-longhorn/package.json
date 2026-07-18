@@ -1,6 +1,6 @@
 {
   "name": "openshift-longhorn",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "OpenShift/OKD Longhorn lifecycle skill covering discovery, install, V1 filesystem disks, V2 block data engine, migration, upgrade, backup/restore, maintenance, uninstall, validation, hardening, and troubleshooting.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",

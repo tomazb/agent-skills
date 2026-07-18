@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.1
+
+- Normalized frontmatter description to trigger-only Use-when form.
+
 ## 1.1.0
 
 - Added `references/java.md` — Java language reference guide for code simplification patterns.

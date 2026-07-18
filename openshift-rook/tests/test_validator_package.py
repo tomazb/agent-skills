@@ -36,6 +36,70 @@ def test_missing_required_skill_section_fails(validator, package_factory, make_s
     assert any("missing required sections" in issue for issue in issues)
 
 
+def test_missing_patch_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "python3 scripts/patch_rook_ceph_manifest.py", "manual manifest edits"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("patch_rook_ceph_manifest.py" in issue for issue in issues)
+
+
+def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace(
+            "python3 scripts/render_smoke_manifest.py", "hand-written smoke YAML"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("render_smoke_manifest.py" in issue for issue in issues)
+
+
+def test_missing_ownership_gate_fails(validator, package_factory, make_skill_text):
+    root = package_factory(
+        skill_text=make_skill_text(missing_sections=["## Product Ownership Gate"])
+    )
+    issues = validator.validate_root(root)
+    assert any("Product Ownership Gate" in issue for issue in issues)
+
+
+def test_ownership_gate_missing_odf_handoff_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("openshift-odf", "another-skill")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("openshift-odf" in issue for issue in issues)
+
+
+def test_ownership_gate_missing_discovery_markers_fails(
+    validator, package_factory, make_skill_text
+):
+    skill_text = (
+        make_skill_text()
+        .replace("StorageCluster", "storage CR")
+        .replace("CephCluster", "ceph CR")
+        .replace("Subscription", "operator install")
+        .replace("CSV", "operator bundle")
+    )
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("StorageCluster" in issue or "CephCluster" in issue for issue in issues)
+    assert any("Subscription" in issue or "CSV" in issue for issue in issues)
+
+
+def test_missing_versions_handoff_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("openshift-versions", "version lookup")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("openshift-versions" in issue for issue in issues)
+
+
 def test_missing_destructive_confirmation_language_fails(validator, package_factory, reference_text):
     text = reference_text().replace("explicit destructive confirmation", "operator approval")
     root = package_factory(reference_content=text)

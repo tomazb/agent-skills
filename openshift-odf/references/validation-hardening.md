@@ -43,6 +43,12 @@ Use unique smoke namespaces per mode, for example `odf-rbd-smoke` and `odf-cephf
 Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py` output):
 
 ```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace odf-rbd-smoke \
+  --storage-class ocs-storagecluster-ceph-rbd \
+  --output /tmp/odf-rbd-smoke.yaml
+
 oc apply -f /tmp/odf-rbd-smoke.yaml
 oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-rbd-smoke exec rbd-smoke-writer -- cat /data/smoke-probe
@@ -51,6 +57,12 @@ oc -n odf-rbd-smoke exec rbd-smoke-writer -- cat /data/smoke-probe
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
 
 ```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode cephfs \
+  --namespace odf-cephfs-smoke \
+  --storage-class ocs-storagecluster-cephfs \
+  --output /tmp/odf-cephfs-smoke.yaml
+
 oc apply -f /tmp/odf-cephfs-smoke.yaml
 oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- cat /data/smoke-probe

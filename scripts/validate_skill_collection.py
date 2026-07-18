@@ -19,7 +19,6 @@ except ImportError:  # pragma: no cover - exercised by the CLI error path
 
 
 FENCE_RE = re.compile(r"^\s*```")
-LEGACY_TOOLS_FIELD_SKILLS = {"qa-agent"}
 
 
 SkillSpecValidator = Callable[[Path], list[str]]
@@ -92,37 +91,24 @@ def parse_frontmatter_with_yaml(skill_file: Path) -> tuple[dict[str, object] | N
     return metadata, []
 
 
-def normalize_legacy_tools_metadata(
+def check_repository_frontmatter_policy(
     metadata: dict[str, object], skill_dir: Path
-) -> tuple[dict[str, object], list[str]]:
-    """Map the single documented legacy `tools` field to spec `allowed-tools`."""
-    normalized = dict(metadata)
-    if "tools" not in normalized:
-        return normalized, []
-
-    if skill_dir.name not in LEGACY_TOOLS_FIELD_SKILLS:
-        return normalized, [
+) -> list[str]:
+    """Enforce repository-specific frontmatter conventions beyond skills-ref."""
+    issues: list[str] = []
+    if "tools" in metadata:
+        issues.append(
             "Unexpected legacy frontmatter field 'tools'. Use the Agent Skills "
             "'allowed-tools' field instead."
-        ]
-    if "allowed-tools" in normalized:
-        return normalized, [
-            "Frontmatter cannot contain both legacy 'tools' and 'allowed-tools'."
-        ]
+        )
 
-    tools = normalized.pop("tools")
-    if isinstance(tools, list) and tools and all(
-        isinstance(tool, str) and tool.strip() for tool in tools
-    ):
-        normalized["allowed-tools"] = " ".join(tool.strip() for tool in tools)
-    elif isinstance(tools, str) and tools.strip():
-        normalized["allowed-tools"] = tools.strip()
-    else:
-        return normalized, [
-            "Legacy 'tools' must be a non-empty string or a list of non-empty strings."
-        ]
+    description = metadata.get("description", "")
+    if not isinstance(description, str) or not description.strip():
+        issues.append("SKILL.md: missing frontmatter description")
+    elif not description.lstrip().startswith("Use when"):
+        issues.append("SKILL.md: description must start with 'Use when'")
 
-    return normalized, []
+    return issues
 
 
 def validate_agent_skill_spec(
@@ -130,7 +116,7 @@ def validate_agent_skill_spec(
     repo_root: Path,
     validator: SkillSpecValidator | None = None,
 ) -> list[str]:
-    """Validate SKILL.md with skills-ref, including one scoped legacy alias."""
+    """Validate SKILL.md with skills-ref and repository frontmatter policy."""
     rel = display_path(skill_dir, repo_root)
 
     if validator is not None:
@@ -162,31 +148,18 @@ def validate_agent_skill_spec(
         ]
     assert metadata is not None
 
-    # All standard skills go through the exact public skills-ref validator. The
-    # qa-agent package predates the spec and has one declared `tools` alias; for
-    # that package only, normalize the field and run the same official metadata
-    # checks without weakening validation for new skills.
-    if "tools" not in metadata:
-        try:
-            spec_issues = _skills_ref_validate(skill_dir)
-        except Exception as error:
-            return [
-                f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
-            ]
-    else:
-        normalized, compatibility_issues = normalize_legacy_tools_metadata(
-            metadata, skill_dir
-        )
-        if compatibility_issues:
-            spec_issues = compatibility_issues
-        else:
-            try:
-                spec_issues = _skills_ref_validate_metadata(normalized, skill_dir)
-            except Exception as error:
-                return [
-                    f"{rel}/SKILL.md: skills-ref compatibility validation failed "
-                    f"unexpectedly: {error}"
-                ]
+    policy_issues = check_repository_frontmatter_policy(metadata, skill_dir)
+    if policy_issues:
+        return [
+            f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in policy_issues
+        ]
+
+    try:
+        spec_issues = _skills_ref_validate(skill_dir)
+    except Exception as error:
+        return [
+            f"{rel}/SKILL.md: skills-ref validation failed unexpectedly: {error}"
+        ]
 
     return [f"{rel}/SKILL.md: Agent Skills spec: {issue}" for issue in spec_issues]
 

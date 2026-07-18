@@ -76,6 +76,12 @@ Run `ceph mgr module enable rook` and `ceph orch set backend rook`.
 Validate RGW with `ObjectBucket` state, a `curl -kI` route check, and an HTTP response from `Ceph Object Gateway` instead of a `TLS or connection failure`.
 
 Validated SNO evidence should include `v1.20.2`, `v20.2.2`, `rook-ceph-rgw-obc`, and `Backend: rook`.
+
+Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder manifests.
+
+Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+
+Run `bash scripts/post_uninstall_audit.sh` after uninstall.
 """
 
 SKILL_TEMPLATE = """\
@@ -88,6 +94,15 @@ description: Use when planning, installing, or troubleshooting Rook Ceph on Open
 
 Use this skill as a lifecycle router.
 
+## Product Ownership Gate
+
+Before routing, run read-only ownership discovery. Inspect `StorageCluster`, ODF/OCS
+`Subscription` or CSV evidence, and `CephCluster`. Namespace presence alone is
+insufficient. Classify ODF, upstream Rook, mixed/conflicting, or unknown. Stop and
+report evidence when ownership is mixed, conflicting, unknown, or access is
+insufficient. Do not recommend mutation until ownership is classified. If ODF owns
+the cluster, hand off to `openshift-odf`.
+
 ## Routing
 
 Routing guidance.
@@ -98,7 +113,8 @@ Safety guidance.
 
 ## Required Source Checks
 
-Source guidance.
+Source guidance. For OpenShift channel or upgrade-path questions, use
+`openshift-versions`. Release availability is not cluster upgrade readiness.
 
 ## Inputs To Collect
 

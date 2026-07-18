@@ -1,6 +1,6 @@
 # OpenShift Longhorn
 
-Current version: **1.2.3**
+Current version: **1.2.4**
 
 Lifecycle skill for planning, installing, migrating, upgrading, validating, hardening, backing up, restoring, maintaining, and uninstalling Longhorn on OpenShift/OKD.
 

@@ -132,6 +132,30 @@ def check_changelog_version(root: Path) -> list[str]:
     ]
 
 
+HANDOFF_MARKERS = [
+    ("## Specialist handoffs", "Specialist handoffs section"),
+    ("openshift-odf", "ODF remediation handoff"),
+    ("openshift-rook", "Rook remediation handoff"),
+    ("openshift-longhorn", "Longhorn remediation handoff"),
+    ("openshift-lvm-storage", "LVMS remediation handoff"),
+    ("openshift-versions", "OpenShift versions handoff"),
+]
+
+
+def check_specialist_handoffs(skill_text: str) -> list[str]:
+    issues: list[str] = []
+    for needle, label in HANDOFF_MARKERS:
+        if needle not in skill_text:
+            issues.append(f"SKILL.md: missing {label}: {needle}")
+    lowered = skill_text.lower()
+    if "release availability" not in lowered and "not cluster upgrade readiness" not in lowered:
+        issues.append(
+            "SKILL.md: specialist handoffs must clarify that release availability "
+            "is not cluster upgrade readiness"
+        )
+    return issues
+
+
 def check_skill_file(root: Path) -> list[str]:
     issues: list[str] = []
     skill = root / "SKILL.md"
@@ -146,6 +170,7 @@ def check_skill_file(root: Path) -> list[str]:
 
     issues.extend(check_markdown_file(skill, root))
     issues.extend(check_phase_headings(skill_text))
+    issues.extend(check_specialist_handoffs(skill_text))
     return issues
 
 

@@ -135,6 +135,23 @@ oc -n openshift-storage wait csv -l operators.coreos.com/odf-operator.openshift-
 
 The `StorageCluster` CR is the single source of truth for an ODF internal deployment. `ocs-operator` reconciles the Rook `CephCluster`, pools, filesystem, object store, and NooBaa system from it. Do not create or edit those Rook CRs directly.
 
+Prefer the packaged helper when generating a starting `StorageCluster` manifest, then review and adjust topology-specific fields before apply:
+
+```bash
+python3 scripts/render_storagecluster.py \
+  --name ocs-storagecluster \
+  --namespace openshift-storage \
+  --local-storage-class localblock \
+  --replica 3 \
+  --count 1 \
+  --output /tmp/ocs-storagecluster.yaml
+
+oc apply --dry-run=server -f /tmp/ocs-storagecluster.yaml
+oc apply -f /tmp/ocs-storagecluster.yaml
+```
+
+Use `--replica 1` only for confirmed SNO single-replica deployments. Do not treat helper defaults as the production topology without live discovery.
+
 ### Multi-Node Production (local devices)
 
 Reference a Local Storage Operator StorageClass (for example `localblock`) created per `references/local-storage-disks.md`:
