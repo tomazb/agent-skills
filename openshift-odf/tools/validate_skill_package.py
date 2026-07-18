@@ -38,12 +38,15 @@ REQUIRED_FILES = [
 ]
 
 REQUIRED_SKILL_SECTIONS = [
+    "## Product Ownership Gate",
     "## Routing",
     "## Core Safety Rules",
     "## Required Source Checks",
     "## Inputs To Collect",
     "## Output Expectations",
 ]
+
+OWNERSHIP_PEER_SKILL = "openshift-rook"
 
 SAFETY_PHRASES = [
     "explicit destructive confirmation",
@@ -183,6 +186,71 @@ def check_required_sections(skill_text: str) -> list[str]:
     return []
 
 
+def extract_section(skill_text: str, heading: str) -> str | None:
+    match = re.search(
+        rf"^## {re.escape(heading.lstrip('# ').strip())}\s*$",
+        skill_text,
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+    start = match.end()
+    next_heading = re.search(r"^##\s+", skill_text[start:], re.MULTILINE)
+    end = start + next_heading.start() if next_heading else len(skill_text)
+    return skill_text[start:end]
+
+
+def check_ownership_gate(skill_text: str) -> list[str]:
+    """Require an evidence-based ODF vs Rook ownership gate before routing."""
+    gate = extract_section(skill_text, "Product Ownership Gate")
+    if gate is None:
+        return ["SKILL.md: missing Product Ownership Gate section"]
+
+    issues: list[str] = []
+    routing = extract_section(skill_text, "Routing")
+    gate_pos = skill_text.find("## Product Ownership Gate")
+    routing_pos = skill_text.find("## Routing")
+    if routing is not None and (routing_pos == -1 or gate_pos > routing_pos):
+        issues.append(
+            "SKILL.md: Product Ownership Gate must appear before Routing"
+        )
+
+    lowered = gate.lower()
+    for marker in ("StorageCluster", "CephCluster"):
+        if marker not in gate:
+            issues.append(
+                f"SKILL.md: Product Ownership Gate missing discovery marker '{marker}'"
+            )
+    if "Subscription" not in gate and "CSV" not in gate:
+        issues.append(
+            "SKILL.md: Product Ownership Gate missing ODF/OCS Subscription or CSV evidence"
+        )
+    if OWNERSHIP_PEER_SKILL not in gate:
+        issues.append(
+            f"SKILL.md: Product Ownership Gate missing handoff to '{OWNERSHIP_PEER_SKILL}'"
+        )
+    if "namespace" not in lowered:
+        issues.append(
+            "SKILL.md: Product Ownership Gate must warn that namespace presence alone is insufficient"
+        )
+    if not any(token in lowered for token in ("mixed", "conflict", "unknown", "insufficient")):
+        issues.append(
+            "SKILL.md: Product Ownership Gate must stop on mixed, conflicting, or unknown ownership"
+        )
+    if not any(
+        token in lowered
+        for token in ("stop", "do not", "never", "refuse", "hand off", "handoff")
+    ):
+        issues.append(
+            "SKILL.md: Product Ownership Gate must refuse mutation until ownership is classified"
+        )
+    if "rook" not in lowered:
+        issues.append(
+            "SKILL.md: Product Ownership Gate must classify upstream Rook-owned clusters"
+        )
+    return issues
+
+
 PHRASE_SCAN_EXCLUDES = {"README.md", "CHANGELOG.md"}
 
 # Patterns that must NOT appear in the skill's markdown. On ODF, the StorageCluster
@@ -294,6 +362,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "cluster.ocs.openshift.io/openshift-storage",
             "monDataDirHostPath",
             "enableCephTools",
+            "python3 scripts/render_storagecluster.py",
         ],
     )
     require_order(
@@ -381,6 +450,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "Data Foundation",
             "rbd-smoke-writer",
             "cephfs-smoke-writer",
+            "python3 scripts/render_smoke_manifest.py",
         ],
     )
     require(
@@ -477,9 +547,26 @@ def check_skill_file(root: Path) -> list[str]:
     if line_count > MAX_SKILL_LINES:
         issues.append(f"SKILL.md is {line_count} lines (> {MAX_SKILL_LINES}).")
     issues.extend(check_required_sections(skill_text))
+    issues.extend(check_ownership_gate(skill_text))
+    issues.extend(check_versions_handoff(skill_text))
     if "references/validated-odf-sno.md" not in skill_text:
         issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
     return issues
+
+
+def check_versions_handoff(skill_text: str) -> list[str]:
+    source_checks = extract_section(skill_text, "Required Source Checks") or ""
+    if "openshift-versions" not in source_checks:
+        return [
+            "SKILL.md: Required Source Checks missing openshift-versions handoff"
+        ]
+    lowered = source_checks.lower()
+    if "not cluster upgrade readiness" not in lowered and "release availability" not in lowered:
+        return [
+            "SKILL.md: Required Source Checks must clarify that release availability "
+            "is not cluster upgrade readiness"
+        ]
+    return []
 
 
 def validate_root(root: Path) -> list[str]:

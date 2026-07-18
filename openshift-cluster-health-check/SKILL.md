@@ -1,17 +1,11 @@
 ---
 name: openshift-cluster-health-check
 description: >
-  Use this skill when asked to assess OpenShift cluster health, explain degraded status,
-  troubleshoot control-plane issues, or produce a health report. Covers all platform types
-  including bare metal (IPI/UPI, Metal3, Ironic), virtualized (vSphere, RHV), cloud (AWS,
-  Azure, GCP), and SNO. Inspects cluster version, cluster operators, nodes, MCPs,
-  control-plane pods, etcd, authentication/OAuth, ingress, DNS, networking (OVN-Kubernetes/
-  OpenShiftSDN), storage (CSI, PV/PVC), monitoring/alerting, image registry, console,
-  certificates, and platform-specific subsystems. Read-only by default. Use whenever the
-  user mentions cluster health, degraded operators, node issues, etcd problems, auth
-  failures, ingress errors, certificate expiry, upgrade readiness, post-maintenance
-  validation, pending pods, CrashLoopBackOff, pod scheduling failures, quota exhaustion,
-  or OOMKilled pods — even if they don't explicitly say "health check."
+  Use when asked to assess OpenShift cluster health, explain degraded status,
+  troubleshoot control-plane issues, or produce a health report — including degraded
+  operators, node issues, etcd problems, auth failures, ingress errors, certificate
+  expiry, upgrade readiness, post-maintenance validation, pending pods,
+  CrashLoopBackOff, scheduling failures, quota exhaustion, or OOMKilled pods.
 ---
 
 # OpenShift Cluster Health Check
@@ -63,6 +57,18 @@ Try to gather before starting:
 5. Context: pre-change, post-change, during incident, upgrade validation.
 
 If any of these are missing, detect what you can from the cluster and state assumptions.
+
+## Specialist handoffs
+
+Identify and report backend evidence first. Keep this skill read-only for diagnosis; hand off remediation to the matching lifecycle skill:
+
+- ODF evidence (`StorageCluster`, ODF/OCS Subscription/CSV) → `openshift-odf`
+- Upstream Rook evidence (`CephCluster` without ODF ownership) → `openshift-rook`
+- Longhorn evidence (Longhorn CRDs/namespace/volumes) → `openshift-longhorn`
+- LVMS evidence (`LVMCluster`, TopoLVM CSI) → `openshift-lvm-storage`
+- OpenShift release, channel, patch, or upgrade-path questions → `openshift-versions`
+
+Release availability from `openshift-versions` is not cluster upgrade readiness and is not storage-product compatibility.
 
 ---
 

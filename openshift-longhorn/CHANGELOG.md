@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.4
+
+- Added openshift-versions handoff and package-validator checks that preserve helper-script invocations in install/validation/uninstall runbooks.
+
 ## 1.2.3
 
 - Corrected V2 host-prep guidance: `vfio_iommu_type1` is now described as an auto-loaded VFIO dependency rather than a Longhorn requirement, and the V2 SPDK MachineConfig loads only `vfio_pci`, `uio_pci_generic`, and `nvme_tcp` to match the validated evidence.

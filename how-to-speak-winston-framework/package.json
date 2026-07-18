@@ -1,6 +1,6 @@
 {
   "name": "how-to-speak-winston-framework",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Apply Patrick Winston's MIT presentation framework to craft talks, audit slides, coach speakers, and make ideas memorable.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",

@@ -55,3 +55,17 @@ def test_validate_root_clean_package(validator, package_factory):
     root = package_factory()
     issues = validator.validate_root(root)
     assert issues == [], f"Expected no issues, got: {issues}"
+
+
+def test_missing_specialist_handoffs_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("## Specialist handoffs", "## Other")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.check_skill_file(root)
+    assert any("Specialist handoffs" in issue for issue in issues)
+
+
+def test_missing_storage_handoff_target_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("openshift-odf", "storage-odf")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.check_skill_file(root)
+    assert any("openshift-odf" in issue for issue in issues)

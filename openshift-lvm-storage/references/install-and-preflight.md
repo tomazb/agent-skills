@@ -191,6 +191,22 @@ spec:
 
 `deviceSelector.paths` is evaluated independently on every node matched by `nodeSelector`. A path that does not exist on a given node is skipped on that node (it does not fail the whole cluster). The `<disk-node-1>`, `<disk-node-2>`, `<disk-node-3>` placeholders above are not "one disk per node" routing — list every `/dev/disk/by-id/*` path that should be claimed on any matched node, and use a stable naming convention that resolves correctly per node. If nodes have genuinely different disk layouts, define a separate `deviceClass` with its own `nodeSelector` per group.
 
+When adjusting an existing `LVMCluster` manifest before apply, prefer the packaged
+YAML-aware helper for thin-pool and device-selector edits:
+
+```bash
+python3 scripts/patch_lvms_manifest.py \
+  --input /tmp/lvmcluster.yaml \
+  --output /tmp/lvmcluster-patched.yaml \
+  --device-paths /dev/disk/by-id/<stable-disk-id> \
+  --overprovision-ratio 10 \
+  --size-percent 90 \
+  --device-class-default true
+
+oc apply --dry-run=server -f /tmp/lvmcluster-patched.yaml
+oc apply -f /tmp/lvmcluster-patched.yaml
+```
+
 Apply the LVMCluster and wait for it to become ready:
 
 ```bash

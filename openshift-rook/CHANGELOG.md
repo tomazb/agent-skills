@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- Added Product Ownership Gate for Rook vs ODF classification, openshift-versions handoff, and concrete helper invocations in install/validation runbooks.
+
 ## 1.2.0
 
 - Updated the direct-manifest install and upgrade runbooks to create `rook-ceph` explicitly, apply `csi-operator.yaml`, and explain the `CephConnection` reconciliation failure when the `csi.ceph.io/v1` resources are missing.

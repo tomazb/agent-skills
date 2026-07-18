@@ -1,6 +1,6 @@
 # How to Speak Winston Framework
 
-Current version: **1.0.0**
+Current version: **1.0.1**
 
 Apply Patrick Winston's MIT presentation framework to craft talks, audit slides, coach speakers, and make ideas memorable. Covers ~90% of Winston's legendary "How to Speak" lecture across 10 systematic frameworks.
 

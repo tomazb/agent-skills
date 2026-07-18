@@ -19,10 +19,20 @@ def make_skill_text(*, missing_phases: list[int] | None = None) -> str:
     lines = [
         "---",
         "name: openshift-cluster-health-check",
-        "description: demo",
+        "description: Use when assessing OpenShift cluster health.",
         "---",
         "",
         "# OpenShift Cluster Health Check",
+        "",
+        "## Specialist handoffs",
+        "",
+        "- ODF evidence → `openshift-odf`",
+        "- Upstream Rook evidence → `openshift-rook`",
+        "- Longhorn evidence → `openshift-longhorn`",
+        "- LVMS evidence → `openshift-lvm-storage`",
+        "- Release or channel questions → `openshift-versions`",
+        "",
+        "Release availability is not cluster upgrade readiness.",
         "",
     ]
     for phase_num in range(0, 17):

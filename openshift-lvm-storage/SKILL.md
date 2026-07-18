@@ -36,6 +36,8 @@ Use this skill as a lifecycle router for LVM Storage (LVMS) on OpenShift/OKD. Do
 
 For install, upgrade, and uninstall operations, verify the current LVMS / TopoLVM docs and release notes when network access is available. Use pinned version docs for commands and live cluster discovery for the installed version; do not assume the latest version is the target unless the user asks for it or the cluster already runs it.
 
+For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-versions`. Release availability is not cluster upgrade readiness and is not LVMS product compatibility.
+
 ## Inputs To Collect
 
 - Cluster topology: SNO or multi-node, OpenShift/OKD version, node roles, target MachineConfigPool.
