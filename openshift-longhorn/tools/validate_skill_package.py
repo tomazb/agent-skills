@@ -203,6 +203,35 @@ def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
     return []
 
 
+REQUIRED_HELPER_INVOCATIONS = [
+    (
+        "references/install-and-preflight.md",
+        "python3 scripts/patch_longhorn_okd_manifest.py",
+        "Longhorn OKD manifest patch helper invocation",
+    ),
+    (
+        "references/validation-hardening.md",
+        "python3 scripts/render_smoke_manifest.py",
+        "smoke manifest helper invocation",
+    ),
+    (
+        "references/maintenance-uninstall.md",
+        "scripts/post_uninstall_audit.sh",
+        "post-uninstall audit helper invocation",
+    ),
+]
+
+
+def check_helper_invocations(root: Path) -> list[str]:
+    issues: list[str] = []
+    for rel, needle, label in REQUIRED_HELPER_INVOCATIONS:
+        path = root / rel
+        text = read_text(path) if path.exists() else ""
+        if needle not in text:
+            issues.append(f"{rel}: missing {label}: {needle}")
+    return issues
+
+
 def check_version_sync(root: Path) -> list[str]:
     version_file = root / "VERSION"
     package_file = root / "package.json"
@@ -265,6 +294,34 @@ def check_readme_version(root: Path) -> list[str]:
     return []
 
 
+def check_versions_handoff(skill_text: str) -> list[str]:
+    match = re.search(
+        r"^## Required Source Checks\s*$",
+        skill_text,
+        re.MULTILINE,
+    )
+    if not match:
+        return ["SKILL.md: Required Source Checks missing openshift-versions handoff"]
+    start = match.end()
+    next_heading = re.search(r"^##\s+", skill_text[start:], re.MULTILINE)
+    end = start + next_heading.start() if next_heading else len(skill_text)
+    source_checks = skill_text[start:end]
+    if "openshift-versions" not in source_checks:
+        return [
+            "SKILL.md: Required Source Checks missing openshift-versions handoff"
+        ]
+    lowered = source_checks.lower()
+    if (
+        "not cluster upgrade readiness" not in lowered
+        or "release availability" not in lowered
+    ):
+        return [
+            "SKILL.md: Required Source Checks must clarify that release availability "
+            "is not cluster upgrade readiness"
+        ]
+    return []
+
+
 def check_skill_file(root: Path) -> list[str]:
     skill_file = root / "SKILL.md"
     if not skill_file.exists():
@@ -276,6 +333,7 @@ def check_skill_file(root: Path) -> list[str]:
     if line_count > MAX_SKILL_LINES:
         issues.append(f"SKILL.md is {line_count} lines (> {MAX_SKILL_LINES}).")
     issues.extend(check_required_sections(skill_text))
+    issues.extend(check_versions_handoff(skill_text))
     return issues
 
 
@@ -300,6 +358,7 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_phrase_group(all_text, V2_PHRASES, "V2 raw block/hugepages/modules/SCC"))
     issues.extend(check_phrase_group(all_text, OPENSHIFT_PHRASES, "OpenShift SCC/MachineConfig/oauth-proxy"))
     issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
+    issues.extend(check_helper_invocations(root))
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill_file:

@@ -30,6 +30,49 @@ def test_missing_required_helper_file_fails(validator, package_factory):
     assert any(str(missing.relative_to(root)) in issue for issue in issues)
 
 
+def test_missing_patch_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "python3 scripts/patch_longhorn_okd_manifest.py", "manual OKD edits"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("patch_longhorn_okd_manifest.py" in issue for issue in issues)
+
+
+def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace(
+            "python3 scripts/render_smoke_manifest.py", "hand-written smoke YAML"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("render_smoke_manifest.py" in issue for issue in issues)
+
+
+def test_missing_versions_handoff_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("openshift-versions", "version lookup")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("openshift-versions" in issue for issue in issues)
+
+
+def test_missing_readiness_disclaimer_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace(
+        "Release availability is not cluster upgrade readiness.",
+        "Release availability is documented separately.",
+    )
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("not cluster upgrade readiness" in issue for issue in issues)
+
+
 def test_missing_required_skill_section_fails(validator, package_factory, make_skill_text):
     root = package_factory(skill_text=make_skill_text(missing_sections=["## Routing"]))
     issues = validator.validate_root(root)

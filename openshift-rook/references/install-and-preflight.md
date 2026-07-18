@@ -171,6 +171,39 @@ Do not copy `mon.count: 1`, `allowMultiplePerNode: true`, or
 `mon_max_pg_per_osd: "500"` into multi-node production plans without explicit
 direction.
 
+When preparing version-pinned example manifests, prefer the packaged helper and
+pass explicit Rook/Ceph versions from live discovery (do not treat helper defaults
+as the install target). The helper only substitutes exact placeholder tokens such
+as `CEPH_VERSION_PLACEHOLDER` and `ROOK_VERSION_PLACEHOLDER`; prose tokens like
+`v<ceph-version>` are left unchanged. Put those placeholder tokens in the input
+manifest first, for example:
+
+```yaml
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:CEPH_VERSION_PLACEHOLDER
+```
+
+```bash
+python3 scripts/patch_rook_ceph_manifest.py \
+  --input /tmp/rook-ceph-cluster.yaml \
+  --output /tmp/rook-ceph-cluster-patched.yaml \
+  --rook-version "${ROOK_VERSION}" \
+  --ceph-version "${CEPH_VERSION}" \
+  --replicas 1 \
+  --mon-count 1 \
+  --mgr-count 1 \
+  --allow-multiple-per-node
+
+oc apply --dry-run=server -f /tmp/rook-ceph-cluster-patched.yaml
+```
+
+Only after reviewing the patched image pins and topology, apply:
+
+```bash
+oc apply -f /tmp/rook-ceph-cluster-patched.yaml
+```
+
 ## CephCluster CR for Multi-Node Production
 
 ```yaml

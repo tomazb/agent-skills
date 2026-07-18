@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.2
+
+- Added openshift-versions handoff, patch_lvms_manifest helper invocation in install guidance, and package-validator reachability checks.
+
 ## 1.0.1
 
 - Fix `lvextend` thin-pool example to use the LVM volume group name (`<vg-name>/<thin-pool-name>`) instead of the `openshift-storage` namespace.

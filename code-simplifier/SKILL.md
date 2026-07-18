@@ -1,11 +1,10 @@
 ---
 name: code-simplifier
 description: >
-  Use this skill whenever the user asks to simplify, clean up, refactor, tidy,
-  reduce complexity, improve readability, or review code quality in any
-  programming language. Preserves exact functionality while refining code for
-  clarity, consistency, and maintainability. Applies to direct code rewrites,
-  refactor reviews, readability passes, and targeted cleanup before a PR.
+  Use when the user asks to simplify, clean up, refactor, tidy, reduce complexity,
+  improve readability, or review code quality in any programming language —
+  including direct rewrites, refactor reviews, readability passes, and targeted
+  cleanup before a PR.
 ---
 
 # Code Simplifier

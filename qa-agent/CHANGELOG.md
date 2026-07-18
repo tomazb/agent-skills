@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.1
+
+- Migrated legacy tools frontmatter to allowed-tools and normalized description to Use-when form.
+
 ## 0.1.0
 
 - Normalize qa-agent into a full skill package with metadata, tooling, references, and tests.

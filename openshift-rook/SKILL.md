@@ -7,6 +7,22 @@ description: Use when planning, installing, configuring, validating, upgrading, 
 
 Use this skill as a lifecycle router for Rook Ceph on OpenShift/OKD. Do live discovery first, choose the relevant reference runbook, and write an actionable plan or command sequence with explicit safety gates.
 
+## Product Ownership Gate
+
+Before any install, upgrade, or remediation plan, classify who owns Ceph on the cluster with read-only discovery:
+
+1. Check for a `StorageCluster` and ODF/OCS `Subscription` or CSV evidence.
+2. Check for a `CephCluster` and whether Rook/ODF is reconciling it.
+3. Do not treat namespace presence alone (`rook-ceph`, `openshift-storage`) as ownership proof.
+
+Classify ownership as **ODF**, **upstream Rook**, **mixed/conflicting**, or **unknown**:
+
+- **ODF**: `StorageCluster` plus ODF/OCS Subscription/CSV evidence → stop Rook mutation planning and hand off to `openshift-odf`.
+- **Upstream Rook**: `CephCluster` without ODF ownership signals → continue with this skill.
+- **Mixed/conflicting** or **unknown/insufficient access**: stop, report the evidence, and refuse mutating or destructive actions until ownership is resolved.
+
+Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph CRs until ownership is classified.
+
 ## Routing
 
 - **Discovery, install, or prerequisite planning**: start with `references/install-and-preflight.md`.
@@ -37,6 +53,8 @@ Use this skill as a lifecycle router for Rook Ceph on OpenShift/OKD. Do live dis
 ## Required Source Checks
 
 For install, upgrade, OSD operations, and operator changes, verify the current Rook Ceph docs and release notes when network access is available. Use pinned version docs for commands and live cluster discovery for the installed version; do not assume `v1.15` or `v18.2` is the target unless the user asks for it or the cluster already runs it.
+
+For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-versions`. Release availability is not cluster upgrade readiness and is not Rook/Ceph product compatibility.
 
 ## Inputs To Collect
 

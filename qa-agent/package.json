@@ -1,6 +1,6 @@
 {
   "name": "qa-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Risk-first QA skill for requirement tracing, test planning, bug reproduction, and regression control.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",

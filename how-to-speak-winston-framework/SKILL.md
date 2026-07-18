@@ -1,6 +1,11 @@
 ---
 name: how-to-speak-winston-framework
-description: Apply Patrick Winston's MIT presentation framework to craft compelling talks, audit slides, make ideas memorable, structure persuasive presentations, and design teaching props/stories. Use this skill whenever the user mentions presentations, slide decks, pitch coaching, talk structure, presentation openings, slide audits, making ideas stick, empowerment promises, the Star framework, contribution slides, or anything related to improving how they present, pitch, or teach an audience — even if they don't mention Winston by name. Also trigger when someone says "help me with my talk", "review my slides", "how do I open my presentation", "make my idea memorable", or "structure my pitch".
+description: >
+  Use when the user mentions presentations, slide decks, pitch coaching, talk
+  structure, presentation openings, slide audits, making ideas stick,
+  empowerment promises, the Star framework, contribution slides, or asks to
+  improve how they present, pitch, or teach an audience — even without naming
+  Winston.
 ---
 
 # Patrick Winston's MIT Presentation Framework

@@ -132,51 +132,13 @@ def test_validate_agent_skill_spec_reports_missing_dependency(tmp_path, monkeypa
     ]
 
 
-def test_normalize_legacy_tools_metadata_for_qa_agent(tmp_path):
-    module = load_collection_validator()
-    skill_dir = tmp_path / "qa-agent"
-    metadata = {
-        "name": "qa-agent",
-        "description": "Use when testing.",
-        "tools": ["vscode", "execute", "read"],
-    }
-
-    normalized, issues = module.normalize_legacy_tools_metadata(metadata, skill_dir)
-
-    assert issues == []
-    assert normalized == {
-        "name": "qa-agent",
-        "description": "Use when testing.",
-        "allowed-tools": "vscode execute read",
-    }
-    assert "tools" in metadata  # input is not mutated
-
-
-def test_normalize_legacy_tools_metadata_rejects_empty_list(tmp_path):
+def test_repository_policy_rejects_legacy_tools_field(tmp_path):
     module = load_collection_validator()
     skill_dir = tmp_path / "qa-agent"
 
-    _, issues = module.normalize_legacy_tools_metadata(
+    issues = module.check_repository_frontmatter_policy(
         {
             "name": "qa-agent",
-            "description": "Use when testing.",
-            "tools": [],
-        },
-        skill_dir,
-    )
-
-    assert issues == [
-        "Legacy 'tools' must be a non-empty string or a list of non-empty strings."
-    ]
-
-
-def test_normalize_legacy_tools_metadata_rejects_new_legacy_use(tmp_path):
-    module = load_collection_validator()
-    skill_dir = tmp_path / "new-skill"
-
-    _, issues = module.normalize_legacy_tools_metadata(
-        {
-            "name": "new-skill",
             "description": "Use when testing.",
             "tools": ["read"],
         },
@@ -189,20 +151,48 @@ def test_normalize_legacy_tools_metadata_rejects_new_legacy_use(tmp_path):
     ]
 
 
-def test_normalize_legacy_tools_metadata_rejects_conflicting_fields(tmp_path):
+def test_repository_policy_requires_use_when_description(tmp_path):
     module = load_collection_validator()
-    skill_dir = tmp_path / "qa-agent"
+    skill_dir = tmp_path / "demo-skill"
 
-    _, issues = module.normalize_legacy_tools_metadata(
+    issues = module.check_repository_frontmatter_policy(
         {
-            "name": "qa-agent",
-            "description": "Use when testing.",
-            "tools": ["read"],
-            "allowed-tools": "read",
+            "name": "demo-skill",
+            "description": "Helps with OpenShift version queries.",
         },
         skill_dir,
     )
 
-    assert issues == [
-        "Frontmatter cannot contain both legacy 'tools' and 'allowed-tools'."
-    ]
+    assert issues == ["description must start with 'Use when'"]
+
+
+def test_repository_policy_accepts_use_when_and_allowed_tools(tmp_path):
+    module = load_collection_validator()
+    skill_dir = tmp_path / "qa-agent"
+
+    issues = module.check_repository_frontmatter_policy(
+        {
+            "name": "qa-agent",
+            "description": "Use when testing quality risks.",
+            "allowed-tools": "read execute",
+        },
+        skill_dir,
+    )
+
+    assert issues == []
+
+
+def test_validate_agent_skill_spec_prefixes_policy_issues_once(tmp_path):
+    module = load_collection_validator()
+    skill_dir = make_skill(tmp_path, name="demo-skill")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Helps with versions.\n---\n",
+        encoding="utf-8",
+    )
+
+    issues = module.validate_agent_skill_spec(skill_dir, tmp_path)
+    assert any(
+        issue.endswith("Agent Skills spec: description must start with 'Use when'")
+        and issue.count("SKILL.md:") == 1
+        for issue in issues
+    )
