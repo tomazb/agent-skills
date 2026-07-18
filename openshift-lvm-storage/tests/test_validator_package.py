@@ -131,3 +131,46 @@ def test_validate_root_passes(validator, package_factory):
     root = package_factory()
     issues = validator.validate_root(root)
     assert issues == []
+
+
+def test_missing_patch_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory()
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        reference_text().replace(
+            "python3 scripts/patch_lvms_manifest.py", "manual LVMCluster edits"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("patch_lvms_manifest.py" in issue for issue in issues)
+
+
+def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
+    root = package_factory()
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        reference_text().replace(
+            "python3 scripts/render_smoke_manifest.py", "hand-written smoke YAML"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("render_smoke_manifest.py" in issue for issue in issues)
+
+
+def test_missing_versions_handoff_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace("openshift-versions", "version lookup")
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("openshift-versions" in issue for issue in issues)
+
+
+def test_missing_readiness_disclaimer_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace(
+        "Release availability is not cluster upgrade readiness.",
+        "Release availability is documented separately.",
+    )
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("not cluster upgrade readiness" in issue for issue in issues)

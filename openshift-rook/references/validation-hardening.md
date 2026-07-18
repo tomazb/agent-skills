@@ -43,6 +43,12 @@ Use unique smoke namespaces per mode, for example `rook-rbd-smoke` and `rook-cep
 Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py` output):
 
 ```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace rook-rbd-smoke \
+  --storage-class rook-ceph-block \
+  --output /tmp/rook-rbd-smoke.yaml
+
 oc apply -f /tmp/rook-rbd-smoke.yaml
 oc -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
@@ -51,6 +57,12 @@ oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && ca
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
 
 ```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode cephfs \
+  --namespace rook-cephfs-smoke \
+  --storage-class rook-cephfs \
+  --output /tmp/rook-cephfs-smoke.yaml
+
 oc apply -f /tmp/rook-cephfs-smoke.yaml
 oc -n rook-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'

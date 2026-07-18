@@ -44,6 +44,12 @@ OLM and Subscription are used for install. CSV for upgrade.
 Do not downgrade. Read release notes.
 
 For upgrade, verify release notes.
+
+Use `python3 scripts/patch_lvms_manifest.py` when patching LVMCluster manifests.
+
+Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+
+Run `bash scripts/post_uninstall_audit.sh` after uninstall.
 """
 
 SKILL_TEMPLATE = """\
@@ -66,7 +72,8 @@ Safety guidance.
 
 ## Required Source Checks
 
-Source guidance.
+Source guidance. For OpenShift channel or upgrade-path questions, use
+`openshift-versions`. Release availability is not cluster upgrade readiness.
 
 ## Inputs To Collect
 

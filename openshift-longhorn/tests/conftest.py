@@ -30,7 +30,8 @@ def make_skill_text(*, name: str = "openshift-longhorn", missing_sections: list[
         "",
         "## Required Source Checks",
         "",
-        "Source guidance.",
+        "Source guidance. Use `openshift-versions` for channel questions. "
+        "Release availability is not cluster upgrade readiness.",
         "",
         "## Inputs To Collect",
         "",
@@ -67,7 +68,9 @@ and longhorn-preflight-checker cleanup with remove-scc-from-user. OpenShift
 MachineConfig can reboot nodes; wait for MCP. Use YAML-aware manifest patching
 for oauth-proxy. Do not downgrade Longhorn. Do not skip unsupported minor
 versions. Ensure V2 Data Engine volumes are detached and create a system backup
-before upgrade.
+before upgrade. Use `python3 scripts/patch_longhorn_okd_manifest.py` for OKD
+manifest patching. Use `python3 scripts/render_smoke_manifest.py` for smoke
+writers. Run `bash scripts/post_uninstall_audit.sh` after uninstall.
 """.lstrip()
 
 

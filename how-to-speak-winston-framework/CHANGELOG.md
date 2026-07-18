@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.0.1
+
+- Normalized frontmatter description to trigger-only Use-when form.
+
 ## 1.0.0
 
 - Full overhaul: expanded from 5 to 10 frameworks covering ~90% of Winston's MIT lecture.

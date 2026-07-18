@@ -95,6 +95,10 @@ rbd-smoke-writer and cephfs-smoke-writer.
 ## Validated SNO
 Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 `localblock`, and `HEALTH_OK`.
+
+Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
+
+Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 """
 
 SKILL_TEMPLATE = """\
@@ -107,6 +111,15 @@ description: Use when planning, installing, or troubleshooting ODF on OpenShift.
 
 Use this skill as a lifecycle router.
 
+## Product Ownership Gate
+
+Before routing, run read-only ownership discovery. Inspect `StorageCluster`, ODF/OCS
+`Subscription` or CSV evidence, and `CephCluster`. Namespace presence alone is
+insufficient. Classify ODF, upstream Rook, mixed/conflicting, or unknown. Stop and
+report evidence when ownership is mixed, conflicting, unknown, or access is
+insufficient. Do not recommend mutation until ownership is classified. If upstream
+Rook owns the cluster, hand off to `openshift-rook`.
+
 ## Routing
 
 Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
@@ -117,7 +130,8 @@ Safety guidance.
 
 ## Required Source Checks
 
-Source guidance.
+Source guidance. For OpenShift channel or upgrade-path questions, use
+`openshift-versions`. Release availability is not cluster upgrade readiness.
 
 ## Inputs To Collect
 

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- Added Product Ownership Gate for ODF vs upstream Rook classification, openshift-versions handoff, and concrete helper invocations for StorageCluster and smoke manifests.
+
 ## 1.2.0
 
 - Added explicit CRD cleanup step (step 5) to the Uninstall ODF procedure in `references/maintenance-uninstall.md`, listing all CRDs installed by ODF + LSO across five API groups. CRDs with `customresourcecleanup.apiextensions.k8s.io` finalizer block until all CR instances are gone.

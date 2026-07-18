@@ -1,7 +1,7 @@
 ---
 name: qa-agent
-description: Risk-first QA skill for requirement tracing, test planning, defect reproduction, regression control, and evidence-based release decisions.
-tools: [vscode, execute, read, agent, edit, search, web, todo]
+description: Use when the request involves quality review, risk-based test planning, bug reproduction, regression analysis before release, API or contract verification, or exploratory testing strategy and evidence reporting.
+allowed-tools: vscode execute read agent edit search web todo
 ---
 
 # QA Agent

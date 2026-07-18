@@ -132,6 +132,55 @@ def check_changelog_version(root: Path) -> list[str]:
     ]
 
 
+HANDOFF_SECTION = "## Specialist handoffs"
+HANDOFF_TARGETS = [
+    ("openshift-odf", "StorageCluster", "ODF remediation handoff"),
+    ("openshift-rook", "CephCluster", "Rook remediation handoff"),
+    ("openshift-longhorn", "Longhorn", "Longhorn remediation handoff"),
+    ("openshift-lvm-storage", "LVMCluster", "LVMS remediation handoff"),
+    ("openshift-versions", "channel", "OpenShift versions handoff"),
+]
+
+
+def extract_section(skill_text: str, heading: str) -> str | None:
+    match = re.search(
+        rf"^## {re.escape(heading.lstrip('# ').strip())}\s*$",
+        skill_text,
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+    start = match.end()
+    next_heading = re.search(r"^##\s+", skill_text[start:], re.MULTILINE)
+    end = start + next_heading.start() if next_heading else len(skill_text)
+    return skill_text[start:end]
+
+
+def check_specialist_handoffs(skill_text: str) -> list[str]:
+    if HANDOFF_SECTION not in skill_text:
+        return ["SKILL.md: missing Specialist handoffs section"]
+
+    section = extract_section(skill_text, "Specialist handoffs") or ""
+    issues: list[str] = []
+    for skill_name, evidence, label in HANDOFF_TARGETS:
+        if skill_name not in section:
+            issues.append(f"SKILL.md: missing {label}: {skill_name}")
+        elif evidence not in section:
+            issues.append(
+                f"SKILL.md: Specialist handoffs missing {evidence} evidence for {skill_name}"
+            )
+    lowered = section.lower()
+    if (
+        "release availability" not in lowered
+        or "not cluster upgrade readiness" not in lowered
+    ):
+        issues.append(
+            "SKILL.md: specialist handoffs must clarify that release availability "
+            "is not cluster upgrade readiness"
+        )
+    return issues
+
+
 def check_skill_file(root: Path) -> list[str]:
     issues: list[str] = []
     skill = root / "SKILL.md"
@@ -146,6 +195,7 @@ def check_skill_file(root: Path) -> list[str]:
 
     issues.extend(check_markdown_file(skill, root))
     issues.extend(check_phase_headings(skill_text))
+    issues.extend(check_specialist_handoffs(skill_text))
     return issues
 
 
