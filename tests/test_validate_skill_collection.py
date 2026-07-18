@@ -163,7 +163,7 @@ def test_repository_policy_requires_use_when_description(tmp_path):
         skill_dir,
     )
 
-    assert issues == ["SKILL.md: description must start with 'Use when'"]
+    assert issues == ["description must start with 'Use when'"]
 
 
 def test_repository_policy_accepts_use_when_and_allowed_tools(tmp_path):
@@ -180,3 +180,19 @@ def test_repository_policy_accepts_use_when_and_allowed_tools(tmp_path):
     )
 
     assert issues == []
+
+
+def test_validate_agent_skill_spec_prefixes_policy_issues_once(tmp_path):
+    module = load_collection_validator()
+    skill_dir = make_skill(tmp_path, name="demo-skill")
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: demo-skill\ndescription: Helps with versions.\n---\n",
+        encoding="utf-8",
+    )
+
+    issues = module.validate_agent_skill_spec(skill_dir, tmp_path)
+    assert any(
+        issue.endswith("Agent Skills spec: description must start with 'Use when'")
+        and issue.count("SKILL.md:") == 1
+        for issue in issues
+    )

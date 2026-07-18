@@ -100,6 +100,16 @@ def test_missing_versions_handoff_fails(validator, package_factory, make_skill_t
     assert any("openshift-versions" in issue for issue in issues)
 
 
+def test_missing_readiness_disclaimer_fails(validator, package_factory, make_skill_text):
+    skill_text = make_skill_text().replace(
+        "Release availability is not cluster upgrade readiness.",
+        "Release availability is documented separately.",
+    )
+    root = package_factory(skill_text=skill_text)
+    issues = validator.validate_root(root)
+    assert any("not cluster upgrade readiness" in issue for issue in issues)
+
+
 def test_missing_destructive_confirmation_language_fails(validator, package_factory, reference_text):
     text = reference_text().replace("explicit destructive confirmation", "operator approval")
     root = package_factory(reference_content=text)

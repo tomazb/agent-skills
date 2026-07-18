@@ -104,9 +104,9 @@ def check_repository_frontmatter_policy(
 
     description = metadata.get("description", "")
     if not isinstance(description, str) or not description.strip():
-        issues.append("SKILL.md: missing frontmatter description")
+        issues.append("missing frontmatter description")
     elif not description.lstrip().startswith("Use when"):
-        issues.append("SKILL.md: description must start with 'Use when'")
+        issues.append("description must start with 'Use when'")
 
     return issues
 

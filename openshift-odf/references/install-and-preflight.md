@@ -147,10 +147,13 @@ python3 scripts/render_storagecluster.py \
   --output /tmp/ocs-storagecluster.yaml
 
 oc apply --dry-run=server -f /tmp/ocs-storagecluster.yaml
-oc apply -f /tmp/ocs-storagecluster.yaml
 ```
 
-Use `--replica 1` only for confirmed SNO single-replica deployments. Do not treat helper defaults as the production topology without live discovery.
+Use `--replica 1` only for confirmed SNO single-replica deployments. Do not treat helper defaults as the production topology without live discovery. After reviewing live topology and editing the rendered manifest as needed, apply:
+
+```bash
+oc apply -f /tmp/ocs-storagecluster.yaml
+```
 
 ### Multi-Node Production (local devices)
 
