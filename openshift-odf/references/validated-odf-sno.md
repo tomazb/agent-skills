@@ -1,6 +1,6 @@
 # Validated ODF SNO Scenario
 
-This is observed evidence for one OpenShift SNO / ODF scenario. Do not turn these host-specific values into defaults without confirming the target cluster.
+This is observed evidence for OpenShift SNO / ODF scenarios across multiple versions. Do not turn these host-specific values into defaults without confirming the target cluster.
 
 ## Cluster Details
 
@@ -72,6 +72,229 @@ In this and the ODF 4.22 example below, `storage: "1"` is intentional for LSO `l
 - An ObjectBucketClaim created the expected Secret and ConfigMap against the MCG StorageClass.
 - ODF metrics appeared in the OpenShift console **Storage → Data Foundation** dashboards using the built-in cluster Prometheus.
 - Post-reboot checks showed mon in quorum, OSD up, MDS active, and cluster health remained `HEALTH_OK`.
+
+---
+
+# ODF 4.20 SNO Scenario (OCP 4.20.32) — Regression Workarounds Required
+
+This section documents observed evidence and workarounds for ODF 4.20 on SNO (OCP 4.20.32, node `prod2`). ODF 4.20 has several SNO-specific regressions; re-check ODF release notes and current documentation before applying these workarounds to other ODF releases.
+
+## Cluster Details
+
+- OpenShift version: 4.20.32
+- ODF version: 4.20.16-rhodf (channel: `stable-4.20`)
+- Topology: Single Node OpenShift (SNO) — `infrastructure.status.controlPlaneTopology: SingleReplica`
+- Deployment mode: internal-attached (Local Storage Operator, `LocalVolume` resource for exact disk selection)
+- Storage services: ceph-rbd block, MCG/RGW object (**CephFS not validated in this scenario**)
+- Disk: one dedicated virtio block device (`/dev/disk/by-path/pci-0000:00:08.0`, ~500 GiB), raw (unpartitioned, no signatures)
+
+## StorageCluster Configuration (ODF 4.20 SNO)
+
+The StorageCluster below bakes in `flexibleScaling: true` and placement overrides that avoid the empty `topologyKey` regression. Apply this manifest from the start — do not use the generic SNO manifest and add placements reactively.
+
+```yaml
+apiVersion: ocs.openshift.io/v1
+kind: StorageCluster
+metadata:
+  name: ocs-storagecluster
+  namespace: openshift-storage
+spec:
+  manageNodes: false
+  monDataDirHostPath: /var/lib/rook
+  flexibleScaling: true
+  managedResources:
+    cephBlockPools:
+      reconcileStrategy: manage
+  placement:
+    mon:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: rook-ceph-mon
+  storageDeviceSets:
+  - name: ocs-deviceset
+    count: 1
+    replica: 1
+    portable: false
+    dataPVCTemplate:
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        volumeMode: Block
+        storageClassName: localblock
+        resources:
+          requests:
+            storage: "1"
+    placement:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: rook-ceph-osd
+    preparePlacement:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: rook-ceph-osd-prepare
+```
+
+`flexibleScaling: true` allows ODF to accept a single node (without it the StorageCluster reconciler rejects the CR with "Not enough nodes found: Expected 3, found 1").
+
+Do **not** set `resourceProfile: lean` — in ODF 4.20 this traps the StorageCluster in `Progressing` indefinitely.
+
+## ODF 4.20 Regression 1: `SINGLE_NODE=true` Not Auto-Set
+
+ODF 4.20 does **not** auto-detect `controlPlaneTopology: SingleReplica` to set its internal `SINGLE_NODE` flag. Patch the `ocs-operator` CSV to inject it. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes within seconds.
+
+```bash
+# Confirm the flag is absent before patching
+oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE || echo "not set"
+
+# Append SINGLE_NODE=true to the ocs-operator CSV env array
+OCS_CSV=$(oc -n openshift-storage get csv -o name | grep ocs-operator)
+oc -n openshift-storage patch ${OCS_CSV} \
+  --type json \
+  -p '[{"op":"add","path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/-","value":{"name":"SINGLE_NODE","value":"true"}}]'
+
+# Verify after rollout
+oc -n openshift-storage rollout status deploy/ocs-operator --timeout=3m
+oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE
+```
+
+## ODF 4.20 Regression 2: Pool Sizes Not Reduced for SNO
+
+In ODF 4.20, `getCephPoolReplicatedSize()` always returns `3` for SNO. All Ceph pools are created with `size=3, min_size=2` even with one OSD. In addition, the `CephBlockPool` is created with `failureDomain: osd` and `replicasPerFailureDomain: 1`, which causes Rook to reject `size=1` with a validation error ("size must be greater than replicasPerFailureDomain"). Both issues must be fixed.
+
+**This is a version-scoped exception to the skill's "do not edit Rook CRs directly" rule.**
+
+After the StorageCluster and CephCluster reach `Ready` (or you see Ceph OSDs are up):
+
+```bash
+# Step 1: Freeze ODF reconciliation for pools/object stores
+oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p '{
+  "spec": {
+    "managedResources": {
+      "cephBlockPools":   {"reconcileStrategy": "ignore"},
+      "cephObjectStores": {"reconcileStrategy": "ignore"}
+    }
+  }
+}'
+
+# Step 2: Fix all pools via rook-ceph-operator
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+for pool in $(oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF osd pool ls); do
+  oc -n openshift-storage exec $ROOK_OP -- \
+    ceph -c $CONF osd pool set "$pool" size 1 --yes-i-really-mean-it
+  oc -n openshift-storage exec $ROOK_OP -- \
+    ceph -c $CONF osd pool set "$pool" min_size 1
+done
+
+# Step 3: Set global config so future pools default to size=1
+oc -n openshift-storage exec $ROOK_OP -- \
+  ceph -c $CONF config set global osd_pool_default_size 1
+oc -n openshift-storage exec $ROOK_OP -- \
+  ceph -c $CONF config set global osd_pool_default_min_size 1
+oc -n openshift-storage exec $ROOK_OP -- \
+  ceph -c $CONF config set global mon_max_pg_per_osd 600
+
+# Step 4 (ODF 4.20-specific): Fix CephBlockPool failureDomain
+# Rook rejects size=1 with failureDomain=osd + replicasPerFailureDomain=1.
+# Remove replicasPerFailureDomain and change failureDomain to host.
+oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
+  --type json \
+  -p '[
+    {"op":"replace","path":"/spec/failureDomain","value":"host"},
+    {"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"}
+  ]'
+
+# Step 5: Patch ODF-managed object store CR to size=1
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
+  --type merge \
+  -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
+
+# Step 6: Archive crash history and mute expected SNO warning
+oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF crash archive-all
+oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF health mute POOL_NO_REDUNDANCY
+```
+
+Also apply the `rook-config-override` ConfigMap so that any future pools ODF creates default to size=1:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rook-config-override
+  namespace: openshift-storage
+data:
+  config: |
+    [global]
+    osd_pool_default_size = 1
+    osd_pool_default_min_size = 1
+    mon_max_pg_per_osd = 600
+```
+
+## ODF 4.20 Regression 3: CSI Controller Plugin Replicas
+
+ODF 4.20 deploys 2 replicas of each CSI controller plugin with `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity. On SNO the second replica can never schedule. In ODF 4.20, patching `OperatorConfig` alone is **not sufficient** — the `Driver` CRs (`drivers.csi.ceph.io`) control the replica count and must be patched directly.
+
+```bash
+# Reduce replicas to 1 on both CSI driver resources
+oc -n openshift-storage patch drivers.csi.ceph.io/openshift-storage.rbd.csi.ceph.com \
+  --type merge -p '{"spec":{"controllerPlugin":{"replicas":1}}}'
+oc -n openshift-storage patch drivers.csi.ceph.io/openshift-storage.cephfs.csi.ceph.com \
+  --type merge -p '{"spec":{"controllerPlugin":{"replicas":1}}}'
+```
+
+After patching, new ReplicaSets are created. Old pods from the previous ReplicaSet may still be running and will block the new pod (anti-affinity on same node). Delete the stale pods once the new ReplicaSet is current:
+
+```bash
+# Identify stale pods (from the old ReplicaSet) and delete them
+# New RS pods will be Pending; old RS pods will be Running — delete the Running ones
+oc -n openshift-storage get pods -l 'app=openshift-storage.rbd.csi.ceph.com-ctrlplugin' -o wide
+oc -n openshift-storage delete pod <old-rbd-ctrlplugin-pod>
+oc -n openshift-storage get pods -l 'app=openshift-storage.cephfs.csi.ceph.com-ctrlplugin' -o wide
+oc -n openshift-storage delete pod <old-cephfs-ctrlplugin-pod>
+```
+
+Verify both new pods reach `Running 8/8`:
+
+```bash
+oc -n openshift-storage get pods -l 'app=openshift-storage.rbd.csi.ceph.com-ctrlplugin'
+oc -n openshift-storage get pods -l 'app=openshift-storage.cephfs.csi.ceph.com-ctrlplugin'
+```
+
+## Pool Configuration (ODF 4.20 SNO, after workaround)
+
+- All pools (block, RGW, system): `replicated.size: 1`, `requireSafeReplicaSize: false`
+- `CephBlockPool`: `failureDomain: host` (patched from `osd`), `replicasPerFailureDomain` removed
+- 3 mons + 1 mgr (ODF 4.20 does not reduce mon count for SNO; all run on the single node)
+- `POOL_NO_REDUNDANCY` warning is muted — expected for intentional single-replica SNO
+
+## StorageClasses
+
+- `ocs-storagecluster-ceph-rbd` (non-default RBD block)
+- `ocs-storagecluster-cephfs` (non-default CephFS shared filesystem)
+- `ocs-storagecluster-ceph-rgw` (RGW ObjectBucketClaim provisioning)
+- `openshift-storage.noobaa.io` (MCG ObjectBucketClaim provisioning)
+
+No ODF StorageClass became the default; pre-existing default(s) remained in place.
+
+## Validation Notes (ODF 4.20 SNO)
+
+- After applying the `SINGLE_NODE` patch, `flexibleScaling`, placement overrides, pool size workaround (including the `CephBlockPool` `failureDomain` fix), and CSI replica fix, the `StorageCluster` reached `Ready`.
+- `ceph -s` showed `HEALTH_OK` (with `POOL_NO_REDUNDANCY` muted).
+- 1 OSD on the dedicated disk; 3 mons in quorum; NooBaa writing data actively.
+- ceph-rbd PVC provisioning and MCG/RGW object storage validated. **CephFS not validated in this scenario.**
+- The `POOL_NO_REDUNDANCY` mute suppresses expected warning noise — it does not restore data redundancy. SNO ODF has no OSD redundancy by design.
 
 ---
 
