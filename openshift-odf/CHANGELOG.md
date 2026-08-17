@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.0
+
+- Added early SNO topology detection: `oc get infrastructure cluster` is now an explicit discovery step in `references/install-and-preflight.md` Live Discovery and in `SKILL.md` Inputs To Collect; `SingleReplica` result triggers the SNO path.
+- Added **SNO Pre-flight Gate** to `references/install-and-preflight.md`: when `controlPlaneTopology: SingleReplica` is detected and the target ODF channel is `stable-4.20` or `stable-4.22`, the runbook hard-stops and routes to the matching section in `references/validated-odf-sno.md` instead of the generic install path.
+- Added complete **ODF 4.20 SNO Scenario** section to `references/validated-odf-sno.md` (OCP 4.20.32, ODF 4.20.16-rhodf) documenting all required workarounds in deployment order: `flexibleScaling: true` + placement overrides baked into the StorageCluster, `SINGLE_NODE=true` CSV patch, pool size manual reduction, ODF 4.20-specific `CephBlockPool` `failureDomain: host` + `replicasPerFailureDomain` removal, CSI controller replicas via `Driver` CRs (not `OperatorConfig`), and `rook-config-override` ConfigMap.
+- Extended `SKILL.md` Core Safety Rules exception from "ODF 4.22 SNO only" to "ODF 4.20 and 4.22 SNO", documenting the two additional 4.20-specific steps (CephBlockPool failureDomain fix and Driver CR CSI fix).
+- Updated `SKILL.md` Routing line for `references/validated-odf-sno.md` to mention 4.16, 4.20, and 4.22.
+- Updated `SKILL.md` Inputs To Collect and `references/install-and-preflight.md` "additional required steps" pointer to name both ODF 4.20 and 4.22.
+
 ## 1.3.0
 
 - Added Product Ownership Gate for ODF vs upstream Rook classification, openshift-versions handoff, and concrete helper invocations for StorageCluster and smoke manifests.
