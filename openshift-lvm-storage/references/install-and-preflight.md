@@ -41,7 +41,7 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
   set -e
   readlink -f '${DISK}'
   lsblk -f '${DISK}'
-  pvs '${DISK}' || true
+  pvs --devices '${DISK}' '${DISK}' || true
   vgs || true
   lvs || true
   wipefs -n '${DISK}' || true
@@ -49,6 +49,8 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 ```
 
 Never proceed from `/dev/nvmeXnY`, `/dev/sdX`, or a guessed path alone. Resolve and record the `/dev/disk/by-id/*` or `/dev/disk/by-path/*` identity first.
+
+On RHEL 9 / RHCOS hosts, running plain `pvs <disk>` against a disk that is not in the LVM devices file prints `Cannot use <disk>: device is not in devices file`. The devices file is only an allowlist for LVM scanning, so this message says nothing about on-disk metadata — a PV created on another host, a cloned disk, or a PV removed from `system.devices` prints the same message. Treat it as informational, neither an error that blocks the safety gate nor evidence that the disk is unclaimed. Read the actual metadata with `pvs --devices '${DISK}' '${DISK}'` as above (`--devices` bypasses the devices file for that invocation): `Failed to find physical volume` from that form is the real no-PV evidence, and the claim/wipe decision must rest on it together with the `lsblk -f` and `wipefs -n` output.
 
 ## OpenShift Prerequisites
 
@@ -77,7 +79,14 @@ spec:
     - openshift-storage
 ```
 
-Then create the Subscription:
+Then discover the real Subscription channel. LVMS channels in the catalog are version-pinned (for example `stable-4.21`, `stable-4.22`); a Subscription with a channel the catalog does not serve (such as a bare `stable`) sits forever with no CSV. Do not guess the channel — read it from the catalog:
+
+```bash
+oc get packagemanifest lvms-operator -n openshift-marketplace \
+  -o jsonpath='{.status.defaultChannel}{"\n"}{.status.channels[*].name}{"\n"}{.status.catalogSource}{"\n"}{.status.catalogSourceNamespace}{"\n"}'
+```
+
+Use the `defaultChannel` output as `<default-channel>` below unless the user pins a different served channel. The Subscription examples below assume the Red Hat catalog (`redhat-operators` in `openshift-marketplace`); if the discovery output shows the package resolving from a community or custom catalog, set `spec.source` and `spec.sourceNamespace` from the discovered `catalogSource` and `catalogSourceNamespace` instead. Then create the Subscription:
 
 ```yaml
 apiVersion: operators.coreos.com/v1alpha1
@@ -86,7 +95,7 @@ metadata:
   name: lvms-operator
   namespace: openshift-storage
 spec:
-  channel: stable
+  channel: <default-channel>
   name: lvms-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
@@ -103,7 +112,7 @@ metadata:
   name: lvms-operator
   namespace: openshift-storage
 spec:
-  channel: stable
+  channel: <default-channel>
   name: lvms-operator
   source: redhat-operators
   sourceNamespace: openshift-marketplace
@@ -206,8 +215,10 @@ python3 scripts/patch_lvms_manifest.py \
 
 oc apply --dry-run=server -f /tmp/lvmcluster-patched.yaml
 oc apply -f /tmp/lvmcluster-patched.yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=condition=Ready --timeout=10m
+oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
+
+The `LVMCluster` CR has no condition named `Ready` (its conditions are `ResourcesAvailable` and `VolumeGroupsReady`; readiness is reported in `.status.state`), so `oc wait --for=condition=Ready` hangs until timeout even on a healthy install. Wait on `.status.state` as shown above.
 
 If you skip the helper and apply a hand-edited manifest instead, use that same
 manifest path consistently for dry-run, apply, and wait.
@@ -229,6 +240,8 @@ Before declaring success, verify:
 - TopoLVM CSI driver pods are running on all target nodes.
 - The default StorageClass was created by the operator (if `default: true` was set in the `LVMCluster`).
 - Exactly one default StorageClass exists when defaulting is expected.
+
+Finish with a functional smoke test from `references/validation-hardening.md` (PVC plus consumer pod, then cleanup). TopoLVM StorageClasses use `volumeBindingMode: WaitForFirstConsumer`, so an unconsumed PVC stays `Pending` by design — a PVC alone proves nothing, and a `Pending` PVC without a pod is not a failure. This applies only to `WaitForFirstConsumer`: on a StorageClass with `volumeBindingMode: Immediate` (which TopoLVM StorageClasses must not use), a PVC stuck `Pending` without a consumer does indicate a provisioning problem.
 
 ## MachineConfig Discipline
 

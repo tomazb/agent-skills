@@ -43,8 +43,10 @@ Apply and wait:
 
 ```bash
 oc apply -f /tmp/lvmcluster-updated.yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=condition=Ready --timeout=10m
+oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
+
+On an `LVMCluster` that was already `Ready`, this wait can pass immediately on stale status before the controller observes the spec change — `LVMCluster` exposes no usable `observedGeneration` to wait on. Do not report the expansion complete on this wait alone; the node-level verification below (new PV in `pvs`, VG size increase in `vgs`) is the authoritative signal that the new disk was reconciled. If it has not appeared yet, re-check after a short delay rather than re-applying.
 
 ### Verify Expansion
 
