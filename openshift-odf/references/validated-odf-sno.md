@@ -400,7 +400,7 @@ This section documents additional observed evidence and workarounds for ODF 4.22
 - ODF version: 4.22.0 (channel: `stable-4.22`)
 - Topology: Single Node OpenShift (SNO) — `infrastructure.status.controlPlaneTopology: SingleReplica`
 - Deployment mode: internal-attached (Local Storage Operator, `LocalVolume` resource for exact disk selection)
-- Storage services: ceph-rbd, MCG/RGW object (**CephFS not validated in this scenario**). Do not enable CephFS on ODF 4.22 SNO with these pool-size workarounds until its reconciliation path is fixed and validated.
+- Storage services: ceph-rbd, MCG/RGW object (CephFS validated separately on ODF 4.22.1 — see the 4.22 section below).
 
 ## Disk Layout
 
@@ -505,7 +505,8 @@ oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p 
   "spec": {
     "managedResources": {
       "cephBlockPools":   {"reconcileStrategy": "ignore"},
-      "cephObjectStores": {"reconcileStrategy": "ignore"}
+      "cephObjectStores": {"reconcileStrategy": "ignore"},
+      "cephFilesystems":  {"reconcileStrategy": "ignore"}
     }
   }
 }'
@@ -518,6 +519,10 @@ oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
   --type merge \
   -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
+
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
+  --type merge \
+  -p '{"spec":{"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"dataPools":[{"name":"data0","replicated":{"size":1,"requireSafeReplicaSize":false}}]}}'
 
 # Step 3: Fix system pools (not managed by ODF CRs) via rook-ceph-operator
 ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
@@ -559,14 +564,104 @@ data:
     mon_max_pg_per_osd = 600
 ```
 
-## CSI Controller Plugin Replicas on SNO
+## ODF 4.22 Regression: Empty `topologyKey` on MDS and RGW (CephFS + Object)
 
-ODF deploys 2 replicas of each CSI controller plugin for HA. On SNO the second replica can never schedule (pod anti-affinity). Reduce to 1 replica via the `OperatorConfig` CR:
+The mon/OSD empty-`topologyKey` fix (baked into the StorageCluster above) is not
+sufficient once CephFS and Object are enabled. On ODF 4.22 SNO, ocs-operator
+also emits `topologyKey: ""` + `whenUnsatisfiable: DoNotSchedule` on:
+
+- `CephFilesystem` `spec.metadataServer.placement` — MDS never schedules, the
+  `CephFilesystem` stays `Failure`.
+- `CephObjectStore` `spec.gateway.placement` — no RGW pod is created, so NooBaa
+  cannot create its object-store user and stays `Configuring`.
+
+Freeze `cephFilesystems`/`cephObjectStores` (Step 1 above), then patch both:
 
 ```bash
-oc -n openshift-storage patch operatorconfigs.csi.ceph.io ceph-csi-operator-config \
-  --type merge \
-  -p '{"spec":{"driverSpecDefaults":{"controllerPlugin":{"replicas":1}}}}'
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem --type json -p '[
+  {"op":"replace","path":"/spec/metadataServer/placement/topologySpreadConstraints/0/topologyKey","value":"kubernetes.io/hostname"},
+  {"op":"replace","path":"/spec/metadataServer/placement/topologySpreadConstraints/0/whenUnsatisfiable","value":"ScheduleAnyway"}
+]'
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type json -p '[
+  {"op":"replace","path":"/spec/gateway/placement/topologySpreadConstraints/0/topologyKey","value":"kubernetes.io/hostname"},
+  {"op":"replace","path":"/spec/gateway/placement/topologySpreadConstraints/0/whenUnsatisfiable","value":"ScheduleAnyway"}
+]'
+```
+
+## ODF 4.22 Regression: `replicasPerFailureDomain=1` + `size=1` Rejected on Object/File Pools
+
+On Ceph 20.2 "tentacle" (RHCEPH-9, shipped with ODF 4.22.1), the object and file
+pool controllers reject a pool with `size: 1` while
+`replicasPerFailureDomain: 1`:
+
+```
+invalid metadata pool spec: error pool size is 1 and replicasPerFailureDomain is 1, size must be greater
+```
+
+`CephBlockPool` tolerates this combination, but `CephObjectStore` and
+`CephFilesystem` do not — their reconcile fails and RGW/MDS never start. Remove
+the field (keep `size: 1`) after freezing reconciliation:
+
+```bash
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type json -p '[
+  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+  {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
+]'
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem --type json -p '[
+  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+  {"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}
+]'
+```
+
+**Note on `.mgr`:** the `.mgr` pool reverts to `size=3` after *any* mgr restart
+(including the restart triggered by applying resource requests below). Re-run the
+`ceph osd pool set .mgr size 1 --yes-i-really-mean-it` / `min_size 1` step after
+such restarts, then re-mute `POOL_NO_REDUNDANCY`.
+
+## ODF 4.22 SNO: CPU-Request Starvation
+
+ODF's default "balanced" resource **requests** (mon `1050m`; mds/osd/rgw
+`2050m`; noobaa-core/endpoint `999m`) saturate a single node's schedulable CPU
+(observed 99% requested vs ~6% actually used), leaving `noobaa-core` and the
+second CSI replica `Pending` with `Insufficient cpu`. Do **not** set
+`resourceProfile: lean` (it traps the StorageCluster in `Progressing` on 4.22).
+Set minimal per-component requests instead; MDS/RGW are frozen CRs so patch them
+directly:
+
+```bash
+oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p '{
+  "spec": {"resources": {
+    "mon":             {"requests": {"cpu": "100m", "memory": "1Gi"}},
+    "mgr":             {"requests": {"cpu": "100m", "memory": "1Gi"}},
+    "noobaa-core":     {"requests": {"cpu": "100m", "memory": "1Gi"}},
+    "noobaa-db":       {"requests": {"cpu": "100m", "memory": "512Mi"}},
+    "noobaa-endpoint": {"requests": {"cpu": "100m", "memory": "512Mi"}}
+  }}
+}'
+oc -n openshift-storage patch storagecluster ocs-storagecluster --type json -p '[
+  {"op":"add","path":"/spec/storageDeviceSets/0/resources","value":{"requests":{"cpu":"100m","memory":"2Gi"},"limits":{"cpu":"2","memory":"5Gi"}}}
+]'
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem --type merge \
+  -p '{"spec":{"metadataServer":{"resources":{"requests":{"cpu":"100m","memory":"1Gi"},"limits":{"cpu":"2","memory":"4Gi"}}}}}'
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type merge \
+  -p '{"spec":{"gateway":{"resources":{"requests":{"cpu":"100m","memory":"1Gi"},"limits":{"cpu":"2","memory":"4Gi"}}}}}'
+```
+
+This dropped observed CPU requests from 99% to ~35% and let all components schedule.
+
+## CSI Controller Plugin Replicas on SNO
+
+ODF deploys 2 replicas of each CSI controller plugin for HA. On SNO the second
+replica can never schedule (pod anti-affinity), and it also wastes scarce CPU
+requests. Patching `operatorconfigs.csi.ceph.io` alone is **reverted** by
+ocs-client-operator on 4.22.1 — patch the per-driver `drivers.csi.ceph.io` CRs
+instead (this sticks):
+
+```bash
+oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.rbd.csi.ceph.com \
+  --type merge -p '{"spec":{"controllerPlugin":{"replicas":1}}}'
+oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.cephfs.csi.ceph.com \
+  --type merge -p '{"spec":{"controllerPlugin":{"replicas":1}}}'
 ```
 
 ## Pool Configuration (ODF 4.22 SNO, after workaround)
@@ -587,6 +682,7 @@ oc -n openshift-storage patch operatorconfigs.csi.ceph.io ceph-csi-operator-conf
 - After applying the SINGLE_NODE patch, placement overrides, pool size workaround, and CSI replica fix, the `StorageCluster` reached `Ready`.
 - `ceph -s` showed `HEALTH_OK` (with `POOL_NO_REDUNDANCY` muted).
 - One OSD on the dedicated NVMe disk; NooBaa writing data actively.
-- RBD and MCG/RGW object validated. **CephFS not validated in this scenario.**
+- RBD (RWO), CephFS (RWX), and MCG/RGW object (OBC) all validated on ODF 4.22.1: a `ReadWriteOnce` rbd PVC and a `ReadWriteMany` cephfs PVC bound and a pod wrote to both; an `ObjectBucketClaim` bound. MDS ran active + 1 hot standby; `CephFilesystem` Ready.
+- Applying minimal resource requests dropped node CPU requests from 99% to ~35%.
 - ODF console plugin enabled and visible in OpenShift console **Storage → Data Foundation**.
 - The `POOL_NO_REDUNDANCY` mute suppresses expected warning noise — it does not restore data redundancy. SNO ODF has no OSD redundancy by design.
