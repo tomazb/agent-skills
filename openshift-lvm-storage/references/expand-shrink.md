@@ -43,7 +43,7 @@ Apply and wait:
 
 ```bash
 oc apply -f /tmp/lvmcluster-updated.yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=condition=Ready --timeout=10m
+oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
 
 ### Verify Expansion
