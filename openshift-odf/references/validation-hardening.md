@@ -91,6 +91,17 @@ After a node reboot, check:
 - One default StorageClass remains.
 - MachineConfigs have been applied and MCP is `Updated`.
 
+On single-replica SNO, verify the `.mgr` pool is still `size=1` after any mgr
+restart — it is recreated at `size=3` and will re-raise `POOL_NO_REDUNDANCY`
+noise / undersized PGs until re-fixed:
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get .mgr size
+# If 3: re-apply size 1 / min_size 1 as in references/validated-odf-sno.md.
+```
+
 ## Hardening
 
 - Configure backup targets and recurring snapshot schedules.
@@ -126,3 +137,55 @@ oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
 For a full support bundle, use the ODF must-gather image documented for your release.
+
+### StorageClient stuck `Initializing` — onboarding ticket signature error
+
+**Symptom:** after a reinstall, only `ocs-storagecluster-ceph-rgw` exists; the
+`ceph-rbd` and `cephfs` StorageClasses are missing. `oc -n openshift-storage get
+storageclients.ocs.openshift.io` shows the internal client `Initializing` with an
+empty CONSUMER. The provider logs (`deploy/ocs-provider-server`) repeat:
+
+```
+Failed to validate onboarding ticket ... failed to verify onboarding ticket
+signature. crypto/rsa: verification error
+```
+
+**Cause:** a stale onboarding token/keys left over from a previous install cycle.
+The `StorageConsumer`-owned `onboarding-token-*` secret was signed with a private
+key that no longer matches the public key the provider verifies with, so the
+`ocs-client-operator` cannot onboard the consumer and never creates the
+`ClientProfile` that gates CSI StorageClass creation.
+
+**Fix — regenerate the onboarding key chain and reconnect:**
+
+```bash
+# 1. Back up the onboarding secrets first (recovery relies on ocs-operator
+#    regenerating them; keep a copy in case that assumption does not hold).
+oc -n openshift-storage get secret onboarding-private-key onboarding-ticket-key \
+  -o yaml > onboarding-secrets-backup.yaml
+# Delete the mismatched keys and the StorageConsumer-owned token secret.
+oc -n openshift-storage delete secret onboarding-private-key onboarding-ticket-key
+TOKEN=$(oc -n openshift-storage get secret -o name | grep onboarding-token | head -1)
+[ -n "$TOKEN" ] && oc -n openshift-storage delete "$TOKEN"
+
+# 2. Regenerate: restart ocs-operator (recreates keys) and reconcile the consumer.
+oc -n openshift-storage rollout restart deploy/ocs-operator
+oc -n openshift-storage annotate storageconsumer internal reconcile="$(date +%s)" --overwrite
+
+# 3. Recreate the StorageClient so it picks up a freshly signed ticket. If it is
+#    stuck 'Offboarding', clear its finalizer.
+oc delete storageclients.ocs.openshift.io ocs-storagecluster --wait=false
+oc patch storageclients.ocs.openshift.io ocs-storagecluster \
+  --type merge -p '{"metadata":{"finalizers":[]}}' || true
+
+# 4. Restart the provider so it loads the regenerated public key, then let
+#    ocs-operator recreate the StorageClient.
+oc -n openshift-storage rollout restart deploy/ocs-provider-server
+oc -n openshift-storage rollout restart deploy/ocs-operator
+```
+
+**Verify:** `oc get storageclients.ocs.openshift.io` shows `Connected` with a
+populated CONSUMER, one `clientprofiles.csi.ceph.io` exists, and the
+`ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs` StorageClasses
+appear. This recovery is a leftover-state hazard after repeated
+install/delete cycles; a first clean install does not need it.

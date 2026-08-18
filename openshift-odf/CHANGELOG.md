@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+- Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).
+- Extended the **ODF 4.20 SNO** scenario in `references/validated-odf-sno.md`: added **Regression 4 (empty `topologyKey` on CephFilesystem MDS and CephObjectStore RGW placements)** with symptoms and patches, extended **Regression 2** pool sizing to CephFilesystem and CephObjectStore metadata/data pools (`size: 1`, `failureDomain: host`, drop `replicasPerFailureDomain`) and the `cephFilesystems` reconcile freeze, and noted that the `.mgr` pool reverts to `size=3` after any mgr restart.
+- Added an onboarding-recovery troubleshooting entry to `references/validation-hardening.md` for the internal `StorageClient` stuck `Initializing` with a `crypto/rsa: verification error`, plus a `.mgr` post-reboot drift check.
+- Added a **virtio / no `/dev/disk/by-id/`** udev MachineConfig recipe to `references/local-storage-disks.md`, including the ignition `data:` `%20`-not-`+` encoding caveat.
+- Added `scripts/render_sno_remediation.py` (generator, review-before-run) that emits the deterministic ODF 4.20 SNO patches (reconcile ignore, MDS/RGW `topologyKey`, CephBlockPool failure domain, CSI `Driver` replicas, `POOL_NO_REDUNDANCY` mute); pool sizing and onboarding remain runbook-only. Covered by `tests/test_render_sno_remediation.py`.
+
 ## 1.4.0
 
 - Added early SNO topology detection: `oc get infrastructure cluster` is now an explicit discovery step in `references/install-and-preflight.md` Live Discovery and in `SKILL.md` Inputs To Collect; `SingleReplica` result triggers the SNO path.
