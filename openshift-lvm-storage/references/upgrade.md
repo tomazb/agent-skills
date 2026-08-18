@@ -75,7 +75,7 @@ After the operator upgrade, verify the `LVMCluster` CR is still reconciled and `
 
 ```bash
 oc -n openshift-storage get lvmcluster lvmcluster -o yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=condition=Ready --timeout=10m
+oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
 
 If the operator version introduces CR schema changes, the `LVMCluster` may need updating. Check the release notes for any required CR changes.
