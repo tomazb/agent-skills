@@ -125,6 +125,67 @@ oc -n openshift-local-storage get localvolumeset localblock -o wide
 oc get pv -o yaml
 ```
 
+### Disks with no `/dev/disk/by-id/` entry (virtio and similar)
+
+Some hypervisor disks (for example virtio `/dev/vdX` with no serial) have no
+`/dev/disk/by-id/` symlink. The LSO diskmaker refuses to create a PV for them
+even when a `LocalVolume` `devicePaths` entry resolves by `by-path`:
+
+```
+unable to find disk ID for local pool ... IDPathNotFoundError: a symlink to
+"vdb" was not found in "/dev/disk/by-id/"
+```
+
+Create a stable `by-id` symlink with a udev rule delivered by MachineConfig,
+then point the `LocalVolume` at the new `/dev/disk/by-id/<name>` path. Resolve
+the disk's `ID_PATH` first (`udevadm info -q property -n /dev/<disk> | grep
+ID_PATH`) and target that, never a bare kernel name.
+
+```yaml
+apiVersion: machineconfiguration.openshift.io/v1
+kind: MachineConfig
+metadata:
+  name: 99-odf-virtio-disk-udev
+  labels:
+    machineconfiguration.openshift.io/role: master
+spec:
+  config:
+    ignition:
+      version: 3.4.0
+    storage:
+      files:
+      - path: /etc/udev/rules.d/99-odf-virtio-disk.rules
+        mode: 0644
+        contents:
+          # Decoded rule (match on the stable ID_PATH, not the kernel name):
+          # SUBSYSTEM=="block", ENV{ID_PATH}=="pci-0000:00:08.0", SYMLINK+="disk/by-id/virtio-odf-vdb"
+          source: "data:text/plain,SUBSYSTEM%3D%3D%22block%22%2C%20ENV%7BID_PATH%7D%3D%3D%22pci-0000%3A00%3A08.0%22%2C%20SYMLINK%2B%3D%22disk%2Fby-id%2Fvirtio-odf-vdb%22%0A"
+```
+
+**Ignition encoding caveat:** the `data:` URL must percent-encode spaces as
+`%20`. Ignition decodes `data:` URLs per RFC 2397/3986, where `+` is kept as a
+literal `+` (unlike form-encoding, which would turn it into a space). So writing
+the rule with `+` separators leaves stray `+` characters
+(`SUBSYSTEM==...,+ENV{ID_PATH}==...`) that make udev silently ignore the rule.
+Always use `%20`. Verify on the node after the MCP updates:
+
+```bash
+oc debug node/<node> -- chroot /host bash -c \
+  'cat /etc/udev/rules.d/99-odf-virtio-disk.rules; ls -l /dev/disk/by-id/ | grep vdb'
+```
+
+A MachineConfig change reboots the node. On SNO the API is unavailable until the
+single node returns — wait for the MCP to report `Updated` and the node `Ready`
+before continuing. Then reference the new path in the `LocalVolume`:
+
+```yaml
+  storageClassDevices:
+  - storageClassName: localblock
+    volumeMode: Block
+    devicePaths:
+    - /dev/disk/by-id/virtio-odf-vdb
+```
+
 ### LocalVolume (exception — when other storage systems share the same node)
 
 When the ODF node also runs other storage systems (Longhorn, LVMS, a second Ceph cluster) that consume raw block devices, `LocalVolumeSet` attribute filters (size, type, model) may accidentally match disks that belong to those systems. Use a `LocalVolume` CR with the exact stable device path to select only the intended ODF disk:

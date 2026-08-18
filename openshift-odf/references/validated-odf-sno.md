@@ -85,7 +85,7 @@ This section documents observed evidence and workarounds for ODF 4.20 on SNO (OC
 - ODF version: 4.20.16-rhodf (channel: `stable-4.20`)
 - Topology: Single Node OpenShift (SNO) — `infrastructure.status.controlPlaneTopology: SingleReplica`
 - Deployment mode: internal-attached (Local Storage Operator, `LocalVolume` resource for exact disk selection)
-- Storage services: ceph-rbd block, MCG/RGW object (**CephFS not validated in this scenario**)
+- Storage services: ceph-rbd block, cephfs shared filesystem, MCG/RGW object (all validated; see Validation Notes)
 - Disk: one dedicated virtio block device (`/dev/disk/by-path/pci-0000:00:08.0`, ~500 GiB), raw (unpartitioned, no signatures)
 
 ## StorageCluster Configuration (ODF 4.20 SNO)
@@ -178,12 +178,15 @@ In ODF 4.20, `getCephPoolReplicatedSize()` always returns `3` for SNO. All Ceph 
 After the StorageCluster and CephCluster reach `Ready` (or you see Ceph OSDs are up):
 
 ```bash
-# Step 1: Freeze ODF reconciliation for pools/object stores
+# Step 1: Freeze ODF reconciliation for pools/object stores/filesystems.
+# cephFilesystems must be frozen too, otherwise the CephFilesystem pool-size and
+# topologyKey patches below (and in Regression 4) are reverted by ocs-operator.
 oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p '{
   "spec": {
     "managedResources": {
       "cephBlockPools":   {"reconcileStrategy": "ignore"},
-      "cephObjectStores": {"reconcileStrategy": "ignore"}
+      "cephObjectStores": {"reconcileStrategy": "ignore"},
+      "cephFilesystems":  {"reconcileStrategy": "ignore"}
     }
   }
 }'
@@ -242,6 +245,48 @@ data:
     mon_max_pg_per_osd = 600
 ```
 
+CephFilesystem and CephObjectStore pools need the same treatment as the block
+pool: with one OSD, `size=3` + `replicasPerFailureDomain=1` fails Rook validation
+("size must be greater than replicasPerFailureDomain"). After
+`reconcileStrategy: ignore` is set for `cephFilesystems` and `cephObjectStores`,
+patch their metadata and data pools:
+
+```bash
+# CephFilesystem: data + metadata pools -> size 1, host failure domain
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
+  --type json -p '[
+    {"op":"replace","path":"/spec/dataPools/0/failureDomain","value":"host"},
+    {"op":"replace","path":"/spec/dataPools/0/replicated/size","value":1},
+    {"op":"add","path":"/spec/dataPools/0/replicated/requireSafeReplicaSize","value":false},
+    {"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"},
+    {"op":"replace","path":"/spec/metadataPool/replicated/size","value":1},
+    {"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false},
+    {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}
+  ]'
+
+# CephObjectStore: data + metadata pools -> size 1, host failure domain
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
+  --type json -p '[
+    {"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"},
+    {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/dataPool/failureDomain","value":"host"},
+    {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
+  ]'
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
+  --type merge -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
+```
+
+The `.mgr` pool is recreated at `size=3` whenever the mgr restarts. Re-check and
+re-apply `size=1`/`min_size=1` on `.mgr` after any mgr restart:
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool set .mgr size 1 --yes-i-really-mean-it
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool set .mgr min_size 1
+```
+
 ## ODF 4.20 Regression 3: CSI Controller Plugin Replicas
 
 ODF 4.20 deploys 2 replicas of each CSI controller plugin with `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity. On SNO the second replica can never schedule. In ODF 4.20, patching `OperatorConfig` alone is **not sufficient** — the `Driver` CRs (`drivers.csi.ceph.io`) control the replica count and must be patched directly.
@@ -272,6 +317,53 @@ oc -n openshift-storage get pods -l 'app=openshift-storage.rbd.csi.ceph.com-ctrl
 oc -n openshift-storage get pods -l 'app=openshift-storage.cephfs.csi.ceph.com-ctrlplugin'
 ```
 
+## ODF 4.20 Regression 4: Empty `topologyKey` on MDS and RGW Placements
+
+The empty-`topologyKey` regression is not limited to mon/OSD placement. On ODF
+4.20 SNO, ocs-operator also sets `topologyKey: ""` with
+`whenUnsatisfiable: DoNotSchedule` on:
+
+- `CephFilesystem` `spec.metadataServer.placement.topologySpreadConstraints`
+- `CephObjectStore` `spec.gateway.placement.topologySpreadConstraints`
+
+**Symptom:** the `CephFilesystem` and/or `CephObjectStore` stay in `Failure`,
+no `rook-ceph-mds-*` or `rook-ceph-rgw-*` pods appear, and `ceph fs ls` reports
+"No filesystems enabled". The RBD and CephFS StorageClasses never get created
+because the internal `StorageClient` cannot finish while these CRs are failed.
+
+**Workaround** (with `cephFilesystems` / `cephObjectStores` reconciliation set to
+`ignore`, patch the empty key to a valid one):
+
+```bash
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
+  --type json -p '[
+    {"op":"replace","path":"/spec/metadataServer/placement/topologySpreadConstraints/0/topologyKey","value":"kubernetes.io/hostname"},
+    {"op":"replace","path":"/spec/metadataServer/placement/topologySpreadConstraints/0/whenUnsatisfiable","value":"ScheduleAnyway"}
+  ]'
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
+  --type json -p '[
+    {"op":"replace","path":"/spec/gateway/placement/topologySpreadConstraints/0/topologyKey","value":"kubernetes.io/hostname"},
+    {"op":"replace","path":"/spec/gateway/placement/topologySpreadConstraints/0/whenUnsatisfiable","value":"ScheduleAnyway"}
+  ]'
+```
+
+After both patch, the MDS and RGW pods schedule, the filesystem is created, and
+(once onboarding completes) the `ocs-storagecluster-ceph-rbd` and
+`ocs-storagecluster-cephfs` StorageClasses appear.
+
+The deterministic patches in this section (Regression 3 + 4, plus
+`reconcileStrategy: ignore` and the CephBlockPool failure-domain fix) can be
+generated for review with:
+
+```bash
+python3 scripts/render_sno_remediation.py \
+  --name ocs-storagecluster --namespace openshift-storage
+```
+
+If the internal `StorageClient` is stuck in `Initializing` with a
+"crypto/rsa: verification error" after a reinstall, see the onboarding
+troubleshooting entry in `references/validation-hardening.md`.
+
 ## Pool Configuration (ODF 4.20 SNO, after workaround)
 
 - All pools (block, RGW, system): `replicated.size: 1`, `requireSafeReplicaSize: false`
@@ -293,7 +385,7 @@ No ODF StorageClass became the default; pre-existing default(s) remained in plac
 - After applying the `SINGLE_NODE` patch, `flexibleScaling`, placement overrides, pool size workaround (including the `CephBlockPool` `failureDomain` fix), and CSI replica fix, the `StorageCluster` reached `Ready`.
 - `ceph -s` showed `HEALTH_OK` (with `POOL_NO_REDUNDANCY` muted).
 - 1 OSD on the dedicated disk; 3 mons in quorum; NooBaa writing data actively.
-- ceph-rbd PVC provisioning and MCG/RGW object storage validated. **CephFS not validated in this scenario.**
+- ceph-rbd PVC provisioning, cephfs PVC provisioning, and MCG/RGW object storage validated. CephFS came up after the Regression 4 MDS `topologyKey` fix (MDS active + 1 hot standby, `ceph fs ls` healthy, a `ReadWriteMany` cephfs PVC bound).
 - The `POOL_NO_REDUNDANCY` mute suppresses expected warning noise — it does not restore data redundancy. SNO ODF has no OSD redundancy by design.
 
 ---
