@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0
+
+- Validated ODF 4.22.1 SNO **with CephFS**: RBD (RWO), CephFS (RWX), and Object (OBC) all pass; `StorageCluster` Ready, `HEALTH_OK`, `lvms-vg1` remained the sole default.
+- Documented the empty-`topologyKey` fixes for **MDS and RGW** on 4.22 (CephFS + Object), which the mon/OSD fix alone does not cover.
+- New regression: on Ceph 20.2 "tentacle" (ODF 4.22.1) the `CephObjectStore`/`CephFilesystem` metadata/data pools reject `size=1` while `replicasPerFailureDomain=1` — remove the field (block pools tolerate it).
+- New: SNO CPU-request starvation workaround via minimal `spec.resources` requests (`resourceProfile: lean` remains unsafe on 4.22 — traps `Progressing`).
+- Corrected the CSI ctrlplugin replica fix to patch the per-`drivers.csi.ceph.io` CRs (the `operatorconfigs.csi.ceph.io` patch is reverted on 4.22.1).
+- Refined the StorageClient onboarding-signature recovery to a convergent token-only regeneration (never delete the keys after the token; restart `ocs-operator` once).
+- Extended `scripts/render_sno_remediation.py` to emit the 4.22 object/file pool `replicasPerFailureDomain` removal and the minimal resource-request patches.
+- Lifted the "do not enable CephFS on 4.22" caveat in `SKILL.md`.
+
 ## 1.5.0
 
 - Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).

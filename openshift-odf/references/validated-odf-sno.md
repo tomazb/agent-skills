@@ -524,6 +524,20 @@ oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
   --type merge \
   -p '{"spec":{"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"dataPools":[{"name":"data0","replicated":{"size":1,"requireSafeReplicaSize":false}}]}}'
 
+# Step 2b: In the SAME pass, remove replicasPerFailureDomain from the object and
+# filesystem pools. On Ceph 20.2 "tentacle" (4.22.1) size=1 + replicasPerFailureDomain=1
+# is rejected on these CRs ("size must be greater"), so RGW/MDS never start until
+# the field is gone. See "replicasPerFailureDomain=1 + size=1 Rejected on Object/File
+# Pools" below for the rationale.
+oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type json -p '[
+  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+  {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
+]'
+oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem --type json -p '[
+  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+  {"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}
+]'
+
 # Step 3: Fix system pools (not managed by ODF CRs) via rook-ceph-operator
 ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
 CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
@@ -648,6 +662,17 @@ oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore
 ```
 
 This dropped observed CPU requests from 99% to ~35% and let all components schedule.
+
+**After this resource patch:** the mgr restarts, which reverts the `.mgr` pool to
+`size=3`. Re-run the fix and re-mute before proceeding:
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF osd pool set .mgr size 1 --yes-i-really-mean-it
+oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF osd pool set .mgr min_size 1
+oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF health mute POOL_NO_REDUNDANCY
+```
 
 ## CSI Controller Plugin Replicas on SNO
 

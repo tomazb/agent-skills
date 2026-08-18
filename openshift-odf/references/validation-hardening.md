@@ -156,36 +156,37 @@ key that no longer matches the public key the provider verifies with, so the
 `ocs-client-operator` cannot onboard the consumer and never creates the
 `ClientProfile` that gates CSI StorageClass creation.
 
-**Fix — regenerate the onboarding key chain and reconnect:**
+**Fix — regenerate the onboarding token against a stable key pair:**
+
+The failure is a signature mismatch: the signed `onboarding-token-*` secret was
+produced with a private key that no longer matches the public key the provider
+verifies with. Repeatedly deleting the keys and restarting races (the keys and
+token regenerate out of order) and never converges. Regenerate the **token
+only** against the existing key pair:
 
 ```bash
-# 1. Back up the onboarding secrets first (recovery relies on ocs-operator
-#    regenerating them; keep a copy in case that assumption does not hold).
-oc -n openshift-storage get secret onboarding-private-key onboarding-ticket-key \
-  -o yaml > onboarding-secrets-backup.yaml
-# Delete the mismatched keys and the StorageConsumer-owned token secret.
-oc -n openshift-storage delete secret onboarding-private-key onboarding-ticket-key
+# 1. Confirm the key pair exists and is matched (same RSA modulus). If either
+#    key is missing, restart ocs-operator once and wait for BOTH to be recreated
+#    together before continuing.
+oc -n openshift-storage get secret onboarding-private-key onboarding-ticket-key
+
+# 2. Delete ONLY the signed token and the StorageClient (leave the keys intact).
 TOKEN=$(oc -n openshift-storage get secret -o name | grep onboarding-token | head -1)
 [ -n "$TOKEN" ] && oc -n openshift-storage delete "$TOKEN"
-
-# 2. Regenerate: restart ocs-operator (recreates keys) and reconcile the consumer.
-oc -n openshift-storage rollout restart deploy/ocs-operator
-oc -n openshift-storage annotate storageconsumer internal reconcile="$(date +%s)" --overwrite
-
-# 3. Recreate the StorageClient so it picks up a freshly signed ticket. If it is
-#    stuck 'Offboarding', clear its finalizer.
 oc delete storageclients.ocs.openshift.io ocs-storagecluster --wait=false
 oc patch storageclients.ocs.openshift.io ocs-storagecluster \
   --type merge -p '{"metadata":{"finalizers":[]}}' || true
 
-# 4. Restart the provider so it loads the regenerated public key, then let
-#    ocs-operator recreate the StorageClient.
-oc -n openshift-storage rollout restart deploy/ocs-provider-server
+# 3. Restart ocs-operator ONCE. Because the keys already exist, it regenerates
+#    only the missing token — signed with the current private key — and recreates
+#    the StorageClient. Do NOT delete the keys or restart repeatedly.
 oc -n openshift-storage rollout restart deploy/ocs-operator
 ```
 
 **Verify:** `oc get storageclients.ocs.openshift.io` shows `Connected` with a
 populated CONSUMER, one `clientprofiles.csi.ceph.io` exists, and the
 `ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs` StorageClasses
-appear. This recovery is a leftover-state hazard after repeated
+appear. Observed on ODF 4.22.1 after a StorageCluster delete/recreate; the key
+point is to never delete the keys after the token. This recovery is a
+leftover-state hazard after repeated
 install/delete cycles; a first clean install does not need it.
