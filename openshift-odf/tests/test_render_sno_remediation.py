@@ -86,3 +86,33 @@ def test_emitted_script_is_valid_bash():
         ["bash", "-n"], input=out, text=True, capture_output=True
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_emits_object_file_pool_failuredomain_removal():
+    text = render_sno_remediation()
+    # Object store metadata + data pools must drop replicasPerFailureDomain
+    assert "cephobjectstore ocs-storagecluster-cephobjectstore" in text
+    assert "/spec/metadataPool/replicated/replicasPerFailureDomain" in text
+    assert "/spec/dataPool/replicated/replicasPerFailureDomain" in text
+    # Filesystem metadata AND data pools (plural indexed path) must drop it too
+    assert "cephfilesystem ocs-storagecluster-cephfilesystem" in text
+    assert "/spec/dataPools/0/replicated/replicasPerFailureDomain" in text
+
+
+def test_emits_minimal_resource_requests():
+    text = render_sno_remediation()
+    # StorageCluster spec.resources minimal requests to avoid SNO CPU starvation
+    assert '"mon"' in text and '"mgr"' in text and '"noobaa-core"' in text
+    # frozen MDS/RGW resources patched directly on the CRs
+    assert "metadataServer" in text and "gateway" in text
+    # resourceProfile lean must be explicitly warned against, not used
+    assert "resourceProfile" in text and "lean" in text
+
+
+def test_step_numbers_are_ascending():
+    # The generated review script must present its numbered steps in order so a
+    # human reviewer reads them top to bottom (regression: resource block was 6
+    # before mute's 5). Extract leading "# N." markers and assert ascending.
+    text = render_sno_remediation()
+    nums = [int(m) for m in re.findall(r"^# (\d+)\.", text, re.MULTILINE)]
+    assert nums == sorted(nums), f"step numbers not ascending: {nums}"

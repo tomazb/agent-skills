@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render the deterministic ODF 4.20 SNO post-install remediation commands.
+"""Render the deterministic ODF 4.20/4.22 SNO post-install remediation commands.
 
 This is a GENERATOR: it prints a reviewable bash script and never executes
 `oc` or `ceph`. It emits only the fixed, kube-API-level patches that are safe
@@ -15,7 +15,7 @@ from pathlib import Path
 
 BANNER = """\
 #!/usr/bin/env bash
-# ODF 4.20 SNO deterministic remediation — REVIEW BEFORE RUNNING.
+# ODF 4.20/4.22 SNO deterministic remediation — REVIEW BEFORE RUNNING.
 #
 # Prerequisite: the CephCluster is Ready (mons up, OSD up/in).
 #
@@ -80,11 +80,54 @@ oc -n {ns} patch drivers.csi.ceph.io/{ns}.cephfs.csi.ceph.com \\
 """
 
 _MUTE = """\
-# 5. Mute the expected single-replica warning. Run AFTER pool sizing from the
+# 6. Mute the expected single-replica warning. Run AFTER pool sizing from the
 #    runbook (POOL_NO_REDUNDANCY is only correct once pools are size=1).
 ROOK_OP=$(oc -n {ns} get pods -l app=rook-ceph-operator -o name | head -1)
 CONF="/var/lib/rook/{ns}/{ns}.config"
 oc -n {ns} exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
+"""
+
+_OBJECT_FILE_FD = """\
+# 3b. ODF 4.22 (Ceph 20.2 tentacle): the CephObjectStore and CephFilesystem
+#     metadata/data pools reject size=1 while replicasPerFailureDomain=1
+#     ("size must be greater"). CephBlockPool tolerates it, but the object and
+#     file controllers do not — RGW and MDS never start. Drop the field (keep
+#     size=1) so both reconcile.
+oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type json -p '[
+  {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
+  {{"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}}
+]'
+oc -n {ns} patch cephfilesystem {name}-cephfilesystem --type json -p '[
+  {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
+  {{"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}}
+]'
+"""
+
+_RESOURCE_REQUESTS = """\
+# 5. SNO CPU-request starvation: ODF's default 'balanced' requests (mon 1050m,
+#    mds/osd/rgw 2050m, noobaa 999m) saturate the node's schedulable CPU even
+#    though real use is ~6%, leaving noobaa-core and CSI pods Pending. Do NOT
+#    set 'resourceProfile: lean' (it traps the StorageCluster in Progressing on
+#    4.22). Instead set minimal per-component requests. MDS/RGW are frozen CRs,
+#    so patch them directly.
+oc -n {ns} patch storagecluster {name} --type merge -p '{{
+  "spec": {{
+    "resources": {{
+      "mon":             {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
+      "mgr":             {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
+      "noobaa-core":     {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
+      "noobaa-db":       {{"requests": {{"cpu": "100m", "memory": "512Mi"}}}},
+      "noobaa-endpoint": {{"requests": {{"cpu": "100m", "memory": "512Mi"}}}}
+    }}
+  }}
+}}'
+oc -n {ns} patch storagecluster {name} --type json -p '[
+  {{"op":"add","path":"/spec/storageDeviceSets/0/resources","value":{{"requests":{{"cpu":"100m","memory":"2Gi"}},"limits":{{"cpu":"2","memory":"5Gi"}}}}}}
+]'
+oc -n {ns} patch cephfilesystem {name}-cephfilesystem --type merge \\
+  -p '{{"spec":{{"metadataServer":{{"resources":{{"requests":{{"cpu":"100m","memory":"1Gi"}},"limits":{{"cpu":"2","memory":"4Gi"}}}}}}}}}}'
+oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type merge \\
+  -p '{{"spec":{{"gateway":{{"resources":{{"requests":{{"cpu":"100m","memory":"1Gi"}},"limits":{{"cpu":"2","memory":"4Gi"}}}}}}}}}}'
 """
 
 
@@ -98,7 +141,9 @@ def render_sno_remediation(
         _RECONCILE_IGNORE.format(name=name, ns=namespace),
         _TOPOLOGYKEY.format(name=name, ns=namespace),
         _BLOCKPOOL_FD.format(name=name, ns=namespace),
+        _OBJECT_FILE_FD.format(name=name, ns=namespace),
         _CSI_REPLICAS.format(name=name, ns=namespace),
+        _RESOURCE_REQUESTS.format(name=name, ns=namespace),
         _MUTE.format(name=name, ns=namespace),
     ]
     text = "\n".join(blocks)
