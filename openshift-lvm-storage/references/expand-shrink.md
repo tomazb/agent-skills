@@ -39,6 +39,8 @@ spec:
         default: true
 ```
 
+Keep `default:` at whatever the live CR already has — read it with `oc -n openshift-storage get lvmcluster lvmcluster -o jsonpath='{.spec.storage.deviceClasses[*].default}'` before editing. Flipping it to `true` here while another StorageClass is already the cluster default (ODF, or a prior install) leaves two defaults, and a PVC that omits `storageClassName` then resolves unpredictably. Verify with `oc get sc` and the `storageclass.kubernetes.io/is-default-class` annotation.
+
 Apply and wait:
 
 ```bash

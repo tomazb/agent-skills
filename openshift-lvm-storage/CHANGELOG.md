@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.1.0
+
+Fixes and evidence from a live LVMS 4.20.1 install on an OCP 4.20.32 SNO cluster that already ran ODF:
+
+- Every `LVMCluster` template set `default: true` with no instruction to check for an existing default StorageClass, which silently produces a *second* default on a cluster running ODF or a prior LVMS install — contradicting the skill's own "keep exactly one default StorageClass" rule. `references/install-and-preflight.md` now has a decide-`default:`-first section with the discovery command and both branches, and `references/expand-shrink.md` says to preserve whatever the live CR already has.
+- Documented what `default: false` costs: the operator's apply-time warning, and the fact that on a cluster with no default StorageClass a PVC omitting `storageClassName` stays `Pending` with nothing in the LVMS logs explaining it.
+- Disk discovery assumed every disk has a `/dev/disk/by-id/` entry. virtio disks presented without a serial have none — only `/dev/disk/by-path/`. `references/install-and-preflight.md` now resolves the identity first, showing how to list both directories and when each is the right selector.
+- Added a validated scenario to `references/validated-lvms-ocp-sno.md`: LVMS 4.20.1 alongside ODF in a shared `openshift-storage`, a 300 GiB virtio disk selected by `by-path`, the four-way raw-disk evidence gate, resulting VG/thin-pool figures, filesystem and raw-block validation, and the fact that 4.20.1 runs no `topolvm-controller`/`topolvm-node` pods.
+- Contract tests in `tests/test_lvms_runbook_contracts.py` for all three fixes.
+
 ## 1.0.2
 
 - Added openshift-versions handoff, patch_lvms_manifest helper invocation in install guidance, and package-validator reachability checks.

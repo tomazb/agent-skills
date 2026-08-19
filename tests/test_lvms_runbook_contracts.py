@@ -92,3 +92,63 @@ def test_expand_wait_warns_about_stale_ready_status():
         "expansion runbook must warn that an already-Ready LVMCluster can pass "
         "the state wait before the controller observes the spec change"
     )
+
+
+LVMCLUSTER_TEMPLATE_FILES = (
+    "install-and-preflight.md",
+    "expand-shrink.md",
+    "validated-lvms-ocp-sno.md",
+)
+
+
+def test_default_deviceclass_templates_warn_about_an_existing_default_sc():
+    """`default: true` mints a default StorageClass.
+
+    The skill's own safety rule is "keep exactly one default StorageClass", and
+    validation-hardening asserts it — so a template that sets `default: true`
+    without telling the reader to check for an existing default produces a
+    second one on any cluster that already has ODF or another default.
+    """
+    for name in LVMCLUSTER_TEMPLATE_FILES:
+        text = _reference_text(name)
+        if "default: true" not in text:
+            continue
+        assert re.search(r"is-default-class|existing default|already has a default", text), (
+            f"{name}: sets 'default: true' in an LVMCluster template without "
+            "telling the reader to check for an existing default StorageClass first"
+        )
+
+
+def test_non_default_deviceclass_consequence_is_documented():
+    """`default: false` is the safe choice, but it has a failure mode.
+
+    With no default StorageClass on the cluster, a PVC that omits
+    storageClassName never binds. The operator warns about this at apply time;
+    the runbook must too, or the reader picks the safe option and then cannot
+    explain a Pending PVC.
+    """
+    text = _reference_text("install-and-preflight.md")
+    assert "storageClassName" in text and re.search(
+        r"default:\s*false|no default StorageClass", text
+    ), (
+        "install runbook must document that with default: false (or no cluster "
+        "default) PVCs must name the StorageClass explicitly or stay Pending"
+    )
+
+
+def test_disk_discovery_handles_missing_by_id_entry():
+    """Not every disk has a /dev/disk/by-id/ entry.
+
+    virtio disks without a serial expose only /dev/disk/by-path/, so a
+    discovery step that hardcodes a by-id path leaves the reader with no
+    documented way forward.
+    """
+    text = _reference_text("install-and-preflight.md")
+    assert "by-path" in text, "discovery must mention the by-path fallback"
+    assert re.search(r"virtio|no by-id|without a serial|lacks? a by-id", text, re.I), (
+        "discovery must state that some disks (virtio without a serial) have no "
+        "/dev/disk/by-id/ entry and that by-path is the correct selector there"
+    )
+    assert "ls -l /dev/disk/by-id" in text or "ls /dev/disk/by-id" in text, (
+        "discovery must show how to check whether a by-id entry exists at all"
+    )
