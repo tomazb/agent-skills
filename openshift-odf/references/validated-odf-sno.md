@@ -557,6 +557,15 @@ oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
 # is rejected on these CRs ("size must be greater"), so RGW/MDS never start until
 # the field is gone. See "replicasPerFailureDomain=1 + size=1 Rejected on Object/File
 # Pools" below for the rationale.
+#
+# These are JSON-Patch 'remove' ops: run them once. A second run fails with a
+# missing-target error once the fields are gone.
+#
+# The CephFilesystem patch assumes exactly ONE data pool (the validated SNO
+# layout). Confirm before patching, and repeat the dataPools op per index if
+# your filesystem has more:
+oc -n openshift-storage get cephfilesystem ocs-storagecluster-cephfilesystem \
+  -o jsonpath='{range .spec.dataPools[*]}{.name}{"\n"}{end}'
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type json -p '[
   {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
   {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
