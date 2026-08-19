@@ -11,6 +11,20 @@
 - Extended `scripts/render_sno_remediation.py` to emit the 4.22 object/file pool `replicasPerFailureDomain` removal and the minimal resource-request patches.
 - Lifted the "do not enable CephFS on 4.22" caveat in `SKILL.md`.
 
+Review-round fixes:
+
+- `scripts/render_sno_remediation.py` now requires `--release {4.20,4.22}` and gates the release-specific blocks: the CephBlockPool failure-domain fix is 4.20-only, while the object/file `replicasPerFailureDomain` removal and the resource-request floor are 4.22-only. One script previously mixed both, so under `set -e` it aborted on the first inapplicable patch. Step numbers are assigned at render time so each release gets a contiguous sequence.
+- The generator validates `--name`/`--namespace` as RFC 1123 names and rejects anything else, instead of interpolating operator-supplied values straight into executable shell.
+- The `POOL_NO_REDUNDANCY` mute is emitted as commented guidance only: muting it before pool sizing (which the generator deliberately does not perform) hides a still-legitimate warning.
+- The 4.22 block now emits a fail-closed precondition that exactly one `CephFilesystem` data pool exists, since the patch targets `/spec/dataPools/0`.
+- Added command-level tests for the CLI entry point (`--output`, stdout, missing/invalid `--release`, rejected names), per-release output assertions, and value-level assertions on the rendered resource requests.
+- `references/validated-odf-sno.md`: the 4.20 `CephBlockPool` patch now persists `size: 1` + `requireSafeReplicaSize: false` in the CR — `cephBlockPools: ignore` only stops ocs-operator, and Rook still reconciles the CR back over the live `ceph osd pool set`. The `SINGLE_NODE` CSV patch selects exactly one `ocs-operator` CSV and aborts when the variable is already present. The placement claim is scoped to mon/OSD/OSD-prepare, and the `replicasPerFailureDomain` rationale section now references Step 2b instead of repeating its non-idempotent `remove` patches.
+- Added a **Restoring Managed Reconciliation After Upgrade** section: the workarounds leave three `reconcileStrategy: ignore` values and a `rook-config-override` ConfigMap behind, with no documented path back to `manage`.
+- `references/validation-hardening.md`: the onboarding recovery now actually compares the RSA moduli it claims to check, selects the token by its `StorageConsumer` owner reference instead of `grep | head -1`, targets `openshift-storage` explicitly, and no longer hides a failed finalizer patch behind `|| true`.
+- `references/local-storage-disks.md`: the udev rule gains `ENV{DEVTYPE}=="disk"` (partitions share the parent's `ID_PATH` and would otherwise claim the same symlink), with a `DEVTYPE`/`ID_PATH` verification step.
+- `SKILL.md`: noted that ODF 4.20 does not reduce the SNO mon count (3 mons + 1 mgr), which contradicted the generic "reduced mon/mgr counts" rule.
+- Added `tests/test_odf_sno_install_gate_contracts.py` pinning the SNO pre-flight gate invariants: topology discovery, both affected channels, gate-before-install ordering, and per-version routing.
+
 ## 1.5.0
 
 - Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).

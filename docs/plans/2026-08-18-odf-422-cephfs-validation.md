@@ -12,7 +12,7 @@
 
 ---
 
-### Task 1: Extend `render_sno_remediation.py` for 4.22 pool-spec + resource-request patches
+## Task 1: Extend `render_sno_remediation.py` for 4.22 pool-spec + resource-request patches
 
 **Files:**
 - Modify: `openshift-odf/scripts/render_sno_remediation.py`
@@ -138,7 +138,7 @@ git commit -m "openshift-odf: emit 4.22 object/file pool + resource-request patc
 
 ---
 
-### Task 2: Update the 4.22 runbook section for CephFS validation
+## Task 2: Update the 4.22 runbook section for CephFS validation
 
 **Files:**
 - Modify: `openshift-odf/references/validated-odf-sno.md`
@@ -294,7 +294,7 @@ git commit -m "openshift-odf: document CephFS validated on ODF 4.22.1 SNO with t
 
 ---
 
-### Task 3: Refine onboarding-signature recovery ordering
+## Task 3: Refine onboarding-signature recovery ordering
 
 **Files:**
 - Modify: `openshift-odf/references/validation-hardening.md`
@@ -341,14 +341,14 @@ git commit -m "openshift-odf: refine StorageClient onboarding recovery to a conv
 
 ---
 
-### Task 4: Lift the "no CephFS on 4.22" caveat in SKILL.md
+## Task 4: Lift the "no CephFS on 4.22" caveat in SKILL.md
 
 **Files:**
 - Modify: `openshift-odf/SKILL.md`
 
 **Step 1:** In the Core Safety Rules version-scoped exception (line 47), replace the sentence `Do not enable CephFS with this workaround: its pool-reconciliation path was not validated for ODF 4.22 SNO.` with:
 
-```
+```text
 CephFS is supported on ODF 4.22.1 SNO once the MDS/RGW empty-topologyKey patches and the object/file-pool `replicasPerFailureDomain` removal are also applied (see `references/validated-odf-sno.md`); freeze `cephFilesystems` alongside `cephBlockPools`/`cephObjectStores` before patching.
 ```
 
@@ -363,7 +363,7 @@ git commit -m "openshift-odf: lift no-CephFS-on-4.22 caveat now that 4.22.1 Ceph
 
 ---
 
-### Task 5: Version bump to 1.6.0
+## Task 5: Version bump to 1.6.0
 
 **Files:**
 - Modify: `openshift-odf/VERSION`, `openshift-odf/package.json`, `openshift-odf/README.md`, `openshift-odf/CHANGELOG.md`
@@ -393,7 +393,7 @@ git commit -m "openshift-odf: bump to 1.6.0"
 
 ---
 
-### Task 6: Validation gates
+## Task 6: Validation gates
 
 **Step 1:** Run the generator tests:
 Run: `cd openshift-odf && python -m pytest tests/ -q`
@@ -412,7 +412,7 @@ Expected: PASS.
 
 ---
 
-### Task 7: Final review + push
+## Task 7: Final review + push
 
 **Step 1:** `git --no-pager log --oneline origin/main..HEAD` — confirm the new commits are present and trailer-free.
 

@@ -76,8 +76,11 @@ def test_banner_states_boundary_and_excludes_stateful_steps():
     assert "CephCluster" in out and "Ready" in out  # prerequisite banner
     assert "validated-odf-sno.md" in out  # pointer for pool sizing
     assert "validation-hardening.md" in out  # pointer for onboarding
-    # stateful steps must NOT be emitted
-    assert "onboarding" not in out.lower()
+    # stateful steps must NOT be emitted — assert on the secret/command names,
+    # not the bare word "onboarding": the banner intentionally points at the
+    # StorageClient onboarding recovery runbook.
+    assert "onboarding-private-key" not in out
+    assert "onboarding-token" not in out
     assert "osd pool ls" not in out
 
 
@@ -526,7 +529,7 @@ Expected: only the pre-existing README/VERSION sync issue remains.
 
 **Step 1:** Set `openshift-odf/VERSION` to:
 
-```
+```text
 1.5.0
 ```
 

@@ -90,7 +90,7 @@ This section documents observed evidence and workarounds for ODF 4.20 on SNO (OC
 
 ## StorageCluster Configuration (ODF 4.20 SNO)
 
-The StorageCluster below bakes in `flexibleScaling: true` and placement overrides that avoid the empty `topologyKey` regression. Apply this manifest from the start — do not use the generic SNO manifest and add placements reactively.
+The StorageCluster below bakes in `flexibleScaling: true` and placement overrides that avoid the empty `topologyKey` regression **for `mon`, OSD, and OSD-prepare only** — those are the placements the manifest defines. MDS (`CephFilesystem`) and RGW (`CephObjectStore`) placements are emitted later by ocs-operator and still hit the same regression; fix them with the Regression 4 procedure below once CephFS and Object are enabled. Apply this manifest from the start — do not use the generic SNO manifest and add placements reactively.
 
 ```yaml
 apiVersion: ocs.openshift.io/v1
@@ -155,12 +155,25 @@ Do **not** set `resourceProfile: lean` — in ODF 4.20 this traps the StorageClu
 ODF 4.20 does **not** auto-detect `controlPlaneTopology: SingleReplica` to set its internal `SINGLE_NODE` flag. Patch the `ocs-operator` CSV to inject it. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes within seconds.
 
 ```bash
-# Confirm the flag is absent before patching
-oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE || echo "not set"
+# Select exactly one ocs-operator CSV. Stop if zero or several match: patching
+# the wrong CSV (or an old one left by a failed upgrade) silently does nothing.
+# Anchored on "ocs-operator." so ocs-client-operator does not match.
+mapfile -t OCS_CSVS < <(oc -n openshift-storage get csv \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep '^ocs-operator\.')
+[ "${#OCS_CSVS[@]}" -eq 1 ] || { echo "expected 1 ocs-operator CSV, found ${#OCS_CSVS[@]}: ${OCS_CSVS[*]}" >&2; exit 1; }
+OCS_CSV="csv/${OCS_CSVS[0]}"
+
+# Confirm the flag is absent from that CSV before patching. Appending to the env
+# array is not idempotent — a rerun would add a duplicate SINGLE_NODE entry.
+if oc -n openshift-storage get "$OCS_CSV" \
+     -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*].name}' \
+     | tr ' ' '\n' | grep -qx SINGLE_NODE; then
+  echo "SINGLE_NODE already present in $OCS_CSV - nothing to patch" >&2
+  exit 0
+fi
 
 # Append SINGLE_NODE=true to the ocs-operator CSV env array
-OCS_CSV=$(oc -n openshift-storage get csv -o name | grep ocs-operator)
-oc -n openshift-storage patch ${OCS_CSV} \
+oc -n openshift-storage patch "$OCS_CSV" \
   --type json \
   -p '[{"op":"add","path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/-","value":{"name":"SINGLE_NODE","value":"true"}}]'
 
@@ -209,15 +222,25 @@ oc -n openshift-storage exec $ROOK_OP -- \
 oc -n openshift-storage exec $ROOK_OP -- \
   ceph -c $CONF config set global mon_max_pg_per_osd 600
 
-# Step 4 (ODF 4.20-specific): Fix CephBlockPool failureDomain
+# Step 4 (ODF 4.20-specific): Fix CephBlockPool failureDomain and persist size=1
 # Rook rejects size=1 with failureDomain=osd + replicasPerFailureDomain=1.
 # Remove replicasPerFailureDomain and change failureDomain to host.
+# Set size in the CR as well: `cephBlockPools: ignore` only stops ocs-operator
+# from rewriting the CR — the Rook operator still reconciles it, so the live
+# `ceph osd pool set ... size 1` from Step 2 is reverted to the CR's size (3)
+# on the next reconcile unless the CR itself carries size 1.
 oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
   --type json \
   -p '[
     {"op":"replace","path":"/spec/failureDomain","value":"host"},
-    {"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"}
+    {"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/replicated/size","value":1},
+    {"op":"add","path":"/spec/replicated/requireSafeReplicaSize","value":false}
   ]'
+
+# Verify the CR (not just the live pool) carries the reduced size:
+oc -n openshift-storage get cephblockpool ocs-storagecluster-cephblockpool \
+  -o jsonpath='{.spec.replicated.size}{"\n"}'   # must print 1
 
 # Step 5: Patch ODF-managed object store CR to size=1
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
@@ -229,7 +252,7 @@ oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF crash archive-all
 oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF health mute POOL_NO_REDUNDANCY
 ```
 
-Also apply the `rook-config-override` ConfigMap so that any future pools ODF creates default to size=1:
+Also apply the `rook-config-override` ConfigMap so that any future pools ODF creates default to size=1. This override and the `reconcileStrategy: ignore` values above are temporary — remove them after upgrading to a fixed release, per **Restoring Managed Reconciliation After Upgrade** at the end of this document:
 
 ```yaml
 apiVersion: v1
@@ -356,9 +379,14 @@ The deterministic patches in this section (Regression 3 + 4, plus
 generated for review with:
 
 ```bash
-python3 scripts/render_sno_remediation.py \
+python3 scripts/render_sno_remediation.py --release 4.20 \
   --name ocs-storagecluster --namespace openshift-storage
 ```
+
+`--release` is mandatory and the emitted blocks differ per release: `4.20`
+renders the CephBlockPool failure-domain fix, `4.22` renders the object/file
+`replicasPerFailureDomain` removal and the resource-request floor instead.
+Running the wrong release's script aborts on the first inapplicable patch.
 
 If the internal `StorageClient` is stuck in `Initializing` with a
 "crypto/rsa: verification error" after a reinstall, see the onboarding
@@ -562,7 +590,7 @@ oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF crash archive-all
 oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF health mute POOL_NO_REDUNDANCY
 ```
 
-Also apply the `rook-config-override` ConfigMap so that any future pools ODF creates default to size=1:
+Also apply the `rook-config-override` ConfigMap so that any future pools ODF creates default to size=1. This override and the `reconcileStrategy: ignore` values above are temporary — remove them after upgrading to a fixed release, per **Restoring Managed Reconciliation After Upgrade** at the end of this document:
 
 ```yaml
 apiVersion: v1
@@ -608,24 +636,18 @@ On Ceph 20.2 "tentacle" (RHCEPH-9, shipped with ODF 4.22.1), the object and file
 pool controllers reject a pool with `size: 1` while
 `replicasPerFailureDomain: 1`:
 
-```
+```text
 invalid metadata pool spec: error pool size is 1 and replicasPerFailureDomain is 1, size must be greater
 ```
 
 `CephBlockPool` tolerates this combination, but `CephObjectStore` and
-`CephFilesystem` do not — their reconcile fails and RGW/MDS never start. Remove
-the field (keep `size: 1`) after freezing reconciliation:
+`CephFilesystem` do not — their reconcile fails and RGW/MDS never start. The fix
+is to remove the field (keeping `size: 1`) after freezing reconciliation.
 
-```bash
-oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type json -p '[
-  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
-  {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
-]'
-oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem --type json -p '[
-  {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
-  {"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}
-]'
-```
+**The commands live in Step 2b of the Pool Sizes regression above — run them
+there, once.** They are JSON-Patch `remove` operations, so a second run fails
+with "missing target" once the field is gone. This section explains *why* the
+step exists; it deliberately does not repeat the patches.
 
 **Note on `.mgr`:** the `.mgr` pool reverts to `size=3` after *any* mgr restart
 (including the restart triggered by applying resource requests below). Re-run the
@@ -704,6 +726,18 @@ oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.cephfs.csi.c
 
 ## Validation Notes (ODF 4.22 SNO)
 
+The deterministic 4.22 patches (reconcile freeze, MDS/RGW `topologyKey`, the
+object/file `replicasPerFailureDomain` removal, CSI `Driver` replicas, and the
+resource-request floor) can be generated for review with:
+
+```bash
+python3 scripts/render_sno_remediation.py --release 4.22 \
+  --name ocs-storagecluster --namespace openshift-storage
+```
+
+Pool sizing and the `POOL_NO_REDUNDANCY` mute are not emitted as commands —
+apply them from the Pool Sizes regression section above.
+
 - After applying the SINGLE_NODE patch, placement overrides, pool size workaround, and CSI replica fix, the `StorageCluster` reached `Ready`.
 - `ceph -s` showed `HEALTH_OK` (with `POOL_NO_REDUNDANCY` muted).
 - One OSD on the dedicated NVMe disk; NooBaa writing data actively.
@@ -711,3 +745,54 @@ oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.cephfs.csi.c
 - Applying minimal resource requests dropped node CPU requests from 99% to ~35%.
 - ODF console plugin enabled and visible in OpenShift console **Storage → Data Foundation**.
 - The `POOL_NO_REDUNDANCY` mute suppresses expected warning noise — it does not restore data redundancy. SNO ODF has no OSD redundancy by design.
+
+## Restoring Managed Reconciliation After Upgrade
+
+Every workaround above is **temporary and version-scoped**. Both the 4.20 and
+4.22 procedures leave three `reconcileStrategy: ignore` values and a persistent
+`rook-config-override` ConfigMap in place. While they stand, ocs-operator stops
+reconciling the pool, object-store, and filesystem CRs entirely: later
+`StorageCluster` changes are silently not propagated, and pools created after
+an upgrade keep inheriting the override defaults.
+
+After upgrading to an ODF release that fixes the single-OSD pool sizing, undo
+them in this order and confirm the cluster stays healthy at each step.
+
+```bash
+# 1. Confirm the new release no longer needs the workaround: on a fixed
+#    release ocs-operator creates pools at size=1 on SNO by itself. Check the
+#    running ODF version first.
+oc -n openshift-storage get csv -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep '^ocs-operator\.'
+
+# 2. Remove the global size defaults, then restart the operator so the override
+#    is re-read. Keep mon_max_pg_per_osd only if the PG count still needs it.
+oc -n openshift-storage delete configmap rook-config-override
+oc -n openshift-storage rollout restart deploy/rook-ceph-operator
+
+# 3. Hand the CRs back to ocs-operator.
+oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p '{
+  "spec": {
+    "managedResources": {
+      "cephBlockPools":   {"reconcileStrategy": "manage"},
+      "cephObjectStores": {"reconcileStrategy": "manage"},
+      "cephFilesystems":  {"reconcileStrategy": "manage"}
+    }
+  }
+}'
+
+# 4. Watch what ocs-operator does to the pool specs it now owns again. On a
+#    still-affected release it pushes size back to 3 on a single OSD, which
+#    leaves the pools undersized and degraded — revert to 'ignore' if so.
+oc -n openshift-storage get cephblockpool,cephfilesystem,cephobjectstore \
+  -o custom-columns='KIND:.kind,NAME:.metadata.name,SIZE:.spec.replicated.size'
+oc -n openshift-storage get storagecluster ocs-storagecluster \
+  -o jsonpath='{.status.phase}{"\n"}'
+```
+
+If step 4 shows the pools being pushed back to `size: 3`, the release still has
+the regression: restore `reconcileStrategy: ignore`, re-apply the pool sizing,
+and keep the override in place until a later upgrade.
+
+The manual MDS/RGW `topologyKey` and CSI `Driver` replica patches are reverted
+automatically once reconciliation is handed back, so re-check that MDS, RGW,
+and the CSI controller pods are still scheduled after step 3.
