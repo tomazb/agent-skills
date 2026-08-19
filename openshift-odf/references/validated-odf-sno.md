@@ -548,6 +548,8 @@ In ODF 4.22, `getCephPoolReplicatedSize()` has no `SINGLE_NODE` branch and alway
 
 **This is a version-scoped exception to the skill's "do not edit Rook CRs directly" rule.** For ODF 4.22 SNO only, due to this operator regression, direct pool and object-store CR patching is required after setting `reconcileStrategy: ignore`.
 
+**Uninstall implication (validated on 4.22.1):** while `reconcileStrategy: ignore` is in place, a graceful ODF uninstall stalls — `ocs-operator` skips the ignored pools during teardown, and rook refuses to delete the `CephCluster` while `CephBlockPool` dependents (`builtin-mgr`, `ocs-storagecluster-cephblockpool`) remain. Delete those `CephBlockPool` CRs directly to unblock; see the uninstall runbook in `references/maintenance-uninstall.md`.
+
 After the StorageCluster and CephCluster are Ready:
 
 ```bash
