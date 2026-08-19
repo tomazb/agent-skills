@@ -79,7 +79,7 @@ oc -n openshift-storage get pods -o wide
 
 **Graceful uninstall blocked by `reconcileStrategy: ignore` (ODF 4.22 SNO workaround).** When the `StorageCluster` carries `managedResources.cephBlockPools.reconcileStrategy: ignore` (see `references/validated-odf-sno.md`), `ocs-operator` also ignores the pools during uninstall and never deletes them. The rook cluster-controller then loops on:
 
-```
+```text
 CephCluster "openshift-storage/ocs-storagecluster-cephcluster" will not be deleted until all dependents are removed: CephBlockPool: [builtin-mgr ocs-storagecluster-cephblockpool]
 ```
 
@@ -118,10 +118,25 @@ done
 Delete the namespace only when the step-0 inventory showed ODF as the sole tenant:
 
 ```bash
-# Guarded: refuses to run while any subscription (LVMS, LSO, ...) remains in the namespace.
-[ -z "$(oc -n openshift-storage get subscription --no-headers 2>/dev/null)" ] \
-  && oc delete namespace openshift-storage --wait=true --timeout=15m \
-  || echo "namespace still has operator subscriptions - keeping it"
+# Guarded, and it fails closed: the namespace is deleted only when the subscription
+# lookup SUCCEEDS and comes back empty.
+#
+# Do not write this as [ -z "$(oc get subscription ... 2>/dev/null)" ]. That cannot
+# distinguish "no subscriptions" from "the lookup failed" — a missing RBAC verb, an
+# API outage, or an already-removed CRD all yield an empty string, and the fallback
+# is deleting a namespace that may still host LVMS and LSO. `-o name` prints nothing
+# for an empty list, so an empty stdout with exit 0 is the only success signal.
+if subs=$(oc -n openshift-storage get subscription -o name); then
+  if [ -z "$subs" ]; then
+    oc delete namespace openshift-storage --wait=true --timeout=15m
+  else
+    echo "namespace still has operator subscriptions - keeping it:"
+    echo "$subs"
+  fi
+else
+  echo "subscription lookup failed - keeping the namespace" >&2
+  echo "resolve the error above and re-run; do not delete the namespace blind" >&2
+fi
 ```
 
 Remove the storage node labels after confirming the node no longer hosts another storage system:
@@ -188,6 +203,18 @@ Delete every CR instance in a group before its CRDs, then the CRDs themselves:
 # Skip local.storage.openshift.io when LSO stays installed (shared node/namespace).
 for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
              postgresql.cnpg.noobaa.io csi.ceph.io; do
+  # 1. CR instances first. Deleting the CRD while instances still carry finalizers
+  #    leaves the CRD in Terminating and stalls the rest of this sweep.
+  for kind in $(oc api-resources --api-group="$group" --verbs=list -o name 2>/dev/null); do
+    if oc api-resources --api-group="$group" --namespaced=true -o name 2>/dev/null \
+         | grep -qx "$kind"; then
+      oc delete "$kind" --all -A --ignore-not-found
+    else
+      oc delete "$kind" --all --ignore-not-found
+    fi
+  done
+
+  # 2. Then the CRDs themselves.
   crds=$(oc get crd -o name 2>/dev/null | grep "\.$group$")
   [ -n "$crds" ] && oc delete $crds
 done

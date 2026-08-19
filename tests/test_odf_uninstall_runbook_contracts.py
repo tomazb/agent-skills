@@ -38,15 +38,51 @@ def test_no_blanket_subscription_or_namespace_deletion():
         "LVMS and LSO install into openshift-storage by default; "
         "'delete subscription --all' destroys them. Delete ODF subscriptions by name."
     )
-    for line in text.splitlines():
-        if re.search(r"^\s*oc delete (namespace|ns) openshift-storage", line):
-            raise AssertionError(
-                "namespace deletion must not be an unconditional command; gate it on "
-                f"an operator inventory of the namespace first: {line.strip()}"
-            )
     assert re.search(r"lvms", text, re.I), (
         "uninstall runbook must warn that LVMS shares openshift-storage by default"
     )
+
+
+def _fenced_blocks(text: str) -> list[str]:
+    # Match any language tag (or none). Restricting this to bash/shell/sh
+    # mispairs the fences: a ```text block's closing fence then gets read as the
+    # closer for a later block and the extraction silently returns nothing.
+    return re.findall(r"```[A-Za-z0-9_+-]*\n(.*?)```", text, flags=re.DOTALL)
+
+
+def test_namespace_deletion_is_gated_and_fails_closed():
+    """A failed subscription lookup must keep the namespace, not delete it.
+
+    `[ -z "$(oc get subscription 2>/dev/null)" ]` cannot tell "no subscriptions"
+    from "the lookup failed" (RBAC, API outage, CRD already removed) — both give
+    an empty string, and the fallback is deleting a namespace that may still host
+    LVMS and LSO.
+    """
+    text = _uninstall_text()
+    blocks = [b for b in _fenced_blocks(text) if "delete namespace openshift-storage" in b]
+    assert blocks, "expected a fenced block containing the namespace deletion"
+
+    for block in blocks:
+        # Only the executable lines are under test: the block deliberately names the
+        # broken `2>/dev/null` form in a comment to explain why it is wrong.
+        runnable = "\n".join(
+            line for line in block.splitlines() if not line.lstrip().startswith("#")
+        )
+        assert "subscription" in runnable, (
+            "namespace deletion must be gated on a subscription inventory: " + block
+        )
+        assert "2>/dev/null" not in runnable, (
+            "discarding stderr on the gating lookup makes a failed query look like "
+            "an empty one, which then deletes a shared namespace: " + block
+        )
+        assert re.search(r"if\s+\w+=\$\(oc[^)]*get subscription", runnable), (
+            "gate on the exit status of the subscription lookup, not just on its "
+            "output being empty: " + block
+        )
+        assert re.search(r"failed", runnable, re.I), (
+            "the gate needs an explicit failure branch that keeps the namespace: "
+            + block
+        )
 
 
 def test_csvs_resolved_from_installed_csv_not_label_selector():
@@ -95,6 +131,28 @@ def test_namespace_kept_residue_sweep_documented():
             f"namespace-kept residue sweep must cover {marker!r}; the operator "
             "teardown does not garbage-collect it when the namespace survives"
         )
+
+
+def test_crd_sweep_deletes_instances_before_crds():
+    """A CRD whose instances still hold finalizers sticks in Terminating.
+
+    The runbook states this ordering requirement, so the commands must actually
+    implement it rather than jumping straight to `oc delete crd`.
+    """
+    text = _uninstall_text()
+    blocks = [b for b in _fenced_blocks(text) if "oc delete $crds" in b or "delete crd" in b]
+    assert blocks, "expected a fenced block performing the CRD sweep"
+    sweep = blocks[-1]
+    assert "api-resources" in sweep, (
+        "the sweep must enumerate the group's kinds so their CR instances can be "
+        "deleted before the CRDs: " + sweep
+    )
+    instance_delete = sweep.find("--all")
+    crd_delete = sweep.find("$crds")
+    assert instance_delete != -1, "no CR-instance deletion found in the sweep"
+    assert instance_delete < crd_delete, (
+        "CR instances must be deleted before the CRDs they belong to: " + sweep
+    )
 
 
 def test_crd_sweep_covers_cnpg_group():
