@@ -165,17 +165,49 @@ token regenerate out of order) and never converges. Regenerate the **token
 only** against the existing key pair:
 
 ```bash
-# 1. Confirm the key pair exists and is matched (same RSA modulus). If either
-#    key is missing, restart ocs-operator once and wait for BOTH to be recreated
-#    together before continuing.
-oc -n openshift-storage get secret onboarding-private-key onboarding-ticket-key
+NS=openshift-storage
+
+# 1. Confirm the key pair exists AND is actually a pair. Existence alone proves
+#    nothing: two secrets from different install cycles regenerate the same
+#    signature mismatch. Compare the RSA moduli and stop if they differ — with a
+#    mismatched pair, deleting the token below just reproduces the error.
+#    If either key is missing, restart ocs-operator once and wait for BOTH to be
+#    recreated together before continuing.
+oc -n "$NS" get secret onboarding-private-key onboarding-ticket-key
+
+# (the secrets hold a single PEM entry; read it without hardcoding its data key)
+PRIV_MOD=$(oc -n "$NS" get secret onboarding-private-key -o json \
+  | jq -r '.data | to_entries[0].value' | base64 -d \
+  | openssl rsa -noout -modulus 2>/dev/null)
+PUB_MOD=$(oc -n "$NS" get secret onboarding-ticket-key -o json \
+  | jq -r '.data | to_entries[0].value' | base64 -d \
+  | openssl rsa -pubin -noout -modulus 2>/dev/null)
+if [ -z "$PRIV_MOD" ] || [ "$PRIV_MOD" != "$PUB_MOD" ]; then
+  echo "onboarding keys are not a matching pair - delete BOTH keys, restart" >&2
+  echo "ocs-operator once, and let it regenerate them together" >&2
+  exit 1
+fi
 
 # 2. Delete ONLY the signed token and the StorageClient (leave the keys intact).
-TOKEN=$(oc -n openshift-storage get secret -o name | grep onboarding-token | head -1)
-[ -n "$TOKEN" ] && oc -n openshift-storage delete "$TOKEN"
-oc delete storageclients.ocs.openshift.io ocs-storagecluster --wait=false
-oc patch storageclients.ocs.openshift.io ocs-storagecluster \
-  --type merge -p '{"metadata":{"finalizers":[]}}' || true
+#    Select the token by its StorageConsumer owner reference: a bare
+#    'grep onboarding-token | head -1' can pick a stale or another consumer's
+#    token and delete the wrong secret. Stop unless exactly one matches.
+mapfile -t TOKENS < <(oc -n "$NS" get secret -o json | jq -r \
+  '.items[]
+   | select(any(.metadata.ownerReferences[]?; .kind == "StorageConsumer"))
+   | select(.metadata.name | startswith("onboarding-token"))
+   | .metadata.name')
+[ "${#TOKENS[@]}" -eq 1 ] || { echo "expected 1 StorageConsumer-owned onboarding token, found ${#TOKENS[@]}: ${TOKENS[*]}" >&2; exit 1; }
+oc -n "$NS" delete "secret/${TOKENS[0]}"
+
+oc -n "$NS" delete storageclients.ocs.openshift.io ocs-storagecluster --wait=false
+# Strip the finalizer only if the object is still there. `oc patch` has no
+# --ignore-not-found, and a blanket `|| true` would also swallow a real patch
+# failure, leaving the StorageClient stuck in Terminating with no signal.
+if oc -n "$NS" get storageclients.ocs.openshift.io ocs-storagecluster >/dev/null 2>&1; then
+  oc -n "$NS" patch storageclients.ocs.openshift.io ocs-storagecluster \
+    --type merge -p '{"metadata":{"finalizers":[]}}'
+fi
 
 # 3. Restart ocs-operator ONCE. Because the keys already exist, it regenerates
 #    only the missing token — signed with the current private key — and recreates

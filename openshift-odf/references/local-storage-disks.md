@@ -131,7 +131,7 @@ Some hypervisor disks (for example virtio `/dev/vdX` with no serial) have no
 `/dev/disk/by-id/` symlink. The LSO diskmaker refuses to create a PV for them
 even when a `LocalVolume` `devicePaths` entry resolves by `by-path`:
 
-```
+```text
 unable to find disk ID for local pool ... IDPathNotFoundError: a symlink to
 "vdb" was not found in "/dev/disk/by-id/"
 ```
@@ -157,9 +157,13 @@ spec:
       - path: /etc/udev/rules.d/99-odf-virtio-disk.rules
         mode: 0644
         contents:
-          # Decoded rule (match on the stable ID_PATH, not the kernel name):
-          # SUBSYSTEM=="block", ENV{ID_PATH}=="pci-0000:00:08.0", SYMLINK+="disk/by-id/virtio-odf-vdb"
-          source: "data:text/plain,SUBSYSTEM%3D%3D%22block%22%2C%20ENV%7BID_PATH%7D%3D%3D%22pci-0000%3A00%3A08.0%22%2C%20SYMLINK%2B%3D%22disk%2Fby-id%2Fvirtio-odf-vdb%22%0A"
+          # Decoded rule (match on the stable ID_PATH, not the kernel name).
+          # ENV{DEVTYPE}=="disk" is required: partitions of the same disk carry
+          # the same ID_PATH, so without it every partition also claims the
+          # symlink and udev hands it to whichever device is processed last.
+          # Replace pci-0000:00:08.0 with the ID_PATH discovered on YOUR node.
+          # SUBSYSTEM=="block", ENV{DEVTYPE}=="disk", ENV{ID_PATH}=="pci-0000:00:08.0", SYMLINK+="disk/by-id/virtio-odf-vdb"
+          source: "data:text/plain,SUBSYSTEM%3D%3D%22block%22%2C%20ENV%7BDEVTYPE%7D%3D%3D%22disk%22%2C%20ENV%7BID_PATH%7D%3D%3D%22pci-0000%3A00%3A08.0%22%2C%20SYMLINK%2B%3D%22disk%2Fby-id%2Fvirtio-odf-vdb%22%0A"
 ```
 
 **Ignition encoding caveat:** the `data:` URL must percent-encode spaces as
@@ -172,7 +176,19 @@ Always use `%20`. Verify on the node after the MCP updates:
 ```bash
 oc debug node/<node> -- chroot /host bash -c \
   'cat /etc/udev/rules.d/99-odf-virtio-disk.rules; ls -l /dev/disk/by-id/ | grep vdb'
+
+# Confirm the symlink resolves to the whole disk (not a partition) and that the
+# disk's ID_PATH is the one the rule matches on:
+oc debug node/<node> -- chroot /host bash -eu -c '
+  target=$(readlink -f /dev/disk/by-id/virtio-odf-vdb)
+  echo "resolved: $target"
+  udevadm info -q property -n "$target" | grep -E "^(DEVTYPE|ID_PATH)="
+'
 ```
+
+`DEVTYPE` must print `disk` and `ID_PATH` must match the value in the rule. A
+`DEVTYPE=partition` here means the rule matched a partition — the missing
+`ENV{DEVTYPE}=="disk"` clause.
 
 A MachineConfig change reboots the node. On SNO the API is unavailable until the
 single node returns — wait for the MCP to report `Updated` and the node `Ready`
