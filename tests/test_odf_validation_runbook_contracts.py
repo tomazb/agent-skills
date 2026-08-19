@@ -125,7 +125,9 @@ def test_object_smoke_uses_a_dedicated_disposable_namespace():
         "a placeholder namespace plus a namespace delete is a footgun: the "
         "reader can point it at a live application namespace"
     )
-    delete_lines = [l for l in section.splitlines() if "delete namespace" in l]
+    delete_lines = [
+        line for line in section.splitlines() if "delete namespace" in line
+    ]
     assert delete_lines, "the object smoke flow must clean up after itself"
     for line in delete_lines:
         assert "odf-object-smoke" in line, (
@@ -147,6 +149,43 @@ def test_object_smoke_exercises_the_s3_data_path():
     assert re.search(r"get_object|GET", section), (
         "object validation must read the object back"
     )
-    assert re.search(r"BUCKET_HOST", section) and re.search(r"AWS_ACCESS_KEY_ID", section), (
-        "wire the generated endpoint and credentials into the data-path check"
+    assert re.search(r"delete_object|DELETE", section), (
+        "object validation must remove the probe object it wrote"
+    )
+    for field in (
+        "BUCKET_HOST",
+        "BUCKET_PORT",
+        "BUCKET_NAME",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_SECRET_ACCESS_KEY",
+    ):
+        assert field in section, (
+            f"wire {field} into the data-path check; the snippet consumes every "
+            "generated field and dropping one breaks it silently"
+        )
+    # A bare https:// prefix breaks when BUCKET_HOST already carries a scheme,
+    # which the MCG StorageClass can produce.
+    assert '"https://%s:%s"' not in section, (
+        "normalize BUCKET_HOST instead of unconditionally prefixing https://, "
+        "or a host that already has a scheme yields https://https://..."
+    )
+
+
+def test_object_cleanup_check_can_actually_fail():
+    """`... | grep X || echo ok` reports success whether or not X is found.
+
+    grep exits 0 when it finds a leftover, so the leftover path and the clean
+    path both look like success, and a failing `oc get` is masked by the pipe.
+    A verification step that cannot fail is not a verification step.
+    """
+    section = _object_section(_validation_text())
+    for line in section.splitlines():
+        if "objectbucket" in line and "grep" in line:
+            assert "||" not in line or "true" in line, (
+                "this cleanup check succeeds even when leftovers are found: "
+                + line.strip()
+            )
+    assert re.search(r"exit 1", section), (
+        "the cleanup verification must exit non-zero when ObjectBuckets survive "
+        "the claim or when the query itself fails"
     )

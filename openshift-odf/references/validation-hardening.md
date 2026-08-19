@@ -124,9 +124,14 @@ The internal RGW service listens on 443 with a service-CA certificate, so point 
             name: object-smoke-obc
 ```
 
+`BUCKET_HOST` is a bare hostname for the RGW StorageClass but can already carry a scheme on the MCG one, so normalize it instead of prefixing unconditionally — otherwise you build `https://https://…` and the client fails to parse the endpoint:
+
 ```python
 import boto3, os
-ep = "https://%s:%s" % (os.environ["BUCKET_HOST"], os.environ["BUCKET_PORT"])
+host = os.environ["BUCKET_HOST"].rstrip("/")
+if "://" not in host:
+    host = "https://" + host
+ep = "%s:%s" % (host, os.environ["BUCKET_PORT"])
 s3 = boto3.client(
     "s3", endpoint_url=ep,
     aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
@@ -145,7 +150,20 @@ Clean up by deleting only the smoke namespace, then confirm the bucket object is
 
 ```bash
 oc delete namespace odf-object-smoke --wait=true --timeout=5m
-oc get objectbucket | grep odf-object-smoke || echo "no leftover ObjectBuckets"
+
+# Fail closed: `oc get ... | grep X || echo ok` exits 0 whether or not X is
+# found, and hides a failed query behind the pipe, so it can never report a
+# leftover bucket.
+if ! buckets=$(oc get objectbucket -o name); then
+  echo "could not inspect ObjectBuckets - cleanup unverified" >&2
+  exit 1
+fi
+leftovers=$(printf '%s\n' "$buckets" | grep -F 'odf-object-smoke' || true)
+if [ -n "$leftovers" ]; then
+  printf 'leftover ObjectBuckets after deleting the claim:\n%s\n' "$leftovers" >&2
+  exit 1
+fi
+echo "no leftover ObjectBuckets"
 ```
 
 ## Dashboard And Monitoring
