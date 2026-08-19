@@ -131,6 +131,10 @@ count_nonempty_lines() {
 
 # ODF component OLM packages; anything else in openshift-storage marks the namespace as shared.
 ODF_PACKAGES_RE='^(odf-operator|odf-dependencies|ocs-operator|ocs-client-operator|rook-ceph-operator|cephcsi-operator|mcg-operator|odf-csi-addons-operator|odf-external-snapshotter-operator|odf-prometheus-operator|ocs-tls-profiles|recipe)$'
+# CSV names are "<package>.v<version>", so match the same packages by prefix.
+# The literal dot is written [.] rather than \. : this string is interpolated into
+# a jq string literal, where \. is an invalid escape and aborts the filter.
+ODF_CSV_PREFIX_RE='^(odf-operator|odf-dependencies|ocs-operator|ocs-client-operator|rook-ceph-operator|cephcsi-operator|mcg-operator|odf-csi-addons-operator|odf-external-snapshotter-operator|odf-prometheus-operator|ocs-tls-profiles|recipe)[.]'
 
 # LVMS and LSO install into openshift-storage by default. A kept namespace is only
 # acceptable when a non-ODF operator still lives there; then it must hold no ODF residue.
@@ -160,11 +164,27 @@ check_storage_namespace() {
 
   # shellcheck disable=SC2086 # word splitting joins the package names on one line
   ok "openshift-storage namespace kept for non-ODF operators: $(echo $non_odf)"
+
+  # A kept namespace does not excuse a surviving ODF subscription: OLM would
+  # re-create its CSV and workloads, so the namespace looks clean only until the
+  # next reconcile.
+  check_json_list \
+    "ODF subscriptions still in openshift-storage" \
+    "no ODF subscriptions left in openshift-storage" \
+    ".items[].spec.name | select(test(\"$ODF_PACKAGES_RE\"))" \
+    oc get subscription -n openshift-storage
+
+  check_json_list \
+    "ODF CSVs still in openshift-storage" \
+    "no ODF CSVs left in openshift-storage" \
+    ".items[].metadata.name | select(test(\"$ODF_CSV_PREFIX_RE\"))" \
+    oc get csv -n openshift-storage
+
   check_json_list \
     "ODF residue objects in openshift-storage" \
     "no ODF residue objects in openshift-storage" \
     '.items[] | select(.metadata.name | test("rook|ceph|noobaa|ocs-|odf"; "i")) | (.kind // "object") + "/" + .metadata.name' \
-    oc get secrets,configmaps,services,deployments,daemonsets -n openshift-storage
+    oc get secrets,configmaps,services,deployments,daemonsets,statefulsets -n openshift-storage
 }
 
 lso_retained() {
