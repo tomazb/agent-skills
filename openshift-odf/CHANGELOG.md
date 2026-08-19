@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.8.0
+
+Validation-runbook fixes from a live ODF 4.20.16 SNO validation:
+
+- Core Validation reached Ceph only through `deploy/rook-ceph-tools`, so on a cluster without the toolbox the documented path was to patch `OCSInitialization` and create it — a validation pass mutating the cluster it validates. It now also documents the read-only route through the running `rook-ceph-operator` pod with `ceph -c <config>`, which is the form the `.mgr` drift check and `references/validated-odf-sno.md` already use.
+- "Exactly one default StorageClass" was asserted unscoped in the smoke checklist and the post-reboot drift list, while the Core Validation prose correctly scoped it to "when defaulting is expected". ODF does not claim the default on install, so a cluster can deliberately have none; stated flatly the check turns that policy into a reported failure. Both now scope it, and note that with no default a PVC omitting `storageClassName` stays `Pending`.
+- The smoke section stopped at block and file, so a validation run on a cluster with RGW or MCG enabled silently skipped the object path. Added an object-storage subsection pointing at the existing `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, with the success criteria (`Bound`, `.spec.bucketName`, generated ConfigMap and Secret) and the cleanup check.
+- Added `tests/test_odf_validation_runbook_contracts.py` covering all three.
+
 ## 1.7.0
 
 Uninstall runbook fixes validated on a live ODF 4.22.1 SNO undeploy (shared `openshift-storage` namespace with LVMS + LSO):
