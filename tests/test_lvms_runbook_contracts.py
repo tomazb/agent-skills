@@ -115,10 +115,12 @@ def test_default_deviceclass_templates_warn_about_an_existing_default_sc():
     )
     for name in LVMCLUSTER_TEMPLATE_FILES:
         lines = _reference_text(name).splitlines()
-        template_lines = [i for i, l in enumerate(lines) if l.strip() == "default: true"]
+        template_lines = [
+            i for i, line in enumerate(lines) if line.strip() == "default: true"
+        ]
         if not template_lines:
             continue
-        warned_at = [i for i, l in enumerate(lines) if warning.search(l)]
+        warned_at = [i for i, line in enumerate(lines) if warning.search(line)]
         assert warned_at, (
             f"{name}: sets 'default: true' in an LVMCluster template without "
             "telling the reader to check for an existing default StorageClass first"
