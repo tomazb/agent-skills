@@ -219,7 +219,8 @@ for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
   #    finalizers leaves it in Terminating and stalls the rest of this sweep.
   instances_deleted=true
   for kind in $kinds; do
-    if grep -qx "$kind" <<<"$namespaced"; then
+    # -F: resource names contain dots; without it they are read as regexes.
+    if grep -Fqx -- "$kind" <<<"$namespaced"; then
       oc delete "$kind" --all -A --ignore-not-found || instances_deleted=false
     else
       oc delete "$kind" --all --ignore-not-found || instances_deleted=false
