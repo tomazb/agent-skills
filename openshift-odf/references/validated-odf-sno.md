@@ -188,6 +188,13 @@ In ODF 4.20, `getCephPoolReplicatedSize()` always returns `3` for SNO. All Ceph 
 
 **This is a version-scoped exception to the skill's "do not edit Rook CRs directly" rule.**
 
+**Uninstall implication:** the `reconcileStrategy: ignore` freeze below also stalls a
+graceful uninstall — `ocs-operator` skips the ignored resources during teardown and
+rook will not delete the `CephCluster` while their CRs remain. The leftover CRs must
+be deleted directly. Observed on 4.22.1 for the `CephBlockPool` CRs (`builtin-mgr`,
+`ocs-storagecluster-cephblockpool`); the same freeze is set here, so expect it on 4.20
+too. See `references/maintenance-uninstall.md`.
+
 After the StorageCluster and CephCluster reach `Ready` (or you see Ceph OSDs are up):
 
 ```bash
