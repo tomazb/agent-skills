@@ -129,6 +129,74 @@ count_nonempty_lines() {
   echo "$count"
 }
 
+# ODF component OLM packages; anything else in openshift-storage marks the namespace as shared.
+ODF_PACKAGES_RE='^(odf-operator|odf-dependencies|ocs-operator|ocs-client-operator|rook-ceph-operator|cephcsi-operator|mcg-operator|odf-csi-addons-operator|odf-external-snapshotter-operator|odf-prometheus-operator|ocs-tls-profiles|recipe)$'
+# CSV names are "<package>.v<version>", so match the same packages by prefix.
+# The literal dot is written [.] rather than \. : this string is interpolated into
+# a jq string literal, where \. is an invalid escape and aborts the filter.
+ODF_CSV_PREFIX_RE='^(odf-operator|odf-dependencies|ocs-operator|ocs-client-operator|rook-ceph-operator|cephcsi-operator|mcg-operator|odf-csi-addons-operator|odf-external-snapshotter-operator|odf-prometheus-operator|ocs-tls-profiles|recipe)[.]'
+
+# LVMS and LSO install into openshift-storage by default. A kept namespace is only
+# acceptable when a non-ODF operator still lives there; then it must hold no ODF residue.
+check_storage_namespace() {
+  local output
+  if ! output=$(oc get namespace openshift-storage 2>&1); then
+    if is_not_found "$output"; then
+      ok "openshift-storage namespace absent"
+    else
+      fail "openshift-storage namespace lookup failed: $output"
+    fi
+    return 0
+  fi
+
+  if ! query_json \
+    "openshift-storage subscriptions" \
+    ".items[].spec.name | select(test(\"$ODF_PACKAGES_RE\") | not)" \
+    oc get subscription -n openshift-storage; then
+    return 0
+  fi
+
+  local non_odf="$QUERY_RESULT"
+  if [ -z "$non_odf" ]; then
+    warn "openshift-storage namespace still exists"
+    return 0
+  fi
+
+  # shellcheck disable=SC2086 # word splitting joins the package names on one line
+  ok "openshift-storage namespace kept for non-ODF operators: $(echo $non_odf)"
+
+  # A kept namespace does not excuse a surviving ODF subscription: OLM would
+  # re-create its CSV and workloads, so the namespace looks clean only until the
+  # next reconcile.
+  check_json_list \
+    "ODF subscriptions still in openshift-storage" \
+    "no ODF subscriptions left in openshift-storage" \
+    ".items[].spec.name | select(test(\"$ODF_PACKAGES_RE\"))" \
+    oc get subscription -n openshift-storage
+
+  check_json_list \
+    "ODF CSVs still in openshift-storage" \
+    "no ODF CSVs left in openshift-storage" \
+    ".items[].metadata.name | select(test(\"$ODF_CSV_PREFIX_RE\"))" \
+    oc get csv -n openshift-storage
+
+  check_json_list \
+    "ODF residue objects in openshift-storage" \
+    "no ODF residue objects in openshift-storage" \
+    '.items[] | select(.metadata.name | test("rook|ceph|noobaa|ocs-|odf"; "i")) | (.kind // "object") + "/" + .metadata.name' \
+    oc get secrets,configmaps,services,deployments,daemonsets,statefulsets -n openshift-storage
+}
+
+lso_retained() {
+  if query_json \
+    "LSO subscriptions" \
+    '.items[] | select(.spec.name == "local-storage-operator") | .metadata.name' \
+    oc get subscription -A; then
+    [ -n "$QUERY_RESULT" ] && return 0
+  fi
+  return 1
+}
+
 echo "=== ODF Post-Uninstall Audit ==="
 
 require_command oc || exit 1
@@ -139,10 +207,7 @@ if ! OC_USER=$(oc whoami 2>&1); then
   exit 1
 fi
 
-check_absent_resource \
-  "openshift-storage namespace" \
-  "openshift-storage namespace absent" \
-  namespace openshift-storage
+check_storage_namespace
 
 check_absent_resource \
   "rook-ceph namespace" \
@@ -151,10 +216,16 @@ check_absent_resource \
 
 echo
 check_api_group ocs.openshift.io
+check_api_group odf.openshift.io
 check_api_group ceph.rook.io
 check_api_group noobaa.io
+check_api_group postgresql.cnpg.noobaa.io
 check_api_group csi.ceph.io
-check_api_group local.storage.openshift.io
+if lso_retained; then
+  ok "local.storage.openshift.io CRDs retained: LSO still installed"
+else
+  check_api_group local.storage.openshift.io
+fi
 
 echo
 check_json_list \
@@ -216,8 +287,22 @@ echo
 check_json_list \
   "ODF SCCs" \
   "no ODF SCCs found" \
-  '.items[] | select((.metadata.name | contains("rook-ceph")) or (.metadata.name | contains("noobaa"))) | .metadata.name' \
+  '.items[] | select((.metadata.name | contains("rook-ceph")) or (.metadata.name | contains("noobaa")) or (.metadata.name | contains("ceph-csi"))) | .metadata.name' \
   oc get scc
+
+echo
+check_json_list \
+  "ODF mutating webhooks" \
+  "no ODF mutating webhooks found" \
+  '.items[] | select(.metadata.name == "csv.odf.openshift.io") | .metadata.name' \
+  oc get mutatingwebhookconfiguration
+
+echo
+check_json_list \
+  "ODF console plugins" \
+  "no ODF console plugins found" \
+  '.items[] | select(.metadata.name == "odf-console" or .metadata.name == "odf-client-console") | .metadata.name' \
+  oc get consoleplugin
 
 echo
 if query_json \

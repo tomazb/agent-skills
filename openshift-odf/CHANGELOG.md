@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.7.0
+
+Uninstall runbook fixes validated on a live ODF 4.22.1 SNO undeploy (shared `openshift-storage` namespace with LVMS + LSO):
+
+- Added step 0 namespace inventory gate to `references/maintenance-uninstall.md`: LVMS installs into `openshift-storage` by default; blanket subscription deletion and unconditional namespace deletion destroy LVMS/LSO. Namespace deletion is now guarded on an empty subscription list, and ODF subscriptions/CSVs are deleted by package name via `.status.installedCSV` (the odf-operator CSV label selector matches only 1 of the 12 component CSVs).
+- Documented that the ODF 4.20/4.22 SNO `reconcileStrategy: ignore` workaround blocks graceful uninstall: `ocs-operator` skips the ignored pools and rook loops on `will not be deleted until all dependents are removed` for `builtin-mgr`/`ocs-storagecluster-cephblockpool`. Resolution: delete the leftover `CephBlockPool` CRs directly. Cross-referenced from `references/validated-odf-sno.md`.
+- Added disk-wipe verification (`cluster-cleanup-job-<node>`, `lsblk -f` signature check) and clarified the cleanup job quick-sanitizes rather than fully zeroes.
+- LSO ownership discovery now uses the local PV labels (`storage.openshift.com/owner-namespace`) instead of assuming `openshift-local-storage`; documented the `LocalVolumeSet` deletion cascade (PVs + StorageClass) and the Available-PV recreation race on the wiped disk.
+- Added step 4b residue sweep for a kept namespace: `drivers.csi.ceph.io` CRs (cascade deployments/daemonsets), CSIDrivers, `ocs-client-operator-console` Service (service-ca keeps re-creating its cert secret), configmap pinned by the orphaned `ocs-client-operator.ocs.openshift.io/storageused` finalizer, rook mon state (`rook-ceph-pdbstatemap`, `rook-config-override`, keyrings — reinstall poison), ODF SCCs, `csv.odf.openshift.io` mutating webhook, and `odf-console`/`odf-client-console` consoleplugins.
+- CRD cleanup now sweeps by API group per release instead of a fixed list, adding `odf.openshift.io` and the NooBaa embedded CloudNativePG group `postgresql.cnpg.noobaa.io`; `local.storage.openshift.io` is skipped while LSO stays installed and shared `groupsnapshot.storage.openshift.io` CRDs are left in place.
+- `scripts/post_uninstall_audit.sh`: accepts a kept `openshift-storage` namespace when non-ODF operators remain (then sweeps it for leftover ODF subscriptions, CSVs, and residue objects including StatefulSets), treats retained `local.storage.openshift.io` CRDs as OK **only while LSO is still installed**, and audits the two new CRD groups, `ceph-csi` SCCs, the ODF mutating webhook, and consoleplugins.
+- Added contract tests `tests/test_odf_uninstall_runbook_contracts.py` and audit-script tests for the kept-namespace and retained-LSO scenarios.
+
 ## 1.6.0
 
 - Validated ODF 4.22.1 SNO **with CephFS**: RBD (RWO), CephFS (RWX), and Object (OBC) all pass; `StorageCluster` Ready, `HEALTH_OK`, `lvms-vg1` remained the sole default.
