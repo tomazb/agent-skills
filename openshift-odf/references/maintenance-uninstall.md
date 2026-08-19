@@ -203,19 +203,35 @@ Delete every CR instance in a group before its CRDs, then the CRDs themselves:
 # Skip local.storage.openshift.io when LSO stays installed (shared node/namespace).
 for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
              postgresql.cnpg.noobaa.io csi.ceph.io; do
-  # 1. CR instances first. Deleting the CRD while instances still carry finalizers
-  #    leaves the CRD in Terminating and stalls the rest of this sweep.
-  for kind in $(oc api-resources --api-group="$group" --verbs=list -o name 2>/dev/null); do
-    if oc api-resources --api-group="$group" --namespaced=true -o name 2>/dev/null \
-         | grep -qx "$kind"; then
-      oc delete "$kind" --all -A --ignore-not-found
+  # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
+  #    returns an empty list, which would silently skip instance deletion and
+  #    then delete the CRDs anyway, with instances still live.
+  if ! kinds=$(oc api-resources --api-group="$group" --verbs=list -o name); then
+    echo "kind discovery failed for $group - leaving its CRDs in place" >&2
+    continue
+  fi
+  if ! namespaced=$(oc api-resources --api-group="$group" --namespaced=true -o name); then
+    echo "scope discovery failed for $group - leaving its CRDs in place" >&2
+    continue
+  fi
+
+  # 2. CR instances before their CRDs. Deleting a CRD while instances still carry
+  #    finalizers leaves it in Terminating and stalls the rest of this sweep.
+  instances_deleted=true
+  for kind in $kinds; do
+    if grep -qx "$kind" <<<"$namespaced"; then
+      oc delete "$kind" --all -A --ignore-not-found || instances_deleted=false
     else
-      oc delete "$kind" --all --ignore-not-found
+      oc delete "$kind" --all --ignore-not-found || instances_deleted=false
     fi
   done
+  if [ "$instances_deleted" != true ]; then
+    echo "instance deletion failed for $group - leaving its CRDs in place" >&2
+    continue
+  fi
 
-  # 2. Then the CRDs themselves.
-  crds=$(oc get crd -o name 2>/dev/null | grep "\.$group$")
+  # 3. Only now the CRDs themselves.
+  crds=$(oc get crd -o name | grep "\.$group$" || true)
   [ -n "$crds" ] && oc delete $crds
 done
 ```
