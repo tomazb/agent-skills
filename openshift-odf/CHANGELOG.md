@@ -15,6 +15,12 @@ Review round:
 - The object smoke flow names a dedicated `odf-object-smoke` namespace instead of a `<obc-namespace>` placeholder. Cleanup deletes that namespace, so a placeholder invited pointing it at a live application namespace.
 - The object check no longer stops at OBC provisioning. An OBC reaches `Bound` with its ConfigMap and Secret created while the endpoint or credentials are unusable, so metadata-only validation reports a healthy object service on a broken data plane. Added an S3 PUT/GET/DELETE using the generated `BUCKET_HOST`/`BUCKET_PORT`/`BUCKET_NAME` and credentials via `envFrom`, pointed at the in-cluster service-CA bundle for the RGW service's TLS on 443. Verified end to end against a live 4.20.16 cluster; the `pip install boto3` egress dependency and the disconnected-cluster alternative are called out.
 
+Second review round:
+
+- The S3 snippet normalizes `BUCKET_HOST` instead of prefixing `https://` unconditionally. It is a bare hostname on the RGW StorageClass but can already carry a scheme on the MCG one, which produced `https://https://…`.
+- The cleanup verification fails closed. `oc get objectbucket | grep X || echo ok` exits 0 whether or not a leftover is found and hides a failed query behind the pipe, so it could never report incomplete cleanup — the same shape as the object check it follows.
+- The contract test now requires the DELETE step and every generated field the snippet consumes (`BUCKET_PORT`, `BUCKET_NAME`, `AWS_SECRET_ACCESS_KEY` were droppable without failing it), and asserts the cleanup check can fail.
+
 ## 1.7.0
 
 Uninstall runbook fixes validated on a live ODF 4.22.1 SNO undeploy (shared `openshift-storage` namespace with LVMS + LSO):
