@@ -154,6 +154,19 @@ def test_crd_sweep_deletes_instances_before_crds():
         "CR instances must be deleted before the CRDs they belong to: " + sweep
     )
 
+    runnable = "\n".join(
+        line for line in sweep.splitlines() if not line.lstrip().startswith("#")
+    )
+    assert "2>/dev/null" not in runnable, (
+        "suppressing stderr on kind discovery turns a failed lookup into an empty "
+        "kind list, so instance deletion is skipped and the CRDs are removed with "
+        "instances still live: " + sweep
+    )
+    assert runnable.count("continue") >= 2, (
+        "discovery and instance-deletion failures must skip the group's CRD "
+        "deletion rather than falling through to it: " + sweep
+    )
+
 
 def test_crd_sweep_covers_cnpg_group():
     text = _uninstall_text()
