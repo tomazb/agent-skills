@@ -40,6 +40,13 @@ Third review round:
 - The release preflight resolves to exactly one `ocs-operator` CSV before comparing releases. A shell glob matches across newlines, so a newline-separated CSV list whose first entry was the right release satisfied the check while the cluster state was ambiguous. It now exits on zero and on more than one CSV.
 - Added tests that execute the emitted preflight against a stubbed `oc`, asserting the ambiguous, wrong-release, and missing-CSV cases exit 1 with nothing mutated, and that a matching release proceeds to the first patch.
 
+Re-validated against the live ODF 4.20.16-rhodf SNO cluster:
+
+- Confirmed the 4.20 `CephBlockPool` size patch is required: `managedFields` shows `size`, `requireSafeReplicaSize`, and `failureDomain` owned by `kubectl-patch` while `ocs-operator` owns only `targetSizeRatio`. The runbook had documented only the failure-domain half of what was actually applied.
+- Corrected the rationale for that patch. Rook does not rewrite pools continuously: `builtin-mgr` still carries `size: 3` against a live `.mgr` pool at `size 1`, and rook logged no pool reconcile in 24h. The CR is the desired state applied at the *next triggered* reconcile, so a stale value is a latent revert — which is what makes `.mgr` snap back after a mgr restart.
+- Corrected the 4.20 StorageClass note: no default StorageClass exists on the validated cluster at all (`localblock` included), rather than a pre-existing default being preserved.
+- Recorded the re-verification in `references/validated-odf-sno.md`: HEALTH_OK, 3 mons + 1 mgr, all 12 pools `size 1`, single `SINGLE_NODE` env entry, both CSI `Driver` CRs at `replicas: 1`, MDS/RGW `topologyKey` fixed, and one CephFilesystem data pool.
+
 ## 1.5.0
 
 - Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).

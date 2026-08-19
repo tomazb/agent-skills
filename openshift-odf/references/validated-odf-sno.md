@@ -225,10 +225,16 @@ oc -n openshift-storage exec $ROOK_OP -- \
 # Step 4 (ODF 4.20-specific): Fix CephBlockPool failureDomain and persist size=1
 # Rook rejects size=1 with failureDomain=osd + replicasPerFailureDomain=1.
 # Remove replicasPerFailureDomain and change failureDomain to host.
-# Set size in the CR as well: `cephBlockPools: ignore` only stops ocs-operator
-# from rewriting the CR — the Rook operator still reconciles it, so the live
-# `ceph osd pool set ... size 1` from Step 2 is reverted to the CR's size (3)
-# on the next reconcile unless the CR itself carries size 1.
+# Set size in the CR as well. `cephBlockPools: ignore` only stops ocs-operator
+# from rewriting the CR; the CR remains the desired state Rook applies whenever
+# it next reconciles that pool. A live-only `ceph osd pool set` (Step 2) leaves
+# the CR saying 3, and that value wins the next time a reconcile is triggered
+# (operator restart, a CR edit, an upgrade).
+# Rook does not rewrite pools continuously: on the validated cluster the
+# builtin-mgr CR still carries size 3 while the live .mgr pool sits at size 1,
+# days later. That latent mismatch is exactly why .mgr snaps back to size 3
+# after a mgr restart (see the note in the 4.22 section) — the same trap the
+# main block pool falls into if its CR is left at 3.
 oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
   --type json \
   -p '[
@@ -409,7 +415,13 @@ troubleshooting entry in `references/validation-hardening.md`.
 - `ocs-storagecluster-ceph-rgw` (RGW ObjectBucketClaim provisioning)
 - `openshift-storage.noobaa.io` (MCG ObjectBucketClaim provisioning)
 
-No ODF StorageClass became the default; pre-existing default(s) remained in place.
+Plus `localblock` from the Local Storage Operator.
+
+No ODF StorageClass became the default — and on this cluster no default exists
+at all: every StorageClass, including `localblock`, has no
+`storageclass.kubernetes.io/is-default-class` annotation. ODF did not create or
+claim a default. Confirm the target cluster's own default policy rather than
+assuming a pre-existing default is present to be preserved.
 
 ## Validation Notes (ODF 4.20 SNO)
 
@@ -418,6 +430,16 @@ No ODF StorageClass became the default; pre-existing default(s) remained in plac
 - 1 OSD on the dedicated disk; 3 mons in quorum; NooBaa writing data actively.
 - ceph-rbd PVC provisioning, cephfs PVC provisioning, and MCG/RGW object storage validated. CephFS came up after the Regression 4 MDS `topologyKey` fix (MDS active + 1 hot standby, `ceph fs ls` healthy, a `ReadWriteMany` cephfs PVC bound).
 - The `POOL_NO_REDUNDANCY` mute suppresses expected warning noise — it does not restore data redundancy. SNO ODF has no OSD redundancy by design.
+
+**Re-verified on the live cluster (ODF 4.20.16-rhodf, 2 days after install):**
+
+- `HEALTH_OK (muted: POOL_NO_REDUNDANCY)`; 3 mons + 1 mgr, matching the mon-count note above.
+- All 12 Ceph pools report `size 1 min_size 1`, including `.mgr`.
+- `SINGLE_NODE=true` appears exactly once in the `ocs-operator` CSV env — the append is not idempotent, so the pre-patch check matters.
+- Both `drivers.csi.ceph.io` CRs report `controllerPlugin.replicas: 1`; MDS and RGW placements both read `kubernetes.io/hostname` + `ScheduleAnyway`.
+- `CephObjectStore` and `CephFilesystem` pools carry `size: 1` with `replicasPerFailureDomain` absent, and the filesystem has exactly one data pool — the layout the single-data-pool precondition assumes.
+- In `managedFields`, the `CephBlockPool` CR's `size`, `requireSafeReplicaSize`, and `failureDomain` are owned by `kubectl-patch` while `ocs-operator` owns only `targetSizeRatio`. Direct confirmation that the size has to be patched into the CR by hand, and that the freeze keeps ocs-operator off those fields.
+- `builtin-mgr` still carries `size: 3`, `replicasPerFailureDomain: 1`, `failureDomain: osd` against a live `.mgr` pool at `size 1`, with no mgr restart since install and no pool reconcile logged by rook in 24h. Pool CRs are reconciled on trigger, not on a timer, so a stale CR value is a latent revert rather than an immediate one.
 
 ---
 
