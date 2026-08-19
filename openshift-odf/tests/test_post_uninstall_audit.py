@@ -211,3 +211,114 @@ def test_audit_passes_when_no_odf_residue_remains(tmp_path):
     assert "OK: exactly one default StorageClass: platform-default" in result.stdout
     assert "WARN:" not in result.stdout
     assert "FAIL:" not in result.stdout
+
+
+def test_audit_accepts_namespace_kept_for_lvms_but_flags_odf_residue(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_oc(
+        tmp_path,
+        """\
+        args = sys.argv[1:]
+        if args == ["whoami"]:
+            print("admin")
+            raise SystemExit(0)
+        if args == ["get", "namespace", "openshift-storage"]:
+            print("NAME\\nopenshift-storage")
+            raise SystemExit(0)
+        if args == ["get", "namespace", "rook-ceph"]:
+            print("NotFound", file=sys.stderr)
+            raise SystemExit(1)
+        if args[:1] == ["api-resources"]:
+            raise SystemExit(0)
+        if args[:2] == ["get", "subscription"] and "-n" in args and "-o" in args:
+            print(json.dumps({"items": [
+                {"metadata": {"name": "lvms-operator"}, "spec": {"name": "lvms-operator"}},
+            ]}))
+            raise SystemExit(0)
+        if args[:2] == ["get", "subscription"] and "-A" in args and "-o" in args:
+            print(json.dumps({"items": []}))
+            raise SystemExit(0)
+        if args[0] == "get" and args[1].startswith("secrets") and "-o" in args:
+            print(json.dumps({"items": [
+                {"kind": "Secret", "metadata": {"name": "rook-ceph-mon"}},
+                {"kind": "ConfigMap", "metadata": {"name": "lvms-config"}},
+            ]}))
+            raise SystemExit(0)
+        if args[:1] == ["get"] and "-o" in args:
+            print(json.dumps({"items": []}))
+            raise SystemExit(0)
+        raise SystemExit(0)
+        """,
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "OK: openshift-storage namespace kept for non-ODF operators: lvms-operator"
+        in result.stdout
+    )
+    assert "WARN: ODF residue objects in openshift-storage still exist:" in result.stdout
+    assert "rook-ceph-mon" in result.stdout
+    assert "lvms-config" not in result.stdout
+
+
+def test_audit_passes_when_namespace_and_lso_are_retained_without_residue(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_oc(
+        tmp_path,
+        """\
+        args = sys.argv[1:]
+        if args == ["whoami"]:
+            print("admin")
+            raise SystemExit(0)
+        if args == ["get", "namespace", "openshift-storage"]:
+            print("NAME\\nopenshift-storage")
+            raise SystemExit(0)
+        if args == ["get", "namespace", "rook-ceph"]:
+            print("NotFound", file=sys.stderr)
+            raise SystemExit(1)
+        if args[:1] == ["api-resources"]:
+            group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
+            if group == "local.storage.openshift.io":
+                print("localvolumesets.local.storage.openshift.io")
+            raise SystemExit(0)
+        if args[:2] == ["get", "subscription"] and "-n" in args and "-o" in args:
+            print(json.dumps({"items": [
+                {"metadata": {"name": "lvms-operator"}, "spec": {"name": "lvms-operator"}},
+                {"metadata": {"name": "local-storage-operator"}, "spec": {"name": "local-storage-operator"}},
+            ]}))
+            raise SystemExit(0)
+        if args[:2] == ["get", "subscription"] and "-A" in args and "-o" in args:
+            print(json.dumps({"items": [
+                {"metadata": {"name": "local-storage-operator"}, "spec": {"name": "local-storage-operator"}},
+            ]}))
+            raise SystemExit(0)
+        if args[:2] == ["get", "sc"] and "-o" in args:
+            print(json.dumps({"items": [
+                {
+                    "metadata": {
+                        "name": "lvms-vg1",
+                        "annotations": {"storageclass.kubernetes.io/is-default-class": "true"},
+                    },
+                    "provisioner": "topolvm.io",
+                }
+            ]}))
+            raise SystemExit(0)
+        if args[:1] == ["get"] and "-o" in args:
+            print(json.dumps({"items": []}))
+            raise SystemExit(0)
+        raise SystemExit(0)
+        """,
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 0
+    assert "OK: openshift-storage namespace kept for non-ODF operators:" in result.stdout
+    assert "OK: no ODF residue objects in openshift-storage" in result.stdout
+    assert "OK: local.storage.openshift.io CRDs retained: LSO still installed" in result.stdout
+    assert "OK: no odf.openshift.io API resources found" in result.stdout
+    assert "OK: no postgresql.cnpg.noobaa.io API resources found" in result.stdout
+    assert "WARN:" not in result.stdout
+    assert "FAIL:" not in result.stdout
