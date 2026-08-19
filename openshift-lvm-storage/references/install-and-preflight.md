@@ -41,14 +41,15 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
 '
 ```
 
-Pick the by-id path when the disk has one — it survives controller and slot changes. When the disk appears only under `by-path`, use that: it is stable for as long as the disk stays on the same PCI address, which is the documented selector for virtual environments (see `volume-group-provisioning.md`). Either way, record the resolved path; never target `/dev/vdX`, `/dev/sdX`, or `/dev/nvmeXnY` directly, since those names are assignment-order dependent and can move across reboots.
+Pick the by-id path when the disk has one — it survives controller and slot changes. When the disk appears only under `/dev/disk/by-path/`, use that: it is stable for as long as the disk stays on the same PCI address, which is the documented selector for virtual environments (see `volume-group-provisioning.md`). Either way, record the resolved path; never target `/dev/vdX`, `/dev/sdX`, or `/dev/nvmeXnY` directly, since those names are assignment-order dependent and can move across reboots.
 
 Then, for each candidate disk, capture non-destructive evidence against the resolved path:
 
 ```bash
 NODE="<node>"
-# by-id when the disk has one, otherwise the by-path entry resolved above
-DISK="/dev/disk/by-id/<stable-disk-id>"
+# The stable path resolved above: /dev/disk/by-id/<id> when the disk has one,
+# otherwise /dev/disk/by-path/<pci-path>.
+DISK="<resolved-stable-disk-path>"
 
 oc debug "node/${NODE}" -- chroot /host bash -c "
   set -e
@@ -157,13 +158,22 @@ After the operator is installed, create the `LVMCluster` CR that defines volume 
 
 `default: true` on a `DeviceClass` makes the operator mark its generated StorageClass as the cluster default. The templates below set `default: true`, which is only correct when the cluster has **no** default StorageClass today. Check first — a cluster running ODF, or any prior LVMS install, may already have one:
 
+Check both annotations. Clusters upgraded from older releases can carry only the legacy `storageclass.beta.kubernetes.io/is-default-class`, and a command reading the stable annotation alone reports "no default" for exactly the cluster this check exists to catch:
+
 ```bash
-oc get sc -o custom-columns=\
-'NAME:.metadata.name,DEFAULT:.metadata.annotations.storageclass\.kubernetes\.io/is-default-class'
+oc get sc -o json | jq -r '
+  .items[]
+  | select(
+      .metadata.annotations["storageclass.kubernetes.io/is-default-class"] == "true"
+      or .metadata.annotations["storageclass.beta.kubernetes.io/is-default-class"] == "true"
+    )
+  | .metadata.name'
 ```
 
-- **No default today** → `default: true` is fine, and the generated StorageClass becomes the cluster default.
-- **A default already exists** → set `default: false`, or you end up with two defaults. Kubernetes does not pick a winner for a PVC that omits `storageClassName`; the outcome depends on which StorageClass the API server happens to return first, so it is not merely untidy.
+- **No output** → no default today, so `default: true` is fine and the generated StorageClass becomes the cluster default.
+- **Any output** → a default already exists; set `default: false` unless you intend to replace it.
+
+Two defaults is not merely untidy, and it is not random either: the `DefaultStorageClass` admission plugin picks the **most recently created** default class for a PVC that omits `storageClassName`. So the newly created LVMS class silently wins, and implicit PVCs that used to land on the old default start landing on LVMS instead — with nothing in the PVC or the operator logs pointing at the cause.
 
 With `default: false` the operator prints a warning at apply time, and it means what it says: every PVC must then name the StorageClass explicitly.
 

@@ -27,6 +27,8 @@ Observed values (example, not default):
 
 ### LVMCluster CR
 
+`default: true` below is what *this* cluster used, where no other default StorageClass existed. It is an observed value, not a recommendation: if the target cluster already has a default (ODF, or a prior LVMS install), copying it verbatim creates a second one, and the most recently created default silently wins for PVCs that omit `storageClassName`. Check first — see the decide-`default:`-first section in `install-and-preflight.md`.
+
 ```yaml
 apiVersion: lvm.topolvm.io/v1alpha1
 kind: LVMCluster
