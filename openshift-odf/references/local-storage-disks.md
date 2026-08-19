@@ -178,17 +178,22 @@ oc debug node/<node> -- chroot /host bash -c \
   'cat /etc/udev/rules.d/99-odf-virtio-disk.rules; ls -l /dev/disk/by-id/ | grep vdb'
 
 # Confirm the symlink resolves to the whole disk (not a partition) and that the
-# disk's ID_PATH is the one the rule matches on:
+# disk's ID_PATH is the one the rule matches on. Both greps are exact-match
+# assertions, so this exits non-zero when either value is wrong:
 oc debug node/<node> -- chroot /host bash -eu -c '
+  expected_id_path="pci-0000:00:08.0"   # keep equal to the udev rule above
   target=$(readlink -f /dev/disk/by-id/virtio-odf-vdb)
   echo "resolved: $target"
-  udevadm info -q property -n "$target" | grep -E "^(DEVTYPE|ID_PATH)="
+  props=$(udevadm info -q property -n "$target")
+  grep -Fx "DEVTYPE=disk" <<<"$props"
+  grep -Fx "ID_PATH=$expected_id_path" <<<"$props"
 '
 ```
 
-`DEVTYPE` must print `disk` and `ID_PATH` must match the value in the rule. A
-`DEVTYPE=partition` here means the rule matched a partition — the missing
-`ENV{DEVTYPE}=="disk"` clause.
+A failure on the `DEVTYPE` line means the rule matched a partition rather than
+the whole disk — the missing `ENV{DEVTYPE}=="disk"` clause. A failure on the
+`ID_PATH` line means the symlink points at a different device than the rule
+targets; do not hand that path to the `LocalVolume`.
 
 A MachineConfig change reboots the node. On SNO the API is unavailable until the
 single node returns — wait for the MCP to report `Updated` and the node `Ready`

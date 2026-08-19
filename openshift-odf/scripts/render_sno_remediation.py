@@ -44,6 +44,24 @@ BANNER = """\
 set -euo pipefail
 """
 
+# Must render before any mutating command: --release only selects templates, so
+# without this the wrong-release script mutates resources and only then fails on
+# an inapplicable patch. `set -e` stops the run, it does not undo those writes.
+_RELEASE_PREFLIGHT = """\
+# {n}. Preflight: refuse to run against a different ODF release.
+INSTALLED_CSV=$(oc -n {ns} get csv \\
+  -o jsonpath='{{range .items[*]}}{{.metadata.name}}{{"\\n"}}{{end}}' \\
+  | grep '^ocs-operator\\.' || true)
+case "$INSTALLED_CSV" in
+  ocs-operator.v{release}.*) ;;
+  "") echo "no ocs-operator CSV found in {ns}" >&2; exit 1 ;;
+  *) echo "installed ODF CSV '$INSTALLED_CSV' is not {release}; this script" >&2
+     echo "renders the {release} remediation only - re-render with the" >&2
+     echo "matching --release" >&2
+     exit 1 ;;
+esac
+"""
+
 _RECONCILE_IGNORE = """\
 # {n}. Freeze ODF reconciliation for pools, object stores, and filesystems so the
 #    manual CR patches below are not reverted. Re-enable 'manage' after upgrade.
@@ -172,8 +190,16 @@ oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type merge \\
 # release gets a contiguous 1..N sequence instead of gaps where a block is
 # skipped.
 _BLOCKS = {
-    "4.20": (_RECONCILE_IGNORE, _TOPOLOGYKEY, _BLOCKPOOL_FD, _CSI_REPLICAS, _MUTE),
+    "4.20": (
+        _RELEASE_PREFLIGHT,
+        _RECONCILE_IGNORE,
+        _TOPOLOGYKEY,
+        _BLOCKPOOL_FD,
+        _CSI_REPLICAS,
+        _MUTE,
+    ),
     "4.22": (
+        _RELEASE_PREFLIGHT,
         _RECONCILE_IGNORE,
         _TOPOLOGYKEY,
         _OBJECT_FILE_FD,
@@ -185,10 +211,13 @@ _BLOCKS = {
 
 
 def _validate_name(label: str, value: str) -> str:
-    if not _RFC1123.match(value):
+    # 63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
+    # fine here but every emitted `oc` command would be rejected by the API.
+    if not _RFC1123.match(value) or len(value) > 63:
         raise ValueError(
             f"{label} {value!r} is not a valid RFC 1123 name "
-            "(lowercase alphanumerics and '-', must start and end alphanumeric)"
+            "(lowercase alphanumerics and '-', must start and end alphanumeric, "
+            "max 63 characters)"
         )
     return value
 
@@ -209,7 +238,9 @@ def render_sno_remediation(
 
     blocks = [BANNER.format(release=release)]
     for step, template in enumerate(_BLOCKS[release], start=1):
-        blocks.append(template.format(n=step, name=name, ns=namespace))
+        blocks.append(
+            template.format(n=step, name=name, ns=namespace, release=release)
+        )
     text = "\n".join(blocks)
     if not text.endswith("\n"):
         text += "\n"

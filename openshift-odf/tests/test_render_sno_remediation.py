@@ -124,6 +124,9 @@ def test_respects_name_and_namespace():
         ("ocs-storagecluster", "ns' ; touch /tmp/pwn ; '"),
         ("-leading-dash", "openshift-storage"),
         ("ocs-storagecluster", "Upper-Case"),
+        # 64 chars: valid syntax, but past the RFC 1123 label limit, so every
+        # emitted `oc -n` command would be rejected by the API server.
+        ("ocs-storagecluster", "n" * 64),
     ],
 )
 def test_rejects_names_that_would_inject_shell_syntax(name, namespace):
@@ -203,8 +206,7 @@ def test_step_labels_form_the_expected_sequence_per_release():
     # human reviewer reads them top to bottom (regression: resource block was 6
     # before mute's 5). Numbers are assigned at render time, so a gated-out
     # block must not leave a gap or a duplicate.
-    assert _step_labels(render_sno_remediation("4.20")) == ["1", "2", "3", "4", "5"]
-    assert _step_labels(render_sno_remediation("4.22")) == [
+    assert _step_labels(render_sno_remediation("4.20")) == [
         "1",
         "2",
         "3",
@@ -212,6 +214,34 @@ def test_step_labels_form_the_expected_sequence_per_release():
         "5",
         "6",
     ]
+    assert _step_labels(render_sno_remediation("4.22")) == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+    ]
+
+
+@pytest.mark.parametrize("release", RELEASES)
+def test_release_preflight_precedes_every_mutating_command(release):
+    # --release only selects templates. Without a preflight the wrong-release
+    # script mutates resources and only then fails on an inapplicable patch;
+    # `set -e` stops the run but does not undo those writes.
+    out = render_sno_remediation(release)
+    runnable = _executable_lines(out)
+    assert f"ocs-operator.v{release}." in runnable
+    assert "no ocs-operator CSV found" in runnable
+
+    guard_at = runnable.index("INSTALLED_CSV=")
+    first_mutation = min(
+        runnable.index(token)
+        for token in ("oc -n openshift-storage patch", "oc -n openshift-storage exec")
+        if token in runnable
+    )
+    assert guard_at < first_mutation, "preflight must precede the first mutation"
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:

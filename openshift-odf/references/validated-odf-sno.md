@@ -385,8 +385,11 @@ python3 scripts/render_sno_remediation.py --release 4.20 \
 
 `--release` is mandatory and the emitted blocks differ per release: `4.20`
 renders the CephBlockPool failure-domain fix, `4.22` renders the object/file
-`replicasPerFailureDomain` removal and the resource-request floor instead.
-Running the wrong release's script aborts on the first inapplicable patch.
+`replicasPerFailureDomain` removal and the resource-request floor instead. The
+generated script opens with a preflight that reads the installed `ocs-operator`
+CSV and exits before any patch when it does not match the rendered release —
+`set -euo pipefail` alone would abort only *after* the earlier, still-valid
+patches had already mutated the cluster.
 
 If the internal `StorageClient` is stuck in `Initializing` with a
 "crypto/rsa: verification error" after a reinstall, see the onboarding
@@ -792,8 +795,15 @@ oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p 
 # 4. Watch what ocs-operator does to the pool specs it now owns again. On a
 #    still-affected release it pushes size back to 3 on a single OSD, which
 #    leaves the pools undersized and degraded — revert to 'ignore' if so.
-oc -n openshift-storage get cephblockpool,cephfilesystem,cephobjectstore \
-  -o custom-columns='KIND:.kind,NAME:.metadata.name,SIZE:.spec.replicated.size'
+#    Each kind keeps its size at a different path: .spec.replicated.size exists
+#    on CephBlockPool only, so query the object/file pools explicitly or they
+#    read back blank and the check silently passes.
+oc -n openshift-storage get cephblockpool ocs-storagecluster-cephblockpool \
+  -o jsonpath='{.spec.replicated.size}{"\n"}'
+oc -n openshift-storage get cephobjectstore ocs-storagecluster-cephobjectstore \
+  -o jsonpath='{.spec.metadataPool.replicated.size}{" "}{.spec.dataPool.replicated.size}{"\n"}'
+oc -n openshift-storage get cephfilesystem ocs-storagecluster-cephfilesystem \
+  -o jsonpath='{.spec.metadataPool.replicated.size}{" "}{range .spec.dataPools[*]}{.replicated.size}{" "}{end}{"\n"}'
 oc -n openshift-storage get storagecluster ocs-storagecluster \
   -o jsonpath='{.status.phase}{"\n"}'
 ```
