@@ -105,8 +105,9 @@ _BLOCKPOOL_FD = """\
 # {n}. CephBlockPool (4.20 only): Rook rejects size=1 while failureDomain=osd +
 #    replicasPerFailureDomain=1 ("size must be greater than
 #    replicasPerFailureDomain"). Switch to host, drop replicasPerFailureDomain,
-#    and persist size=1 in the CR — Rook reconciles this CR even while
-#    ocs-operator ignores it, so a live-only `ceph osd pool set` is reverted.
+#    and persist size=1 in the CR: the CR stays the desired state Rook applies
+#    on its next reconcile of this pool, so a live-only `ceph osd pool set`
+#    is undone whenever that reconcile is next triggered.
 oc -n {ns} patch cephblockpool {name}-cephblockpool --type json -p '[
   {{"op":"replace","path":"/spec/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"}},
