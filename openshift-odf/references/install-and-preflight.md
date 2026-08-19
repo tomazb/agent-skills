@@ -13,6 +13,7 @@ oc version
 oc get nodes -o wide
 oc get mcp -o wide
 oc get sc
+oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}{"\n"}'
 oc get ns openshift-storage || true
 oc -n openshift-storage get subscription,csv,pods 2>/dev/null || true
 oc -n openshift-storage get storagecluster,cephcluster 2>/dev/null || true
@@ -44,6 +45,17 @@ oc get subscription -A | grep -E 'rook|ceph|odf|ocs' || echo "no relevant OLM su
 1. All stale Rook namespaces, CRs, CRDs, and StorageClasses are deleted.
 2. Stale mon host directories (`/var/lib/rook/mon-*/`) are removed from the node **only after confirming the cluster is fully abandoned** (not a recovery candidate). If there is any chance the data is needed, treat the host path as a backup candidate before deletion.
 3. Any OSD disk that was used by the upstream Rook cluster has been fully zeroed — see the Disk Cleanup section in `references/local-storage-disks.md`.
+
+## SNO Pre-flight Gate
+
+If the Live Discovery returned `controlPlaneTopology: SingleReplica` (SNO) **and** the target ODF channel is `stable-4.20` or `stable-4.22`, **stop here**.
+
+Both ODF 4.20 and 4.22 have known SNO-specific regressions (`SINGLE_NODE` auto-detection missing, empty `topologyKey` in mon/OSD placement, pool sizes not reduced for a single-OSD cluster, CSI controller anti-affinity). Following the generic install path below will hit these regressions reactively. Instead, follow the complete validated procedure for your version in **`references/validated-odf-sno.md`**:
+
+- ODF 4.20 SNO → see the **ODF 4.20 SNO Scenario** section
+- ODF 4.22 SNO → see the **ODF 4.22 SNO Scenario** section
+
+For ODF versions on SNO that are not listed in `validated-odf-sno.md`, continue with the generic install path and record any new regressions encountered.
 
 ## Sizing And Prerequisites
 
@@ -223,7 +235,7 @@ spec:
 
 Do not copy `replica: 1` into multi-node production plans without explicit direction. On a single OSD, ODF may need a higher `mon_max_pg_per_osd` ceiling once rbd, cephfs, and RGW pools coexist; raise it deliberately through the documented `StorageCluster` override and record why.
 
-**ODF 4.22 SNO — additional required steps:** ODF 4.22 has known SNO regressions (missing `SINGLE_NODE` auto-detection, empty `topologyKey` bug, pool sizes not reduced for single-OSD). If deploying ODF 4.22, follow the complete procedure documented in `references/validated-odf-sno.md` (ODF 4.22 section) before considering the StorageCluster ready. The steps in that section — including the `SINGLE_NODE=true` CSV patch, placement overrides, and pool size workaround — are 4.22-specific regressions, not general SNO guidance. Re-check ODF release notes when using any other version.
+**ODF 4.20 and 4.22 SNO — additional required steps:** ODF 4.20 and 4.22 have known SNO regressions (missing `SINGLE_NODE` auto-detection, empty `topologyKey` bug, pool sizes not reduced for single-OSD). If deploying ODF 4.20 or 4.22 on SNO, follow the complete procedure documented in `references/validated-odf-sno.md` for the matching version before considering the StorageCluster ready. The steps in those sections are version-specific regressions, not general SNO guidance. Re-check ODF release notes when using any other version.
 
 ## Install Validation
 

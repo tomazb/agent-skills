@@ -91,6 +91,17 @@ After a node reboot, check:
 - One default StorageClass remains.
 - MachineConfigs have been applied and MCP is `Updated`.
 
+On single-replica SNO, verify the `.mgr` pool is still `size=1` after any mgr
+restart — it is recreated at `size=3` and will re-raise `POOL_NO_REDUNDANCY`
+noise / undersized PGs until re-fixed:
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get .mgr size
+# If 3: re-apply size 1 / min_size 1 as in references/validated-odf-sno.md.
+```
+
 ## Hardening
 
 - Configure backup targets and recurring snapshot schedules.
@@ -126,3 +137,99 @@ oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
 For a full support bundle, use the ODF must-gather image documented for your release.
+
+### StorageClient stuck `Initializing` — onboarding ticket signature error
+
+**Symptom:** after a reinstall, only `ocs-storagecluster-ceph-rgw` exists; the
+`ceph-rbd` and `cephfs` StorageClasses are missing. `oc -n openshift-storage get
+storageclients.ocs.openshift.io` shows the internal client `Initializing` with an
+empty CONSUMER. The provider logs (`deploy/ocs-provider-server`) repeat:
+
+```
+Failed to validate onboarding ticket ... failed to verify onboarding ticket
+signature. crypto/rsa: verification error
+```
+
+**Cause:** a stale onboarding token/keys left over from a previous install cycle.
+The `StorageConsumer`-owned `onboarding-token-*` secret was signed with a private
+key that no longer matches the public key the provider verifies with, so the
+`ocs-client-operator` cannot onboard the consumer and never creates the
+`ClientProfile` that gates CSI StorageClass creation.
+
+**Fix — regenerate the onboarding token against a stable key pair:**
+
+The failure is a signature mismatch: the signed `onboarding-token-*` secret was
+produced with a private key that no longer matches the public key the provider
+verifies with. Repeatedly deleting the keys and restarting races (the keys and
+token regenerate out of order) and never converges. Regenerate the **token
+only** against the existing key pair:
+
+```bash
+NS=openshift-storage
+
+# 1. Confirm the key pair exists AND is actually a pair. Existence alone proves
+#    nothing: two secrets from different install cycles regenerate the same
+#    signature mismatch. Compare the RSA moduli and stop if they differ — with a
+#    mismatched pair, deleting the token below just reproduces the error.
+#    If either key is missing, restart ocs-operator once and wait for BOTH to be
+#    recreated together before continuing.
+if ! oc -n "$NS" get secret onboarding-private-key onboarding-ticket-key; then
+  echo "onboarding keys are missing - restart ocs-operator once, wait for BOTH" >&2
+  echo "keys to be recreated together, then re-run this procedure" >&2
+  exit 1
+fi
+
+# (the secrets hold a single PEM entry; read it without hardcoding its data key)
+PRIV_MOD=$(oc -n "$NS" get secret onboarding-private-key -o json \
+  | jq -r '.data | to_entries[0].value' | base64 -d \
+  | openssl rsa -noout -modulus 2>/dev/null)
+PUB_MOD=$(oc -n "$NS" get secret onboarding-ticket-key -o json \
+  | jq -r '.data | to_entries[0].value' | base64 -d \
+  | openssl rsa -pubin -noout -modulus 2>/dev/null)
+if [ -z "$PRIV_MOD" ] || [ -z "$PUB_MOD" ] || [ "$PRIV_MOD" != "$PUB_MOD" ]; then
+  echo "onboarding keys are not a matching pair - stop before token recovery" >&2
+  exit 1
+fi
+
+# 2. Delete ONLY the signed token and the StorageClient (leave the keys intact).
+#    Select the token by its StorageConsumer owner reference: a bare
+#    'grep onboarding-token | head -1' can pick a stale or another consumer's
+#    token and delete the wrong secret. Stop unless exactly one matches.
+mapfile -t TOKENS < <(oc -n "$NS" get secret -o json | jq -r \
+  '.items[]
+   | select(any(.metadata.ownerReferences[]?; .kind == "StorageConsumer"))
+   | select(.metadata.name | startswith("onboarding-token"))
+   | .metadata.name')
+[ "${#TOKENS[@]}" -eq 1 ] || { echo "expected 1 StorageConsumer-owned onboarding token, found ${#TOKENS[@]}: ${TOKENS[*]}" >&2; exit 1; }
+oc -n "$NS" delete "secret/${TOKENS[0]}"
+
+oc -n "$NS" delete storageclients.ocs.openshift.io ocs-storagecluster --wait=false
+# Strip the finalizer only if the object is still there. `oc patch` has no
+# --ignore-not-found, and a blanket `|| true` would also swallow a real patch
+# failure, leaving the StorageClient stuck in Terminating with no signal.
+if oc -n "$NS" get storageclients.ocs.openshift.io ocs-storagecluster >/dev/null 2>&1; then
+  oc -n "$NS" patch storageclients.ocs.openshift.io ocs-storagecluster \
+    --type merge -p '{"metadata":{"finalizers":[]}}'
+fi
+
+# 3. Restart ocs-operator ONCE. Because the keys already exist, it regenerates
+#    only the missing token — signed with the current private key — and recreates
+#    the StorageClient. Do NOT delete the keys or restart repeatedly.
+oc -n openshift-storage rollout restart deploy/ocs-operator
+```
+
+**If the moduli do not match**, stop: this procedure regenerates the token
+only, and it cannot converge against a mismatched pair. Deleting the keys is a
+separate, more disruptive decision — it invalidates every token signed with
+them, so make it deliberately rather than as part of this recovery. Confirm no
+other `StorageConsumer` depends on the current pair first, then delete both
+keys together and restart `ocs-operator` once so it regenerates the pair and
+the token in one pass.
+
+**Verify:** `oc get storageclients.ocs.openshift.io` shows `Connected` with a
+populated CONSUMER, one `clientprofiles.csi.ceph.io` exists, and the
+`ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs` StorageClasses
+appear. Observed on ODF 4.22.1 after a StorageCluster delete/recreate; the key
+point is to never delete the keys after the token. This recovery is a
+leftover-state hazard after repeated
+install/delete cycles; a first clean install does not need it.
