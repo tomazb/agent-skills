@@ -127,6 +127,10 @@ def test_respects_name_and_namespace():
         # 64 chars: valid syntax, but past the RFC 1123 label limit, so every
         # emitted `oc -n` command would be rejected by the API server.
         ("ocs-storagecluster", "n" * 64),
+        # Trailing newline: `$` matches before it, so a plain re.match would
+        # accept this and split every emitted `oc` command in two.
+        ("ocs-storagecluster", "openshift-storage\n"),
+        ("my-sc\n", "openshift-storage"),
     ],
 )
 def test_rejects_names_that_would_inject_shell_syntax(name, namespace):
@@ -242,6 +246,61 @@ def test_release_preflight_precedes_every_mutating_command(release):
         if token in runnable
     )
     assert guard_at < first_mutation, "preflight must precede the first mutation"
+
+
+def _run_preflight(rendered: str, csv_lines: list[str]) -> subprocess.CompletedProcess[str]:
+    """Execute the emitted script with `oc` stubbed out.
+
+    Reads are answered from csv_lines; every other `oc` call reports itself as
+    MUTATION instead of touching a cluster, so a test can assert that nothing
+    was mutated before the preflight rejected the run.
+    """
+    bash_path = shutil.which("bash")
+    if bash_path is None:
+        pytest.skip("bash not available")
+    stub = (
+        "oc() {\n"
+        '  case "$*" in\n'
+        "    *'get csv'*) printf '%s\\n' "
+        + " ".join(f"'{line}'" for line in csv_lines)
+        + " ;;\n"
+        '    *) echo "MUTATION: $*" ;;\n'
+        "  esac\n"
+        "}\n"
+    )
+    body = rendered.split("\n", 1)[1]  # drop the shebang
+    return subprocess.run(
+        [bash_path, "-c", stub + body], capture_output=True, text=True, check=False
+    )
+
+
+def test_preflight_refuses_ambiguous_csv_discovery():
+    # A glob matches across newlines, so a newline-separated list starting with
+    # the right release would otherwise pass the release check.
+    result = _run_preflight(
+        render_sno_remediation("4.22"),
+        ["ocs-operator.v4.22.1-rhodf", "ocs-operator.v4.20.16-rhodf"],
+    )
+    assert result.returncode == 1
+    assert "multiple ocs-operator CSVs" in result.stderr
+    assert "MUTATION" not in result.stdout
+
+
+def test_preflight_refuses_wrong_release_and_missing_csv():
+    wrong = _run_preflight(render_sno_remediation("4.22"), ["ocs-operator.v4.20.16-rhodf"])
+    assert wrong.returncode == 1
+    assert "is not 4.22" in wrong.stderr
+    assert "MUTATION" not in wrong.stdout
+
+    missing = _run_preflight(render_sno_remediation("4.20"), [])
+    assert missing.returncode == 1
+    assert "no ocs-operator CSV found" in missing.stderr
+    assert "MUTATION" not in missing.stdout
+
+
+def test_preflight_allows_the_matching_release():
+    result = _run_preflight(render_sno_remediation("4.22"), ["ocs-operator.v4.22.1-rhodf"])
+    assert "MUTATION: -n openshift-storage patch storagecluster" in result.stdout
 
 
 def _run_cli(*args: str) -> subprocess.CompletedProcess[str]:

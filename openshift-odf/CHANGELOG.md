@@ -34,6 +34,12 @@ Second review round:
 - The virtio disk verification uses exact `grep -Fx` assertions on `DEVTYPE=disk` and the expected `ID_PATH`, so it fails closed instead of printing whichever property happens to be present.
 - Condensed the `SKILL.md` 4.20/4.22 SNO exception to the safety gate, the permitted scope of direct Rook CR editing, and the pointer to `references/validated-odf-sno.md`, per the repo convention of keeping skill instructions concise.
 
+Third review round:
+
+- Name validation uses `fullmatch`: `$` also matches before a trailing newline, so `"my-ns\n"` passed and would have split every emitted `oc` command in two.
+- The release preflight resolves to exactly one `ocs-operator` CSV before comparing releases. A shell glob matches across newlines, so a newline-separated CSV list whose first entry was the right release satisfied the check while the cluster state was ambiguous. It now exits on zero and on more than one CSV.
+- Added tests that execute the emitted preflight against a stubbed `oc`, asserting the ambiguous, wrong-release, and missing-CSV cases exit 1 with nothing mutated, and that a matching release proceeds to the first patch.
+
 ## 1.5.0
 
 - Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).

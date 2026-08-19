@@ -49,12 +49,21 @@ set -euo pipefail
 # an inapplicable patch. `set -e` stops the run, it does not undo those writes.
 _RELEASE_PREFLIGHT = """\
 # {n}. Preflight: refuse to run against a different ODF release.
-INSTALLED_CSV=$(oc -n {ns} get csv \\
+#     Resolve to exactly one CSV first. A glob matches across newlines, so a
+#     newline-separated list whose first entry is the right release would
+#     otherwise satisfy the release check while the cluster state is ambiguous.
+mapfile -t OCS_CSVS < <(oc -n {ns} get csv \\
   -o jsonpath='{{range .items[*]}}{{.metadata.name}}{{"\\n"}}{{end}}' \\
   | grep '^ocs-operator\\.' || true)
+case "${{#OCS_CSVS[@]}}" in
+  0) echo "no ocs-operator CSV found in {ns}" >&2; exit 1 ;;
+  1) INSTALLED_CSV="${{OCS_CSVS[0]}}" ;;
+  *) echo "multiple ocs-operator CSVs in {ns}: ${{OCS_CSVS[*]}}" >&2
+     echo "refusing to guess which one is current" >&2
+     exit 1 ;;
+esac
 case "$INSTALLED_CSV" in
   ocs-operator.v{release}.*) ;;
-  "") echo "no ocs-operator CSV found in {ns}" >&2; exit 1 ;;
   *) echo "installed ODF CSV '$INSTALLED_CSV' is not {release}; this script" >&2
      echo "renders the {release} remediation only - re-render with the" >&2
      echo "matching --release" >&2
@@ -213,7 +222,9 @@ _BLOCKS = {
 def _validate_name(label: str, value: str) -> str:
     # 63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
     # fine here but every emitted `oc` command would be rejected by the API.
-    if not _RFC1123.match(value) or len(value) > 63:
+    # fullmatch, not match: `$` also matches before a trailing newline, so
+    # "my-ns\n" would pass and then split every emitted `oc` command in two.
+    if _RFC1123.fullmatch(value) is None or len(value) > 63:
         raise ValueError(
             f"{label} {value!r} is not a valid RFC 1123 name "
             "(lowercase alphanumerics and '-', must start and end alphanumeric, "
