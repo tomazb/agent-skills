@@ -17,13 +17,35 @@ oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd tree
 oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
-If the toolbox is not running, enable it first:
+If the toolbox is not running you have two options. Prefer the second one when
+you are validating rather than operating: enabling the toolbox creates a
+Deployment, and a validation pass should not have to modify the cluster it is
+checking.
+
+Enable the toolbox (persistent, mutates the cluster):
 
 ```bash
 oc patch OCSInitialization ocsinit -n openshift-storage --type merge \
   -p '{"spec":{"enableCephTools":true}}'
 oc -n openshift-storage rollout status deploy/rook-ceph-tools --timeout=5m
 ```
+
+Or run the same read-only queries through the rook-ceph-operator pod, which is
+already running and needs no cluster change. It has the cluster config on disk,
+so pass it with `-c`:
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" -s
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd tree
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd df
+```
+
+Substitute the namespace into `CONF` if the cluster is not in
+`openshift-storage`. This is the same form the `.mgr` drift check below uses.
 
 Confirm exactly one default StorageClass when defaulting is expected, and that the ODF StorageClasses (`ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` if object storage is enabled) exist.
 
@@ -36,7 +58,7 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 - write/read succeeds.
 - RBD/CephFS volume is healthy.
 - replica count matches SNO or multi-node policy.
-- `oc get sc` shows exactly one default StorageClass.
+- `oc get sc` shows exactly one default StorageClass **when defaulting is expected**. ODF does not claim the default on install, so a cluster can legitimately have none — record the intended policy before treating a count of zero as a failure. Note that with no default, any PVC omitting `storageClassName` stays `Pending`.
 
 Use unique smoke namespaces per mode, for example `odf-rbd-smoke` and `odf-cephfs-smoke`, so cleanup and audit commands are unambiguous.
 
@@ -72,6 +94,19 @@ If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
+### Object storage
+
+The renderer covers block and file only. When object storage is enabled — a `CephObjectStore` (RGW) or the MCG `NooBaa` system exists — exercise it too, or a validation pass silently reports success on a cluster whose object path was never touched. Use the `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, against either the RGW StorageClass (`ocs-storagecluster-ceph-rgw`) or the MCG one (`openshift-storage.noobaa.io`).
+
+A successful OBC reaches `Bound`, sets `.spec.bucketName`, and creates a ConfigMap and a Secret of the same name in the claim's namespace holding the endpoint and S3 credentials:
+
+```bash
+oc -n <obc-namespace> get obc <name> -o jsonpath='{.status.phase}{" "}{.spec.bucketName}{"\n"}'
+oc -n <obc-namespace> get cm,secret <name>
+```
+
+Delete the namespace afterwards and confirm no `objectbucket` objects survive the claim.
+
 ## Dashboard And Monitoring
 
 - ODF integrates Ceph metrics with OpenShift monitoring automatically; use the OpenShift console **Storage → Data Foundation** dashboards and the built-in cluster Prometheus. You do not need to stand up a separate Prometheus for ODF as you would on upstream Rook.
@@ -88,7 +123,7 @@ After a node reboot, check:
 - RGW gateways are running (if object store is used).
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
-- One default StorageClass remains.
+- The default-StorageClass situation is unchanged from before the reboot — one default if defaulting is expected on this cluster, still none if that was the intended policy. A reboot should not change the count either way.
 - MachineConfigs have been applied and MCP is `Updated`.
 
 On single-replica SNO, verify the `.mgr` pool is still `size=1` after any mgr
