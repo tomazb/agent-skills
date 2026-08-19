@@ -4,6 +4,8 @@ Use this runbook after install, upgrade, reboot, maintenance, or incident respon
 
 ## Core Validation
 
+Start with the Kubernetes-level state, which needs no Ceph client:
+
 ```bash
 oc get nodes -o wide
 oc get mcp -o wide
@@ -11,28 +13,16 @@ oc get sc
 oc -n openshift-storage get csv,pods -o wide
 oc -n openshift-storage get storagecluster,cephcluster -o wide
 oc -n openshift-storage get cephblockpool,cephfilesystem,cephobjectstore,noobaa -o wide
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph -s
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd tree
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
-If the toolbox is not running you have two options. Prefer the second one when
-you are validating rather than operating: enabling the toolbox creates a
-Deployment, and a validation pass should not have to modify the cluster it is
-checking.
+The Ceph CLI checks need a pod that can talk to the cluster. **The toolbox is
+opt-in and is not deployed by default**, so pick a route before running them
+rather than discovering `deploy/rook-ceph-tools` does not exist:
 
-Enable the toolbox (persistent, mutates the cluster):
-
-```bash
-oc patch OCSInitialization ocsinit -n openshift-storage --type merge \
-  -p '{"spec":{"enableCephTools":true}}'
-oc -n openshift-storage rollout status deploy/rook-ceph-tools --timeout=5m
-```
-
-Or run the same read-only queries through the rook-ceph-operator pod, which is
-already running and needs no cluster change. It has the cluster config on disk,
-so pass it with `-c`:
+**Route A — rook-ceph-operator pod (read-only, no cluster change).** Prefer this
+when validating rather than operating: it uses a pod that is already running and
+the cluster config already on its disk, so a validation pass does not modify the
+cluster it is checking.
 
 ```bash
 ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
@@ -46,6 +36,20 @@ oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd df
 
 Substitute the namespace into `CONF` if the cluster is not in
 `openshift-storage`. This is the same form the `.mgr` drift check below uses.
+
+**Route B — the toolbox** (creates a Deployment; useful if you want a persistent
+CLI for ongoing operations):
+
+```bash
+oc patch OCSInitialization ocsinit -n openshift-storage --type merge \
+  -p '{"spec":{"enableCephTools":true}}'
+oc -n openshift-storage rollout status deploy/rook-ceph-tools --timeout=5m
+
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph -s
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd tree
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
+```
 
 Confirm exactly one default StorageClass when defaulting is expected, and that the ODF StorageClasses (`ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` if object storage is enabled) exist.
 
@@ -98,14 +102,51 @@ On OpenShift, make smoke pods compatible with restricted PodSecurity by setting 
 
 The renderer covers block and file only. When object storage is enabled — a `CephObjectStore` (RGW) or the MCG `NooBaa` system exists — exercise it too, or a validation pass silently reports success on a cluster whose object path was never touched. Use the `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, against either the RGW StorageClass (`ocs-storagecluster-ceph-rgw`) or the MCG one (`openshift-storage.noobaa.io`).
 
-A successful OBC reaches `Bound`, sets `.spec.bucketName`, and creates a ConfigMap and a Secret of the same name in the claim's namespace holding the endpoint and S3 credentials:
+Create the claim in a **dedicated, disposable namespace** — `odf-object-smoke`, matching the `odf-rbd-smoke` / `odf-cephfs-smoke` convention — because the cleanup step deletes that namespace. Never run this in an application namespace.
+
+A successful OBC reaches `Bound`, sets `.spec.bucketName`, and creates a ConfigMap and a Secret of the same name in the claim's namespace:
 
 ```bash
-oc -n <obc-namespace> get obc <name> -o jsonpath='{.status.phase}{" "}{.spec.bucketName}{"\n"}'
-oc -n <obc-namespace> get cm,secret <name>
+oc -n odf-object-smoke get obc object-smoke-obc \
+  -o jsonpath='{.status.phase}{" "}{.spec.bucketName}{"\n"}'
+oc -n odf-object-smoke get cm,secret object-smoke-obc
 ```
 
-Delete the namespace afterwards and confirm no `objectbucket` objects survive the claim.
+**That is provisioning, not proof the object path works.** An OBC reaches `Bound` with both objects created while the endpoint or the credentials are unusable, so stopping here reports a healthy object service on a broken data plane. Exercise S3 with the generated values: the ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT` and `BUCKET_NAME`, the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, and `envFrom` wires both into a pod.
+
+The internal RGW service listens on 443 with a service-CA certificate, so point the client at the in-cluster CA bundle rather than disabling verification:
+
+```yaml
+      envFrom:
+        - configMapRef:
+            name: object-smoke-obc
+        - secretRef:
+            name: object-smoke-obc
+```
+
+```python
+import boto3, os
+ep = "https://%s:%s" % (os.environ["BUCKET_HOST"], os.environ["BUCKET_PORT"])
+s3 = boto3.client(
+    "s3", endpoint_url=ep,
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    verify="/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt",
+)
+b = os.environ["BUCKET_NAME"]
+s3.put_object(Bucket=b, Key="smoke-probe", Body=b"odf-object-smoke-ok")
+assert s3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"odf-object-smoke-ok"
+s3.delete_object(Bucket=b, Key="smoke-probe")
+```
+
+Any S3 client works; the check is that a PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which requires egress — on a disconnected cluster use a mirrored image that already ships an S3 client instead.
+
+Clean up by deleting only the smoke namespace, then confirm the bucket object is gone:
+
+```bash
+oc delete namespace odf-object-smoke --wait=true --timeout=5m
+oc get objectbucket | grep odf-object-smoke || echo "no leftover ObjectBuckets"
+```
 
 ## Dashboard And Monitoring
 

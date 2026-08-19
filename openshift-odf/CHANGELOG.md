@@ -9,6 +9,12 @@ Validation-runbook fixes from a live ODF 4.20.16 SNO validation:
 - The smoke section stopped at block and file, so a validation run on a cluster with RGW or MCG enabled silently skipped the object path. Added an object-storage subsection pointing at the existing `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, with the success criteria (`Bound`, `.spec.bucketName`, generated ConfigMap and Secret) and the cleanup check.
 - Added `tests/test_odf_validation_runbook_contracts.py` covering all three.
 
+Review round:
+
+- The Ceph CLI checks are now presented as an explicit choice *before* any toolbox-dependent command, with the read-only rook-operator route first. The earlier fix was additive, so a reader working top-to-bottom still hit four failing `exec deploy/rook-ceph-tools` commands before reaching the alternative.
+- The object smoke flow names a dedicated `odf-object-smoke` namespace instead of a `<obc-namespace>` placeholder. Cleanup deletes that namespace, so a placeholder invited pointing it at a live application namespace.
+- The object check no longer stops at OBC provisioning. An OBC reaches `Bound` with its ConfigMap and Secret created while the endpoint or credentials are unusable, so metadata-only validation reports a healthy object service on a broken data plane. Added an S3 PUT/GET/DELETE using the generated `BUCKET_HOST`/`BUCKET_PORT`/`BUCKET_NAME` and credentials via `envFrom`, pointed at the in-cluster service-CA bundle for the RGW service's TLS on 443. Verified end to end against a live 4.20.16 cluster; the `pip install boto3` egress dependency and the disconnected-cluster alternative are called out.
+
 ## 1.7.0
 
 Uninstall runbook fixes validated on a live ODF 4.22.1 SNO undeploy (shared `openshift-storage` namespace with LVMS + LSO):

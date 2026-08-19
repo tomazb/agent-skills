@@ -47,6 +47,18 @@ def test_core_validation_offers_a_read_only_route_to_ceph():
     assert "/var/lib/rook/" in section, (
         "the operator route needs the ceph config path (-c) to work"
     )
+    # Ordering matters: the toolbox is opt-in and absent by default, so a
+    # reader working top-to-bottom must not hit four failing commands before
+    # being told an alternative exists.
+    # Only executable toolbox commands count: prose that warns the toolbox may
+    # be absent is exactly what we want to appear early.
+    first_toolbox_cmd = section.find("exec deploy/rook-ceph-tools")
+    first_operator_route = section.find("app=rook-ceph-operator")
+    assert first_toolbox_cmd == -1 or first_operator_route < first_toolbox_cmd, (
+        "the read-only route must appear before any toolbox-dependent `ceph` "
+        "command, since the toolbox is not deployed by default and a reader "
+        "working top-to-bottom would otherwise hit failures first"
+    )
 
 
 def test_default_storageclass_assertions_are_scoped():
@@ -87,4 +99,54 @@ def test_smoke_section_covers_object_storage():
     )
     assert re.search(r"ObjectBucketClaim|OBC", smoke), (
         "name the object smoke artifact so the reader knows what to exercise"
+    )
+
+
+def _object_section(text: str) -> str:
+    start = text.index("### Object storage")
+    rest = text[start:]
+    nxt = rest.find("\n## ", 1)
+    return rest if nxt == -1 else rest[:nxt]
+
+
+def test_object_smoke_uses_a_dedicated_disposable_namespace():
+    """Cleanup deletes a namespace, so the runbook must name a throwaway one.
+
+    A `<obc-namespace>` placeholder invites running the claim in an existing
+    application namespace, and the cleanup step then deletes that namespace
+    along with everything unrelated in it.
+    """
+    section = _object_section(_validation_text())
+    assert "odf-object-smoke" in section, (
+        "name a dedicated smoke namespace, matching the odf-rbd-smoke / "
+        "odf-cephfs-smoke convention used above"
+    )
+    assert "<obc-namespace>" not in section, (
+        "a placeholder namespace plus a namespace delete is a footgun: the "
+        "reader can point it at a live application namespace"
+    )
+    delete_lines = [l for l in section.splitlines() if "delete namespace" in l]
+    assert delete_lines, "the object smoke flow must clean up after itself"
+    for line in delete_lines:
+        assert "odf-object-smoke" in line, (
+            f"cleanup must delete only the dedicated smoke namespace: {line.strip()}"
+        )
+
+
+def test_object_smoke_exercises_the_s3_data_path():
+    """Provisioning metadata is not evidence the object path works.
+
+    An OBC can reach Bound with its ConfigMap and Secret created while the
+    endpoint or credentials are unusable. Without a PUT/GET the validation
+    reports a healthy object service on a broken data plane.
+    """
+    section = _object_section(_validation_text())
+    assert re.search(r"put_object|PUT", section), (
+        "object validation must write an object, not just check the OBC status"
+    )
+    assert re.search(r"get_object|GET", section), (
+        "object validation must read the object back"
+    )
+    assert re.search(r"BUCKET_HOST", section) and re.search(r"AWS_ACCESS_KEY_ID", section), (
+        "wire the generated endpoint and credentials into the data-path check"
     )
