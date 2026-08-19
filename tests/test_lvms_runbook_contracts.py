@@ -92,3 +92,133 @@ def test_expand_wait_warns_about_stale_ready_status():
         "expansion runbook must warn that an already-Ready LVMCluster can pass "
         "the state wait before the controller observes the spec change"
     )
+
+
+LVMCLUSTER_TEMPLATE_FILES = (
+    "install-and-preflight.md",
+    "expand-shrink.md",
+    "validated-lvms-ocp-sno.md",
+)
+
+
+def test_default_deviceclass_templates_warn_about_an_existing_default_sc():
+    """`default: true` mints a default StorageClass.
+
+    The skill's own safety rule is "keep exactly one default StorageClass", and
+    validation-hardening asserts it — so a template that sets `default: true`
+    without telling the reader to check for an existing default produces a
+    second one on any cluster that already has ODF or another default.
+    """
+    warning = re.compile(
+        r"existing default|already has a default|already the cluster default"
+        r"|default already exists"
+    )
+    for name in LVMCLUSTER_TEMPLATE_FILES:
+        lines = _reference_text(name).splitlines()
+        template_lines = [
+            i for i, line in enumerate(lines) if line.strip() == "default: true"
+        ]
+        if not template_lines:
+            continue
+        warned_at = [i for i, line in enumerate(lines) if warning.search(line)]
+        assert warned_at, (
+            f"{name}: sets 'default: true' in an LVMCluster template without "
+            "telling the reader to check for an existing default StorageClass first"
+        )
+        # The warning has to come before the template a reader would copy,
+        # otherwise they have already pasted `default: true` by the time they
+        # reach it. A bare token match anywhere in the file is not enough:
+        # `is-default-class` also appears in unrelated annotation examples.
+        first_template = min(template_lines)
+        assert min(warned_at) < first_template, (
+            f"{name}: the existing-default warning appears after the first "
+            f"'default: true' template (line {first_template + 1})"
+        )
+
+
+def test_default_sc_discovery_covers_the_legacy_beta_annotation():
+    """Upgraded clusters can carry only the beta annotation.
+
+    A discovery command that reads the stable annotation alone reports "no
+    default" on such a cluster, which is exactly the case this guidance exists
+    to catch. The repo's own post_uninstall_audit.sh already treats either as a
+    default.
+    """
+    text = _reference_text("install-and-preflight.md")
+    assert "storageclass.beta.kubernetes.io/is-default-class" in text, (
+        "default-StorageClass discovery must also inspect the legacy beta "
+        "annotation, or an upgraded cluster's existing default is missed"
+    )
+
+
+def test_multiple_default_storageclass_behaviour_is_stated_correctly():
+    """Multiple defaults resolve deterministically, not arbitrarily.
+
+    The DefaultStorageClass admission plugin picks the most recently created
+    default. Describing it as arbitrary or API-server-order dependent sends an
+    operator looking for a race that does not exist, when the real explanation
+    is that the newly created class silently won.
+    """
+    for name in ("install-and-preflight.md", "expand-shrink.md"):
+        text = _reference_text(name)
+        if "two defaults" not in text and "multiple default" not in text.lower():
+            continue
+        assert re.search(r"most recently created|newest", text), (
+            f"{name}: must state that the most recently created default wins"
+        )
+        for wrong in ("happens to return first", "resolves unpredictably", "does not pick a winner"):
+            assert wrong not in text, (
+                f"{name}: multiple-default behaviour is deterministic, not "
+                f"arbitrary; remove {wrong!r}"
+            )
+
+
+def test_non_default_deviceclass_consequence_is_documented():
+    """`default: false` is the safe choice, but it has a failure mode.
+
+    With no default StorageClass on the cluster, a PVC that omits
+    storageClassName never binds. The operator warns about this at apply time;
+    the runbook must too, or the reader picks the safe option and then cannot
+    explain a Pending PVC.
+    """
+    text = _reference_text("install-and-preflight.md")
+    assert "no default deviceClass was specified" in text, (
+        "quote the operator's apply-time warning so the reader recognises it"
+    )
+    assert "storageClassName" in text, (
+        "state that PVCs must name the StorageClass explicitly"
+    )
+    assert "Pending" in text, (
+        "state the consequence: with no cluster default, a PVC omitting "
+        "storageClassName stays Pending"
+    )
+
+
+def test_disk_discovery_handles_missing_by_id_entry():
+    """Not every disk has a /dev/disk/by-id/ entry.
+
+    virtio disks without a serial expose only /dev/disk/by-path/, so a
+    discovery step that hardcodes a by-id path leaves the reader with no
+    documented way forward.
+    """
+    text = _reference_text("install-and-preflight.md")
+    assert "by-path" in text, "discovery must mention the by-path fallback"
+    assert re.search(r"virtio|no by-id|without a serial|lacks? a by-id", text, re.I), (
+        "discovery must state that some disks (virtio without a serial) have no "
+        "/dev/disk/by-id/ entry and that by-path is the correct selector there"
+    )
+    assert "ls -l /dev/disk/by-id" in text or "ls /dev/disk/by-id" in text, (
+        "discovery must show how to check whether a by-id entry exists at all"
+    )
+    assert re.search(r"only under `?/dev/disk/by-path|only.{0,30}by-path", text), (
+        "discovery must state the fallback explicitly: when the disk has no "
+        "by-id entry, by-path is the selector to use"
+    )
+    # The evidence snippet must not force a by-id path on readers whose disk
+    # only has a by-path identity.
+    for line in text.splitlines():
+        if line.startswith("DISK="):
+            assert "by-id" not in line or "by-path" in line, (
+                "the DISK placeholder hardcodes a by-id path even though the "
+                f"section supports by-path-only disks: {line.strip()}"
+            )

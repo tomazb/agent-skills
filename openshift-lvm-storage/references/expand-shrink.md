@@ -18,6 +18,15 @@ oc debug "node/${NODE}" -- chroot /host bash -c "vgs; pvs; lvs"
 
 ### Add a New Disk
 
+Before editing, read `default:` per DeviceClass from the live CR and keep it as it is — a bare list of booleans does not say which class each value belongs to:
+
+```bash
+oc -n openshift-storage get lvmcluster lvmcluster \
+  -o jsonpath='{range .spec.storage.deviceClasses[*]}{.name}{"\t"}{.default}{"\n"}{end}'
+```
+
+Flipping a class to `true` while another StorageClass is already the cluster default (ODF, or a prior install) leaves two defaults. The `DefaultStorageClass` admission plugin then picks the most recently created one for PVCs that omit `storageClassName`, so the class you just edited quietly takes over. Check the cluster's current default with `oc get sc`, inspecting both the `storageclass.kubernetes.io/is-default-class` and legacy `storageclass.beta.kubernetes.io/is-default-class` annotations.
+
 ```yaml
 apiVersion: lvm.topolvm.io/v1alpha1
 kind: LVMCluster
