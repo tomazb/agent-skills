@@ -31,10 +31,23 @@ oc get csidriver topolvm.io 2>/dev/null || true
 oc get scc | grep -i lvm || true
 ```
 
-For each candidate disk, use a stable path and capture non-destructive evidence:
+First resolve which stable path the candidate disk actually has. Not every disk gets a `/dev/disk/by-id/` entry: virtio disks presented without a serial (common on KVM/libvirt and OpenStack) appear only under `/dev/disk/by-path/`, so a by-id path for them does not exist to be found.
 
 ```bash
 NODE="<node>"
+oc debug "node/${NODE}" -- chroot /host bash -c '
+  echo "=== by-id ==="; ls -l /dev/disk/by-id/ 2>/dev/null || echo "(no by-id entries)"
+  echo "=== by-path ==="; ls -l /dev/disk/by-path/
+'
+```
+
+Pick the by-id path when the disk has one — it survives controller and slot changes. When the disk appears only under `by-path`, use that: it is stable for as long as the disk stays on the same PCI address, which is the documented selector for virtual environments (see `volume-group-provisioning.md`). Either way, record the resolved path; never target `/dev/vdX`, `/dev/sdX`, or `/dev/nvmeXnY` directly, since those names are assignment-order dependent and can move across reboots.
+
+Then, for each candidate disk, capture non-destructive evidence against the resolved path:
+
+```bash
+NODE="<node>"
+# by-id when the disk has one, otherwise the by-path entry resolved above
 DISK="/dev/disk/by-id/<stable-disk-id>"
 
 oc debug "node/${NODE}" -- chroot /host bash -c "
@@ -139,6 +152,28 @@ oc -n openshift-storage get operatorgroup
 ## LVMCluster CR
 
 After the operator is installed, create the `LVMCluster` CR that defines volume groups, device selectors, and thin pool settings.
+
+### Decide `default:` before applying any template
+
+`default: true` on a `DeviceClass` makes the operator mark its generated StorageClass as the cluster default. The templates below set `default: true`, which is only correct when the cluster has **no** default StorageClass today. Check first — a cluster running ODF, or any prior LVMS install, may already have one:
+
+```bash
+oc get sc -o custom-columns=\
+'NAME:.metadata.name,DEFAULT:.metadata.annotations.storageclass\.kubernetes\.io/is-default-class'
+```
+
+- **No default today** → `default: true` is fine, and the generated StorageClass becomes the cluster default.
+- **A default already exists** → set `default: false`, or you end up with two defaults. Kubernetes does not pick a winner for a PVC that omits `storageClassName`; the outcome depends on which StorageClass the API server happens to return first, so it is not merely untidy.
+
+With `default: false` the operator prints a warning at apply time, and it means what it says: every PVC must then name the StorageClass explicitly.
+
+```text
+Warning: no default deviceClass was specified, it will be mandatory to specify
+the generated storage class in any PVC explicitly or you will have to declare
+another default StorageClass
+```
+
+If the cluster has no default StorageClass at all, a PVC that omits `storageClassName` gets no class assigned and stays `Pending` indefinitely — it is not a provisioning failure and nothing in the LVMS logs will explain it. Set `storageClassName: lvms-<deviceclass>` in the PVC, or declare a default deliberately.
 
 ### Minimal LVMCluster for SNO
 

@@ -1,6 +1,6 @@
 # OpenShift LVM Storage Lifecycle
 
-Current version: **1.0.2**
+Current version: **1.1.0**
 
 Lifecycle skill for planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, and uninstalling LVM Storage (LVMS) on OpenShift/OKD.
 
