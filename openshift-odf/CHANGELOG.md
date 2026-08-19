@@ -25,6 +25,15 @@ Review-round fixes:
 - `SKILL.md`: noted that ODF 4.20 does not reduce the SNO mon count (3 mons + 1 mgr), which contradicted the generic "reduced mon/mgr counts" rule.
 - Added `tests/test_odf_sno_install_gate_contracts.py` pinning the SNO pre-flight gate invariants: topology discovery, both affected channels, gate-before-install ordering, and per-version routing.
 
+Second review round:
+
+- The generated script now opens with a release preflight that reads the installed `ocs-operator` CSV and exits before the first patch when it does not match `--release`. `--release` only selected templates, and `set -e` aborts a mismatched run only after the earlier still-valid patches have already mutated the cluster.
+- `--name`/`--namespace` are also rejected past 63 characters (the RFC 1123 label limit Kubernetes enforces), so an over-long value fails at render time instead of on every emitted `oc` command.
+- The restore-after-upgrade verification queries each pool spec at its real path: `.spec.replicated.size` exists on `CephBlockPool` only, so the object-store and filesystem pools previously read back blank and the check passed silently.
+- The onboarding recovery exits when either key secret is missing or either modulus is empty, and a mismatched pair now stops the procedure instead of prescribing key deletion inline — deleting the pair invalidates every token signed with it and is documented as a separate, deliberate decision.
+- The virtio disk verification uses exact `grep -Fx` assertions on `DEVTYPE=disk` and the expected `ID_PATH`, so it fails closed instead of printing whichever property happens to be present.
+- Condensed the `SKILL.md` 4.20/4.22 SNO exception to the safety gate, the permitted scope of direct Rook CR editing, and the pointer to `references/validated-odf-sno.md`, per the repo convention of keeping skill instructions concise.
+
 ## 1.5.0
 
 - Updated the `SKILL.md` Core Safety Rules ODF 4.20/4.22 SNO exception to add the `cephFilesystems` reconcile freeze + `CephFilesystem` CR patches, the empty-`topologyKey` and pool-sizing steps, and to scope the "do not enable CephFS" caveat to 4.22 (CephFS was validated on 4.20 SNO).

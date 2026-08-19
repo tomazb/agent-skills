@@ -173,7 +173,11 @@ NS=openshift-storage
 #    mismatched pair, deleting the token below just reproduces the error.
 #    If either key is missing, restart ocs-operator once and wait for BOTH to be
 #    recreated together before continuing.
-oc -n "$NS" get secret onboarding-private-key onboarding-ticket-key
+if ! oc -n "$NS" get secret onboarding-private-key onboarding-ticket-key; then
+  echo "onboarding keys are missing - restart ocs-operator once, wait for BOTH" >&2
+  echo "keys to be recreated together, then re-run this procedure" >&2
+  exit 1
+fi
 
 # (the secrets hold a single PEM entry; read it without hardcoding its data key)
 PRIV_MOD=$(oc -n "$NS" get secret onboarding-private-key -o json \
@@ -182,9 +186,8 @@ PRIV_MOD=$(oc -n "$NS" get secret onboarding-private-key -o json \
 PUB_MOD=$(oc -n "$NS" get secret onboarding-ticket-key -o json \
   | jq -r '.data | to_entries[0].value' | base64 -d \
   | openssl rsa -pubin -noout -modulus 2>/dev/null)
-if [ -z "$PRIV_MOD" ] || [ "$PRIV_MOD" != "$PUB_MOD" ]; then
-  echo "onboarding keys are not a matching pair - delete BOTH keys, restart" >&2
-  echo "ocs-operator once, and let it regenerate them together" >&2
+if [ -z "$PRIV_MOD" ] || [ -z "$PUB_MOD" ] || [ "$PRIV_MOD" != "$PUB_MOD" ]; then
+  echo "onboarding keys are not a matching pair - stop before token recovery" >&2
   exit 1
 fi
 
@@ -214,6 +217,14 @@ fi
 #    the StorageClient. Do NOT delete the keys or restart repeatedly.
 oc -n openshift-storage rollout restart deploy/ocs-operator
 ```
+
+**If the moduli do not match**, stop: this procedure regenerates the token
+only, and it cannot converge against a mismatched pair. Deleting the keys is a
+separate, more disruptive decision — it invalidates every token signed with
+them, so make it deliberately rather than as part of this recovery. Confirm no
+other `StorageConsumer` depends on the current pair first, then delete both
+keys together and restart `ocs-operator` once so it regenerates the pair and
+the token in one pass.
 
 **Verify:** `oc get storageclients.ocs.openshift.io` shows `Connected` with a
 populated CONSUMER, one `clientprofiles.csi.ceph.io` exists, and the
