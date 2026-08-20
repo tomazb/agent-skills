@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.9.0
+
+Drift observed on a live SNO cluster after an unattended ODF 4.20.16 → 4.20.17 z-stream upgrade. All three effects were found on a cluster that had every documented 4.20 SNO workaround correctly applied, so none of them are misconfiguration:
+
+- **The CSI ctrlplugin single-replica fix does not survive the next image change.** Setting the `Driver` CRs to `replicas: 1` prevents the initial scheduling failure, but every later CSI image update deadlocks the rollout on one node: `maxUnavailable: 25%` of 1 replica rounds down to 0 so the outgoing pod is never removed, `maxSurge` rounds up to 1 so a new pod is created, and hard pod anti-affinity forbids it landing on the only node. The new pods sat `Pending` for 13 hours while the Deployment still reported `1/1`, hiding it from any pod-count check. Documented in `references/validated-odf-sno.md` with the ReplicaSet-pair symptom and the delete-the-old-pod remedy.
+- **`flexibleScaling: true` does not silence the node-count reconcile error on 4.20.17.** The runbook claimed it does. The upgraded cluster carries `.status.phase: Error` with `Not enough nodes found: Expected 3, found 1` logged ~200 times an hour while `Available=True`, `Degraded=False`, `ceph -s` is `HEALTH_OK` and all three storage modes serve normally. The claim is now qualified, with instructions to read the conditions rather than gate on `phase`.
+- **Added a Post-Upgrade Drift On Single-Replica SNO section to `references/upgrade.md`.** The upgrade restarts the mgr, so `.mgr` returns to `size 3` and produces undersized PGs, and health mutes do not survive, so `POOL_NO_REDUNDANCY` comes back unmuted. The remediation is spelled out: reduce the pool size, verify explicitly with `pg stat` / `health detail` that no PGs remain undersized or degraded, then re-mute. The verification is the safeguard — `POOL_NO_REDUNDANCY` and the PG health checks are separate, so the mute never hides an unrecovered PG.
+- Added `tests/test_odf_sno_upgrade_drift_contracts.py` covering all three.
+
+Review round:
+
+- Corrected the stated reason for the remediation order. `POOL_NO_REDUNDANCY` and the undersized/degraded PG checks are separate Ceph health checks, so muting the former never hides the latter — on the observed cluster the undersized-PG warning was visible while `POOL_NO_REDUNDANCY` was already muted. The safeguard is now an explicit `pg stat` / `health detail` verification between reducing `.mgr` and re-muting, rather than ordering alone.
+- Tightened the contract tests from keyword presence to the remediation contract: the ctrlplugin section must carry both sides of the rollout arithmetic, the ReplicaSet check, the delete-the-old-pod remedy and one-driver-at-a-time recovery; the upgrade section must carry both `.mgr` commands with the PG check between the fix and the mute; the `flexibleScaling` qualification must be anchored at the claim itself and name the release, the exact error, and the conditions to trust.
+
 ## 1.8.0
 
 Validation-runbook fixes from a live ODF 4.20.16 SNO validation:
