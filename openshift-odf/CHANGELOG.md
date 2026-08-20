@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.9.0
+
+Drift observed on a live SNO cluster after an unattended ODF 4.20.16 → 4.20.17 z-stream upgrade. All three effects were found on a cluster that had every documented 4.20 SNO workaround correctly applied, so none of them are misconfiguration:
+
+- **The CSI ctrlplugin single-replica fix does not survive the next image change.** Setting the `Driver` CRs to `replicas: 1` prevents the initial scheduling failure, but every later CSI image update deadlocks the rollout on one node: `maxUnavailable: 25%` of 1 replica rounds down to 0 so the outgoing pod is never removed, `maxSurge` rounds up to 1 so a new pod is created, and hard pod anti-affinity forbids it landing on the only node. The new pods sat `Pending` for 13 hours while the Deployment still reported `1/1`, hiding it from any pod-count check. Documented in `references/validated-odf-sno.md` with the ReplicaSet-pair symptom and the delete-the-old-pod remedy.
+- **`flexibleScaling: true` does not silence the node-count reconcile error on 4.20.17.** The runbook claimed it does. The upgraded cluster carries `.status.phase: Error` with `Not enough nodes found: Expected 3, found 1` logged ~200 times an hour while `Available=True`, `Degraded=False`, `ceph -s` is `HEALTH_OK` and all three storage modes serve normally. The claim is now qualified, with instructions to read the conditions rather than gate on `phase`.
+- **Added a Post-Upgrade Drift On Single-Replica SNO section to `references/upgrade.md`.** The upgrade restarts the mgr, so `.mgr` returns to `size 3` and produces undersized PGs, and health mutes do not survive, so `POOL_NO_REDUNDANCY` comes back unmuted. The remediation order matters and is spelled out: fix the pool size first, let the undersized PGs clear, then re-mute — muting first conceals the problem still to be fixed.
+- Added `tests/test_odf_sno_upgrade_drift_contracts.py` covering all three.
+
 ## 1.8.0
 
 Validation-runbook fixes from a live ODF 4.20.16 SNO validation:
