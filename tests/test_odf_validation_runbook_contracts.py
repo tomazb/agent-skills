@@ -13,7 +13,11 @@ Guards three things the run surfaced:
 from __future__ import annotations
 
 import re
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REFERENCES = REPO_ROOT / "openshift-odf" / "references"
@@ -178,14 +182,49 @@ def test_object_cleanup_check_can_actually_fail():
     path both look like success, and a failing `oc get` is masked by the pipe.
     A verification step that cannot fail is not a verification step.
     """
+    bash_path = shutil.which("bash")
+    if bash_path is None:
+        pytest.skip("bash not available")
+
     section = _object_section(_validation_text())
-    for line in section.splitlines():
-        if "objectbucket" in line and "grep" in line:
-            assert "||" not in line or "true" in line, (
-                "this cleanup check succeeds even when leftovers are found: "
-                + line.strip()
-            )
-    assert re.search(r"exit 1", section), (
-        "the cleanup verification must exit non-zero when ObjectBuckets survive "
-        "the claim or when the query itself fails"
+    blocks = [
+        b for b in re.findall(r"```bash\n(.*?)```", section, flags=re.DOTALL)
+        if "objectbucket" in b
+    ]
+    assert blocks, "expected a fenced cleanup block querying objectbucket"
+    cleanup = blocks[-1]
+
+    def run(stub: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [bash_path, "-c", stub + "\n" + cleanup],
+            capture_output=True, text=True, check=False,
+        )
+
+    # Clean cluster: the query succeeds and nothing matches.
+    clean = run(
+        'oc() { case "$*" in *"get objectbucket"*) '
+        "printf '%s\\n' objectbucket/unrelated ;; *) : ;; esac; }"
+    )
+    assert clean.returncode == 0, clean.stderr
+    assert "no leftover ObjectBuckets" in clean.stdout
+
+    # The query itself fails: cleanup is unverified, so this must not pass.
+    failed_query = run(
+        'oc() { case "$*" in *"get objectbucket"*) return 1 ;; *) : ;; esac; }'
+    )
+    assert failed_query.returncode != 0, (
+        "a failed objectbucket query leaves cleanup unverified and must not "
+        "report success"
+    )
+
+    # A leftover bucket survived the claim.
+    leftover = run(
+        'oc() { case "$*" in *"get objectbucket"*) '
+        "printf '%s\\n' objectbucket/odf-object-smoke-abc123 ;; *) : ;; esac; }"
+    )
+    assert leftover.returncode != 0, (
+        "a surviving ObjectBucket must fail the cleanup verification"
+    )
+    assert "odf-object-smoke-abc123" in leftover.stderr + leftover.stdout, (
+        "name the leftover so the operator knows what to remove"
     )

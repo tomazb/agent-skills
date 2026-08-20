@@ -114,7 +114,7 @@ oc -n odf-object-smoke get cm,secret object-smoke-obc
 
 **That is provisioning, not proof the object path works.** An OBC reaches `Bound` with both objects created while the endpoint or the credentials are unusable, so stopping here reports a healthy object service on a broken data plane. Exercise S3 with the generated values: the ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT` and `BUCKET_NAME`, the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, and `envFrom` wires both into a pod.
 
-The internal RGW service listens on 443 with a service-CA certificate, so point the client at the in-cluster CA bundle rather than disabling verification:
+The internal RGW service listens on 443 with a service-CA certificate, so point the client at the in-cluster CA bundle rather than disabling verification. **No extra volume is needed for this on OpenShift**: the default ServiceAccount projection already places `service-ca.crt` alongside `ca.crt`, `namespace` and `token` in every pod, so `envFrom` is the whole wiring. (Upstream Kubernetes projects only `ca.crt`; there you would mount the CA yourself.) Confirm with `ls /var/run/secrets/kubernetes.io/serviceaccount/` in any pod on the cluster.
 
 ```yaml
       envFrom:
