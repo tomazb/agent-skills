@@ -148,6 +148,16 @@ spec:
 
 `flexibleScaling: true` allows ODF to accept a single node (without it the StorageCluster reconciler rejects the CR with "Not enough nodes found: Expected 3, found 1").
 
+**It does not silence that message on every z-stream.** Observed on **4.20.17**: with `flexibleScaling: true` set and the cluster fully serving, the reconcile loop still fails with
+
+```text
+Error while reconciling: Not enough nodes found: Expected 3, found 1
+```
+
+logged roughly 200 times an hour, leaving `.status.phase: Error` permanently. The same cluster read `phase: Ready` on 4.20.16 before the automatic upgrade.
+
+Do not gate validation on `.status.phase` alone here. Read the conditions instead — on the affected cluster `Available=True`, `Degraded=False`, `Upgradeable=True` and only `ReconcileComplete=False` carried the node-count message, while `ceph -s` was `HEALTH_OK`, all three storage modes passed smoke tests, and RBD/CephFS/RGW served normally. Treat `phase: Error` with this specific message and otherwise-healthy conditions as cosmetic-but-noisy, and check the ODF release notes before assuming a real fault.
+
 Do **not** set `resourceProfile: lean` — in ODF 4.20 this traps the StorageCluster in `Progressing` indefinitely.
 
 ## ODF 4.20 Regression 1: `SINGLE_NODE=true` Not Auto-Set
@@ -352,6 +362,51 @@ Verify both new pods reach `Running 8/8`:
 oc -n openshift-storage get pods -l 'app=openshift-storage.rbd.csi.ceph.com-ctrlplugin'
 oc -n openshift-storage get pods -l 'app=openshift-storage.cephfs.csi.ceph.com-ctrlplugin'
 ```
+
+### The single-replica fix does not survive the next image change
+
+Setting `replicas: 1` stops the *initial* scheduling failure, but every later
+CSI image update deadlocks the rollout on a single node. Observed on a
+4.20.16 → 4.20.17 z-stream upgrade, where the new ctrlplugin pods sat `Pending`
+for 13 hours:
+
+```text
+FailedScheduling: 0/1 nodes are available: 1 node(s) didn't match pod
+anti-affinity rules (x163 over 13h)
+```
+
+The arithmetic is the trap. The Deployment is `RollingUpdate` with
+`maxUnavailable: 25%` and `maxSurge: 25%`; against `replicas: 1`,
+`maxUnavailable` rounds **down to 0** while `maxSurge` rounds **up to 1**. So
+Kubernetes must keep the outgoing pod running until the incoming one is Ready —
+and the incoming one can never become Ready, because hard pod anti-affinity
+forbids two ctrlplugin pods of the same driver on one node and SNO has exactly
+one node. Both ReplicaSets then sit at `desired 1`, the old one `ready 1` and
+the new one `ready 0`, indefinitely.
+
+The Deployment still reports `1/1`, so this hides from a pod-count check. Look
+for two live ReplicaSets per driver:
+
+```bash
+oc -n openshift-storage get rs | grep ctrlplugin
+```
+
+Break the deadlock by deleting the **old** pod so the new one can take the node.
+Do one driver at a time; each is a brief CSI provisioning gap, and volumes
+already mounted are unaffected:
+
+```bash
+oc -n openshift-storage get pods -o custom-columns=\
+'NAME:.metadata.name,PHASE:.status.phase,RS:.metadata.ownerReferences[0].name' \
+  | grep ctrlplugin
+oc -n openshift-storage delete pod <old-rbd-ctrlplugin-pod>
+# wait for 1/1, then repeat for cephfs
+```
+
+Expect this on **every** CSI image change, including automatic z-stream
+upgrades, until the deployment strategy or the anti-affinity rule changes
+upstream. On a cluster with `installPlanApproval: Automatic` it happens
+unattended, so include the ReplicaSet check in post-upgrade validation.
 
 ## ODF 4.20 Regression 4: Empty `topologyKey` on MDS and RGW Placements
 

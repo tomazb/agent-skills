@@ -90,3 +90,57 @@ After upgrade, confirm:
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - The default ODF StorageClasses still exist and exactly one default StorageClass remains when defaulting is expected.
+
+## Post-Upgrade Drift On Single-Replica SNO
+
+An upgrade restarts the mgr and re-rolls the CSI plugins, which undoes several
+single-node workarounds. All of this was observed on an unattended 4.20.16 →
+4.20.17 z-stream upgrade, so run these checks after **any** ODF upgrade on a
+single-OSD SNO cluster, including automatic ones.
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+
+# 1. The mgr restarted, so .mgr is recreated at size 3 on a single OSD. That
+#    shows up as undersized PGs and "Degraded data redundancy", not as an
+#    obvious pool problem.
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get .mgr size
+
+# 2. Health mutes do not survive the upgrade, so POOL_NO_REDUNDANCY returns as
+#    an unmuted warning even once the pools are correct again.
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
+
+# 3. The CSI ctrlplugin rollout deadlocks on one node: two live ReplicaSets per
+#    driver, the new pod Pending. See "The single-replica fix does not survive
+#    the next image change" in references/validated-odf-sno.md.
+oc -n openshift-storage get rs | grep ctrlplugin
+```
+
+If `.mgr` is back at `size 3`, re-apply the reduction, **prove the PGs
+recovered**, and only then re-mute:
+
+```bash
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" \
+  osd pool set .mgr size 1 --yes-i-really-mean-it
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool set .mgr min_size 1
+
+# Verify recovery explicitly: every PG active+clean, none undersized or
+# degraded. Do not infer this from the absence of warnings.
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" pg stat
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
+
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
+```
+
+The explicit PG check is the safeguard, not the ordering. `POOL_NO_REDUNDANCY`
+and the undersized/degraded PG checks are **separate** health checks, so muting
+the former never hides the latter — on the observed cluster the undersized-PG
+warning was plainly visible while `POOL_NO_REDUNDANCY` was already muted.
+Re-mute last because it is the last step, not because it would conceal
+anything.
+
+Also re-read `.status.phase` on the `StorageCluster` against its conditions
+rather than on its own: a z-stream can leave `phase: Error` from a reconcile
+check that does not reflect serving state. See the `flexibleScaling` note in
+`references/validated-odf-sno.md`.
