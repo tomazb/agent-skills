@@ -12,6 +12,9 @@ runbooks did not cover:
   cluster served traffic normally.
 - The upgrade restarted the mgr, so `.mgr` returned to `size 3` (undersized
   PGs) and the POOL_NO_REDUNDANCY health mute lapsed.
+
+These assert the remediation content and its ordering, not merely that the
+keywords appear somewhere in the file.
 """
 
 from __future__ import annotations
@@ -27,6 +30,29 @@ def _text(name: str) -> str:
     return (REFERENCES / name).read_text(encoding="utf-8")
 
 
+def _section(text: str, heading: str) -> str:
+    """The body of a section, up to the next heading of the same or higher level.
+
+    Fence-aware: a shell comment like `# 1. ...` inside a ```bash block is not
+    a heading, and treating it as one silently truncates the section under
+    test to almost nothing.
+    """
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == heading.strip())
+    level = len(heading) - len(heading.lstrip("#"))
+    body: list[str] = []
+    in_fence = False
+    for line in lines[start + 1 :]:
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and line.startswith("#"):
+            hashes = len(line) - len(line.lstrip("#"))
+            if hashes <= level and line[hashes : hashes + 1] == " ":
+                break
+        body.append(line)
+    return "\n".join(body)
+
+
 def test_ctrlplugin_rollout_deadlock_is_documented():
     """The single-replica fix does not survive the next image change.
 
@@ -34,29 +60,54 @@ def test_ctrlplugin_rollout_deadlock_is_documented():
     necessary but not sufficient: every later CSI image update deadlocks the
     rollout on a single node, so the fix needs its own follow-up.
     """
-    text = _text("validated-odf-sno.md") + _text("upgrade.md")
-    assert re.search(r"maxUnavailable", text), (
-        "explain the rollout arithmetic: maxUnavailable 25% of 1 replica "
-        "rounds down to 0, so the outgoing pod is never removed"
+    section = _section(
+        _text("validated-odf-sno.md"),
+        "### The single-replica fix does not survive the next image change",
     )
-    assert re.search(r"anti-affinity", text, re.I), (
+    assert "maxUnavailable" in section and "maxSurge" in section, (
+        "explain the rollout arithmetic on both sides: maxUnavailable 25% of 1 "
+        "replica rounds down to 0, maxSurge rounds up to 1"
+    )
+    assert re.search(r"anti-affinity", section, re.I), (
         "name pod anti-affinity as the reason the surge pod cannot schedule"
     )
-    assert re.search(r"Pending", text), (
-        "state the observable symptom: the new ctrlplugin pod stays Pending"
+    assert "Pending" in section, "state the observable symptom"
+    assert re.search(r"get rs", section), (
+        "give the two-live-ReplicaSets check, since the Deployment still reads 1/1"
+    )
+    assert re.search(r"delete pod .*old|old.*ctrlplugin-pod", section), (
+        "the remedy is deleting the OLD pod so the new one can take the node"
+    )
+    assert re.search(r"one driver at a time|repeat for cephfs", section), (
+        "recover one driver at a time to bound the provisioning gap"
     )
 
 
 def test_upgrade_runbook_covers_sno_post_upgrade_drift():
     """A z-stream upgrade restarts the mgr and clears health mutes."""
-    text = _text("upgrade.md")
-    assert ".mgr" in text, (
-        "the upgrade runbook must tell SNO operators to re-check the .mgr pool "
-        "size, since the upgrade restarts the mgr"
+    section = _section(
+        _text("upgrade.md"), "## Post-Upgrade Drift On Single-Replica SNO"
     )
-    assert re.search(r"POOL_NO_REDUNDANCY", text), (
+    assert "osd pool set .mgr size 1" in section, (
+        "give the .mgr size remediation, not just the symptom"
+    )
+    assert "osd pool set .mgr min_size 1" in section, "min_size must be reduced too"
+    assert "POOL_NO_REDUNDANCY" in section, (
         "the health mute does not survive the upgrade and must be re-applied"
     )
+
+    # Ordering: reduce the pool, prove the PGs recovered, then re-mute. The
+    # PG check has to be explicit — POOL_NO_REDUNDANCY is a different health
+    # check from PG_DEGRADED, so the mute never hides undersized PGs and
+    # ordering alone guarantees nothing.
+    fix_at = section.index("osd pool set .mgr size 1")
+    mute_at = section.index("health mute POOL_NO_REDUNDANCY")
+    pg_check = re.search(r"pg stat|active\+clean|undersized", section[fix_at:mute_at])
+    assert pg_check, (
+        "between reducing .mgr and re-muting, require an explicit check that no "
+        "PGs remain undersized or degraded"
+    )
+    assert fix_at < mute_at, "reduce the pool before re-muting"
 
 
 def test_flexible_scaling_claim_is_qualified():
@@ -67,13 +118,20 @@ def test_flexible_scaling_claim_is_qualified():
     reader gating on phase alone concludes the cluster is broken.
     """
     text = _text("validated-odf-sno.md")
-    idx = text.find("Not enough nodes found")
-    assert idx != -1, "the node-count error message must appear in the runbook"
-    context = text[max(0, idx - 600) : idx + 900]
-    assert re.search(r"4\.20\.17|z-stream|still|despite|even with", context), (
-        "qualify the flexibleScaling claim: on 4.20.17 the reconcile still "
-        "fails with this message even when flexibleScaling is set"
+    anchor = "It does not silence that message on every z-stream."
+    assert anchor in text, (
+        "qualify the flexibleScaling claim where it is made, not elsewhere"
     )
-    assert re.search(r"Available|Degraded|phase", context), (
-        "tell the reader which conditions to trust when phase reads Error"
+    block = text[text.index(anchor) :][:1500]
+    assert "4.20.17" in block, "name the release the behaviour was observed on"
+    assert "Not enough nodes found: Expected 3, found 1" in block, (
+        "quote the exact reconcile error so it is greppable"
     )
+    assert re.search(r"phase.{0,3}:? Error|\.status\.phase", block), (
+        "state that phase reads Error"
+    )
+    for condition in ("Available=True", "Degraded=False"):
+        assert condition in block, (
+            f"name {condition} so the reader knows which conditions to trust "
+            "instead of gating on phase"
+        )

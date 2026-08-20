@@ -9,6 +9,11 @@ Drift observed on a live SNO cluster after an unattended ODF 4.20.16 → 4.20.17
 - **Added a Post-Upgrade Drift On Single-Replica SNO section to `references/upgrade.md`.** The upgrade restarts the mgr, so `.mgr` returns to `size 3` and produces undersized PGs, and health mutes do not survive, so `POOL_NO_REDUNDANCY` comes back unmuted. The remediation order matters and is spelled out: fix the pool size first, let the undersized PGs clear, then re-mute — muting first conceals the problem still to be fixed.
 - Added `tests/test_odf_sno_upgrade_drift_contracts.py` covering all three.
 
+Review round:
+
+- Corrected the stated reason for the remediation order. `POOL_NO_REDUNDANCY` and the undersized/degraded PG checks are separate Ceph health checks, so muting the former never hides the latter — on the observed cluster the undersized-PG warning was visible while `POOL_NO_REDUNDANCY` was already muted. The safeguard is now an explicit `pg stat` / `health detail` verification between reducing `.mgr` and re-muting, rather than ordering alone.
+- Tightened the contract tests from keyword presence to the remediation contract: the ctrlplugin section must carry both sides of the rollout arithmetic, the ReplicaSet check, the delete-the-old-pod remedy and one-driver-at-a-time recovery; the upgrade section must carry both `.mgr` commands with the PG check between the fix and the mute; the `flexibleScaling` qualification must be anchored at the claim itself and name the release, the exact error, and the conditions to trust.
+
 ## 1.8.0
 
 Validation-runbook fixes from a live ODF 4.20.16 SNO validation:

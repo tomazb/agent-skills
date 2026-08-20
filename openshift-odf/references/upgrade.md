@@ -117,16 +117,28 @@ oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
 oc -n openshift-storage get rs | grep ctrlplugin
 ```
 
-If `.mgr` is back at `size 3`, re-apply the reduction and then re-mute, in that
-order — muting first hides the undersized PGs you still need to fix:
+If `.mgr` is back at `size 3`, re-apply the reduction, **prove the PGs
+recovered**, and only then re-mute:
 
 ```bash
 oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" \
   osd pool set .mgr size 1 --yes-i-really-mean-it
 oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool set .mgr min_size 1
-# wait for the undersized PGs to clear, then:
+
+# Verify recovery explicitly: every PG active+clean, none undersized or
+# degraded. Do not infer this from the absence of warnings.
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" pg stat
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
+
 oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
 ```
+
+The explicit PG check is the safeguard, not the ordering. `POOL_NO_REDUNDANCY`
+and the undersized/degraded PG checks are **separate** health checks, so muting
+the former never hides the latter — on the observed cluster the undersized-PG
+warning was plainly visible while `POOL_NO_REDUNDANCY` was already muted.
+Re-mute last because it is the last step, not because it would conceal
+anything.
 
 Also re-read `.status.phase` on the `StorageCluster` against its conditions
 rather than on its own: a z-stream can leave `phase: Error` from a reconcile
