@@ -1,5 +1,26 @@
 # Changelog
 
+## 1.8.0
+
+Validation-runbook fixes from a live ODF 4.20.16 SNO validation:
+
+- Core Validation reached Ceph only through `deploy/rook-ceph-tools`, so on a cluster without the toolbox the documented path was to patch `OCSInitialization` and create it — a validation pass mutating the cluster it validates. It now also documents the read-only route through the running `rook-ceph-operator` pod with `ceph -c <config>`, which is the form the `.mgr` drift check and `references/validated-odf-sno.md` already use.
+- "Exactly one default StorageClass" was asserted unscoped in the smoke checklist and the post-reboot drift list, while the Core Validation prose correctly scoped it to "when defaulting is expected". ODF does not claim the default on install, so a cluster can deliberately have none; stated flatly the check turns that policy into a reported failure. Both now scope it, and note that with no default a PVC omitting `storageClassName` stays `Pending`.
+- The smoke section stopped at block and file, so a validation run on a cluster with RGW or MCG enabled silently skipped the object path. Added an object-storage subsection pointing at the existing `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, with the success criteria (`Bound`, `.spec.bucketName`, generated ConfigMap and Secret) and the cleanup check.
+- Added `tests/test_odf_validation_runbook_contracts.py` covering all three.
+
+Review round:
+
+- The Ceph CLI checks are now presented as an explicit choice *before* any toolbox-dependent command, with the read-only rook-operator route first. The earlier fix was additive, so a reader working top-to-bottom still hit four failing `exec deploy/rook-ceph-tools` commands before reaching the alternative.
+- The object smoke flow names a dedicated `odf-object-smoke` namespace instead of a `<obc-namespace>` placeholder. Cleanup deletes that namespace, so a placeholder invited pointing it at a live application namespace.
+- The object check no longer stops at OBC provisioning. An OBC reaches `Bound` with its ConfigMap and Secret created while the endpoint or credentials are unusable, so metadata-only validation reports a healthy object service on a broken data plane. Added an S3 PUT/GET/DELETE using the generated `BUCKET_HOST`/`BUCKET_PORT`/`BUCKET_NAME` and credentials via `envFrom`, pointed at the in-cluster service-CA bundle for the RGW service's TLS on 443. Verified end to end against a live 4.20.16 cluster; the `pip install boto3` egress dependency and the disconnected-cluster alternative are called out.
+
+Second review round:
+
+- The S3 snippet normalizes `BUCKET_HOST` instead of prefixing `https://` unconditionally. It is a bare hostname on the RGW StorageClass but can already carry a scheme on the MCG one, which produced `https://https://…`.
+- The cleanup verification fails closed. `oc get objectbucket | grep X || echo ok` exits 0 whether or not a leftover is found and hides a failed query behind the pipe, so it could never report incomplete cleanup — the same shape as the object check it follows.
+- The contract test now requires the DELETE step and every generated field the snippet consumes (`BUCKET_PORT`, `BUCKET_NAME`, `AWS_SECRET_ACCESS_KEY` were droppable without failing it), and asserts the cleanup check can fail.
+
 ## 1.7.0
 
 Uninstall runbook fixes validated on a live ODF 4.22.1 SNO undeploy (shared `openshift-storage` namespace with LVMS + LSO):

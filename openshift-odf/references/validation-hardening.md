@@ -4,6 +4,8 @@ Use this runbook after install, upgrade, reboot, maintenance, or incident respon
 
 ## Core Validation
 
+Start with the Kubernetes-level state, which needs no Ceph client:
+
 ```bash
 oc get nodes -o wide
 oc get mcp -o wide
@@ -11,18 +13,42 @@ oc get sc
 oc -n openshift-storage get csv,pods -o wide
 oc -n openshift-storage get storagecluster,cephcluster -o wide
 oc -n openshift-storage get cephblockpool,cephfilesystem,cephobjectstore,noobaa -o wide
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph -s
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd tree
-oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
-If the toolbox is not running, enable it first:
+The Ceph CLI checks need a pod that can talk to the cluster. **The toolbox is
+opt-in and is not deployed by default**, so pick a route before running them
+rather than discovering `deploy/rook-ceph-tools` does not exist:
+
+**Route A — rook-ceph-operator pod (read-only, no cluster change).** Prefer this
+when validating rather than operating: it uses a pod that is already running and
+the cluster config already on its disk, so a validation pass does not modify the
+cluster it is checking.
+
+```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" -s
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health detail
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd tree
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd df
+```
+
+Substitute the namespace into `CONF` if the cluster is not in
+`openshift-storage`. This is the same form the `.mgr` drift check below uses.
+
+**Route B — the toolbox** (creates a Deployment; useful if you want a persistent
+CLI for ongoing operations):
 
 ```bash
 oc patch OCSInitialization ocsinit -n openshift-storage --type merge \
   -p '{"spec":{"enableCephTools":true}}'
 oc -n openshift-storage rollout status deploy/rook-ceph-tools --timeout=5m
+
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph -s
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd tree
+oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 ```
 
 Confirm exactly one default StorageClass when defaulting is expected, and that the ODF StorageClasses (`ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` if object storage is enabled) exist.
@@ -36,7 +62,7 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 - write/read succeeds.
 - RBD/CephFS volume is healthy.
 - replica count matches SNO or multi-node policy.
-- `oc get sc` shows exactly one default StorageClass.
+- `oc get sc` shows exactly one default StorageClass **when defaulting is expected**. ODF does not claim the default on install, so a cluster can legitimately have none — record the intended policy before treating a count of zero as a failure. Note that with no default, any PVC omitting `storageClassName` stays `Pending`.
 
 Use unique smoke namespaces per mode, for example `odf-rbd-smoke` and `odf-cephfs-smoke`, so cleanup and audit commands are unambiguous.
 
@@ -72,6 +98,74 @@ If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
+### Object storage
+
+The renderer covers block and file only. When object storage is enabled — a `CephObjectStore` (RGW) or the MCG `NooBaa` system exists — exercise it too, or a validation pass silently reports success on a cluster whose object path was never touched. Use the `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, against either the RGW StorageClass (`ocs-storagecluster-ceph-rgw`) or the MCG one (`openshift-storage.noobaa.io`).
+
+Create the claim in a **dedicated, disposable namespace** — `odf-object-smoke`, matching the `odf-rbd-smoke` / `odf-cephfs-smoke` convention — because the cleanup step deletes that namespace. Never run this in an application namespace.
+
+A successful OBC reaches `Bound`, sets `.spec.bucketName`, and creates a ConfigMap and a Secret of the same name in the claim's namespace:
+
+```bash
+oc -n odf-object-smoke get obc object-smoke-obc \
+  -o jsonpath='{.status.phase}{" "}{.spec.bucketName}{"\n"}'
+oc -n odf-object-smoke get cm,secret object-smoke-obc
+```
+
+**That is provisioning, not proof the object path works.** An OBC reaches `Bound` with both objects created while the endpoint or the credentials are unusable, so stopping here reports a healthy object service on a broken data plane. Exercise S3 with the generated values: the ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT` and `BUCKET_NAME`, the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`, and `envFrom` wires both into a pod.
+
+The internal RGW service listens on 443 with a service-CA certificate, so point the client at the in-cluster CA bundle rather than disabling verification. **No extra volume is needed for this on OpenShift**: the default ServiceAccount projection already places `service-ca.crt` alongside `ca.crt`, `namespace` and `token` in every pod, so `envFrom` is the whole wiring. (Upstream Kubernetes projects only `ca.crt`; there you would mount the CA yourself.) Confirm with `ls /var/run/secrets/kubernetes.io/serviceaccount/` in any pod on the cluster.
+
+```yaml
+      envFrom:
+        - configMapRef:
+            name: object-smoke-obc
+        - secretRef:
+            name: object-smoke-obc
+```
+
+`BUCKET_HOST` is a bare hostname for the RGW StorageClass but can already carry a scheme on the MCG one, so normalize it instead of prefixing unconditionally — otherwise you build `https://https://…` and the client fails to parse the endpoint:
+
+```python
+import boto3, os
+host = os.environ["BUCKET_HOST"].rstrip("/")
+if "://" not in host:
+    host = "https://" + host
+ep = "%s:%s" % (host, os.environ["BUCKET_PORT"])
+s3 = boto3.client(
+    "s3", endpoint_url=ep,
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    verify="/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt",
+)
+b = os.environ["BUCKET_NAME"]
+s3.put_object(Bucket=b, Key="smoke-probe", Body=b"odf-object-smoke-ok")
+assert s3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"odf-object-smoke-ok"
+s3.delete_object(Bucket=b, Key="smoke-probe")
+```
+
+Any S3 client works; the check is that a PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which requires egress — on a disconnected cluster use a mirrored image that already ships an S3 client instead.
+
+Clean up by deleting only the smoke namespace, then confirm the bucket object is gone:
+
+```bash
+oc delete namespace odf-object-smoke --wait=true --timeout=5m
+
+# Fail closed: `oc get ... | grep X || echo ok` exits 0 whether or not X is
+# found, and hides a failed query behind the pipe, so it can never report a
+# leftover bucket.
+if ! buckets=$(oc get objectbucket -o name); then
+  echo "could not inspect ObjectBuckets - cleanup unverified" >&2
+  exit 1
+fi
+leftovers=$(printf '%s\n' "$buckets" | grep -F 'odf-object-smoke' || true)
+if [ -n "$leftovers" ]; then
+  printf 'leftover ObjectBuckets after deleting the claim:\n%s\n' "$leftovers" >&2
+  exit 1
+fi
+echo "no leftover ObjectBuckets"
+```
+
 ## Dashboard And Monitoring
 
 - ODF integrates Ceph metrics with OpenShift monitoring automatically; use the OpenShift console **Storage → Data Foundation** dashboards and the built-in cluster Prometheus. You do not need to stand up a separate Prometheus for ODF as you would on upstream Rook.
@@ -88,7 +182,7 @@ After a node reboot, check:
 - RGW gateways are running (if object store is used).
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
-- One default StorageClass remains.
+- The default-StorageClass situation is unchanged from before the reboot — one default if defaulting is expected on this cluster, still none if that was the intended policy. A reboot should not change the count either way.
 - MachineConfigs have been applied and MCP is `Updated`.
 
 On single-replica SNO, verify the `.mgr` pool is still `size=1` after any mgr
