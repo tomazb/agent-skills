@@ -42,16 +42,27 @@ oc get sc | grep -E 'ocs-storagecluster|rook-ceph|ceph\.rook\.io|csi\.ceph\.com|
 oc get csidriver | grep -E 'openshift-storage|rook-ceph|ceph\.com' || echo "no leftover Ceph CSIDrivers"
 oc get scc | grep -E 'rook-ceph|noobaa' || echo "no leftover Ceph SCCs"
 # Node-level leftovers on every candidate storage node:
-oc debug node/<node> -- chroot /host bash -c '
-  DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
+NODE="<node>"
+DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
+oc debug "node/${NODE}" -- chroot /host bash -c '
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label. ceph-volume is NOT present on the
-  # RHCOS host, so LVM-backed OSD metadata cannot be inspected here — run ceph-volume lvm list from a
-  # container that ships it (the rook-ceph image) if you need it; do not mask its absence with 2>/dev/null.
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
   for d in $DISKS; do lsblk -f "$d"; done
   # stale krbd device mappings leaked by a prior teardown (NooBaa DB and app PVCs use ceph-rbd):
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done'
+
+# RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
+# container that carries it and bind the host device/LVM paths into that container.
+# If this command fails, fail closed and do not reuse the disk.
+CEPH_VOLUME_IMAGE="quay.io/ceph/ceph:v19.2.2"   # replace with the Ceph image shipped by your ODF release
+oc debug "node/${NODE}" --image="${CEPH_VOLUME_IMAGE}" -- bash -ceu '
+  mkdir -p /run/lvm /etc/lvm
+  mount --rbind /host/dev /dev
+  mount --rbind /host/run/lvm /run/lvm
+  mount --rbind /host/etc/lvm /etc/lvm
+  for d in '"$DISKS"'; do ceph-volume lvm list "$d"; done
+' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
 ```
 
 **Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`. Remediation is node-local (run it inside `oc debug node/<node> -- chroot /host`): a forced unmap `timeout 30 rbd device unmap --force /dev/rbdN` (or the `/sys/bus/rbd/remove*` sysfs write when the `rbd` client is unavailable on the host), escalating to a node reboot or hypervisor power-cycle when the mapping is fully wedged. See the Rook cleanup runbook's "Stale krbd Devices" section for the exact commands.

@@ -40,21 +40,31 @@ Node-level leftovers on every candidate storage node (the most common cause of a
 
 ```bash
 NODE="<node>"
+DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
 oc debug "node/${NODE}" -- chroot /host bash -c '
-  DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
   echo "== stale mon/OSD dataDirHostPath =="
   if [ ! -d /var/lib/rook ]; then echo "/var/lib/rook absent (clean)"
   else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
-  echo "== OSD disk still carries a BlueStore label? =="
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label. ceph-volume is NOT present on the
-  # RHCOS host, so LVM-backed OSD metadata cannot be inspected here — run ceph-volume lvm list from a
-  # container that ships it (the rook-ceph image) if you need it; do not mask its absence with 2>/dev/null.
+  echo "== OSD disk still carries a raw BlueStore label? =="
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
   for d in $DISKS; do lsblk -f "$d"; done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 '
+
+# RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
+# container that carries it and bind the host device/LVM paths into that container.
+# If this command fails, fail closed and do not reuse the disk.
+ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v19.2.2"   # or the cephVersion.image you plan to deploy
+oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -ceu '
+  mkdir -p /run/lvm /etc/lvm
+  mount --rbind /host/dev /dev
+  mount --rbind /host/run/lvm /run/lvm
+  mount --rbind /host/etc/lvm /etc/lvm
+  for d in '"$DISKS"'; do ceph-volume lvm list "$d"; done
+' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
 ```
 
 **Stale krbd devices are a silent killer.** If a prior Rook/ODF teardown deleted an RBD-backed PVC (or its whole namespace) *before* the volume was unmapped, or deleted the Ceph pool out from under a mapped image, the node keeps a wedged `/dev/rbdN` device pointing at a pool that no longer exists. A fresh Rook OSD prepare then hangs **forever** at `ceph-volume raw list` (it probes every block device, including the dead `/dev/rbdN`). The device cannot be force-removed from userspace — `/sys/bus/rbd/remove*` blocks uninterruptibly, and it can even wedge a node shutdown. Clear it before installing (see `maintenance-uninstall.md`, "Stale krbd Devices"); a wedged device may require a node reboot or hypervisor power-cycle.

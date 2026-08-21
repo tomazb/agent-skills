@@ -111,18 +111,30 @@ oc debug node/<node> -- chroot /host bash -c '
 '
 ```
 
-Unmap a leftover from the affected node. `rbd device unmap --force` is a local kernel operation that does not need the pool, but it **waits for in-flight I/O**, so a fully wedged mapping can block — wrap it in `timeout` and fall back to the sysfs interface on timeout/failure (`single_major` depends on the RBD module option). Run it node-local, using the RBD id from `/sys/bus/rbd/devices/`:
+Unmap a leftover from the affected node. `rbd device unmap --force` is a local kernel operation that does not need the pool, but it **waits for in-flight I/O**, so a fully wedged mapping can block — wrap it in `timeout`. If that times out, kick off the sysfs fallback detached (`single_major` depends on the RBD module option) and then verify whether the device really disappeared. Run it node-local, using the RBD id from `/sys/bus/rbd/devices/`:
 
 ```bash
 oc debug node/<node> -- chroot /host bash -c '
   ID="<rbd-id>"   # from /sys/bus/rbd/devices/
-  timeout 30 rbd device unmap --force "/dev/rbd${ID}" \
-    || echo "${ID} force" > /sys/bus/rbd/remove_single_major 2>/dev/null \
-    || echo "${ID} force" > /sys/bus/rbd/remove
+  timeout 30 rbd device unmap --force "/dev/rbd${ID}" && exit 0
+  if [ -e /sys/bus/rbd/remove_single_major ]; then
+    setsid sh -c "printf \"%s force\n\" \"${ID}\" > /sys/bus/rbd/remove_single_major" </dev/null >/dev/null 2>&1 &
+  else
+    setsid sh -c "printf \"%s force\n\" \"${ID}\" > /sys/bus/rbd/remove" </dev/null >/dev/null 2>&1 &
+  fi
 '
 ```
 
-If that still does not release it, a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd[0-9]*` is empty before reinstalling.
+Do not wait for the detached sysfs fallback. After either path, re-check both `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*` before pool deletion or reinstall:
+
+```bash
+oc debug node/<node> -- chroot /host bash -c '
+  ls /dev/rbd[0-9]* 2>/dev/null || echo "no /dev/rbd[0-9]* devices"
+  ls /sys/bus/rbd/devices/* 2>/dev/null || echo "no /sys/bus/rbd/devices entries"
+'
+```
+
+If either path is still populated, a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*` are both empty before reinstalling.
 
 If the cluster was installed with the direct manifest path (crds.yaml was applied), delete the CRDs last. CRD deletion is irreversible and will cascade-delete any remaining custom resources — only proceed after the namespace is fully removed and the post-uninstall audit confirms no CRs remain:
 
