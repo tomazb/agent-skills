@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.11.0
+
+- Hardened the uninstall and preflight runbooks with findings from a live Rook→ODF→Rook round-trip on SNO:
+  - **`references/install-and-preflight.md`** — the Leftover Install Detection now checks `/dev/rbd*` and `/sys/bus/rbd/devices` for stale krbd mappings (ODF's NooBaa DB and any `ceph-rbd` PVC use RBD), which otherwise hang a later OSD prepare's `ceph-volume raw list`.
+  - **`references/maintenance-uninstall.md`** — documented that the `reconcileStrategy: ignore` teardown block covers `cephBlockPools`, `cephObjectStores`, **and** `cephFilesystems`, and that the `CephCluster` also waits on `CephBlockPoolRadosNamespace`, `CephClient`, `CephFilesystemSubVolumeGroup`, and `CephObjectStoreUser` dependents plus NooBaa's `graceful_finalizer`; added the `cluster-cleanup-job` hang on `ceph-volume raw/lvm list` and the stale-krbd cross-check.
+  - **`references/validated-odf-sno.md`** — added an ODF 4.20.17 fresh-install observations section: `enableCephTools` is rejected as an unknown field (use the rook-operator ceph path), `ocs-operator` runs 0 replicas until a StorageCluster exists (Regression 1 verification gap), and the misleading `dmcrypt` wording in ceph-volume raw prepare.
+- Extended the package validator and tests to enforce the new leftover-detection, teardown-dependents, and 4.20.17 install guidance.
+
+## 1.10.0
+
+- Added a **Leftover Install Detection (ODF or Rook)** subsection to `references/install-and-preflight.md`. A prior ODF uninstall and a prior upstream Rook uninstall leave the same Ceph/Rook byproducts, so the preflight now checks for *either* product's leftovers — namespaces, CRDs, orphaned StorageClasses/CSIDrivers/SCCs, stale `/var/lib/rook/mon-*` dirs, and residual BlueStore disk labels — before installing, and routes cleanup to the ODF or Rook uninstall runbook as appropriate.
+- Extended the package validator and tests to enforce the new leftover-detection guidance.
+
 ## 1.9.0
 
 Drift observed on a live SNO cluster after an unattended ODF 4.20.16 → 4.20.17 z-stream upgrade. All three effects were found on a cluster that had every documented 4.20 SNO workaround correctly applied, so none of them are misconfiguration:

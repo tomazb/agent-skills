@@ -352,6 +352,17 @@ def check_required_reference_guidance(root: Path) -> list[str]:
 
     require(
         "references/install-and-preflight.md",
+        "leftover-install detection (ODF or Rook)",
+        [
+            "Leftover Install Detection",
+            "/var/lib/rook/mon-",
+            "Has BlueStore device label",
+            "oc get csidriver",
+            "/sys/bus/rbd/devices",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
         "OLM install guidance",
         [
             "openshift-storage",
@@ -443,6 +454,17 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/maintenance-uninstall.md",
+        "frozen-dependents and stale-device teardown guidance",
+        [
+            "CephObjectStoreUser",
+            "graceful_finalizer",
+            "cluster-cleanup-job",
+            "ceph-volume raw list",
+            "/sys/bus/rbd/devices",
+        ],
+    )
+    require(
         "references/validation-hardening.md",
         "ODF validation/monitoring guidance",
         [
@@ -461,6 +483,15 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "openshift-storage.noobaa.io",
             "localblock",
             "HEALTH_OK",
+        ],
+    )
+    require(
+        "references/validated-odf-sno.md",
+        "ODF 4.20.17 install gotchas",
+        [
+            "unknown field",
+            "runs 0 replicas until",
+            "dmcrypt",
         ],
     )
     forbid_pattern_rel = "references/install-and-preflight.md"

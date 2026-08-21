@@ -364,6 +364,28 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "python3 scripts/patch_rook_ceph_manifest.py",
         ],
     )
+    require(
+        "references/install-and-preflight.md",
+        "leftover-install detection (Rook or ODF)",
+        [
+            "Leftover Install Detection",
+            "ocs.openshift.io",
+            "/var/lib/rook/mon-",
+            "Has BlueStore device label",
+            "oc get csidriver",
+            "/sys/bus/rbd/devices",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
+        "Ceph/ceph-csi version compatibility guidance",
+        [
+            "Ceph Version And ceph-csi Compatibility",
+            "failed to decode key",
+            "rados: ret=-22",
+            "AES256K",
+        ],
+    )
     require_order(
         "references/install-and-preflight.md",
         "CSI/operator manifest ordering",
@@ -429,6 +451,25 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "post-uninstall audit helper invocation",
         [
             "scripts/post_uninstall_audit.sh",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "orphaned cluster-scoped and stuck-finalizer cleanup",
+        [
+            "clientprofiles.csi.ceph.io",
+            "oc delete csidriver",
+            "rm -rf /var/lib/rook",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "stale krbd device cleanup",
+        [
+            "Stale krbd Devices",
+            "/sys/bus/rbd/devices",
+            "ceph-volume raw list",
+            "rbd unmap",
         ],
     )
     require(

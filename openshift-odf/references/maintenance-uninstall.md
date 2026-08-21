@@ -77,24 +77,57 @@ oc -n openshift-storage get storagecluster,cephcluster,noobaa -o wide
 oc -n openshift-storage get pods -o wide
 ```
 
-**Graceful uninstall blocked by `reconcileStrategy: ignore` (ODF 4.22 SNO workaround).** When the `StorageCluster` carries `managedResources.cephBlockPools.reconcileStrategy: ignore` (see `references/validated-odf-sno.md`), `ocs-operator` also ignores the pools during uninstall and never deletes them. The rook cluster-controller then loops on:
+**Graceful uninstall blocked by `reconcileStrategy: ignore` (ODF 4.20 and 4.22 SNO workaround).** When the `StorageCluster` freezes managed resources with `reconcileStrategy: ignore` (see `references/validated-odf-sno.md`), `ocs-operator` skips those resources during uninstall and never deletes them. The freeze commonly covers **`cephBlockPools`, `cephObjectStores`, and `cephFilesystems`** — not just block pools — so the rook cluster-controller loops on:
 
 ```text
 CephCluster "openshift-storage/ocs-storagecluster-cephcluster" will not be deleted until all dependents are removed: CephBlockPool: [builtin-mgr ocs-storagecluster-cephblockpool]
 ```
 
-and the `StorageCluster` stays in `Deleting` past any timeout. Resolution: delete the leftover `CephBlockPool` CRs directly — rook allows it while the destructive cleanup policy is active:
+and the `StorageCluster` stays in `Deleting` past any timeout. Resolution: delete the frozen CRs directly — rook allows it while the destructive cleanup policy is active. Delete **all three kinds**, not only the block pools:
 
 ```bash
-oc -n openshift-storage get cephblockpool
+oc -n openshift-storage get cephblockpool cephfilesystem cephobjectstore
 oc -n openshift-storage delete cephblockpool <leftover-pools>
+oc -n openshift-storage delete cephfilesystem --all
+oc -n openshift-storage delete cephobjectstore --all
 ```
 
-With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). Verify before continuing:
+**The CephCluster can stay `Deleting` even after the frozen pools/fs/object stores are gone.** It also waits on its remaining dependents, which the frozen teardown left behind, plus NooBaa. On a live ODF 4.20 SNO uninstall the blocker was:
+
+```text
+will not be deleted until all dependents are removed:
+  CephBlockPoolRadosNamespace: [ocs-storagecluster-cephblockpool-builtin-implicit]
+  CephClient: [csi-cephfs-node-... csi-cephfs-provisioner-... csi-rbd-node-... csi-rbd-provisioner-...]
+  CephFilesystemSubVolumeGroup: [csi]
+  CephObjectStoreUser: [noobaa-ceph-objectstore-user ocs-storagecluster-cephobjectstoreuser prometheus-user]
+```
+
+NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-objectstore-user`. Delete NooBaa first (clear its finalizer if stuck), then the remaining dependents — the still-running CSI/ocs-client operators may recreate the `CephClient`s, so clear their finalizers as you delete:
+
+```bash
+oc -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
+oc -n openshift-storage delete noobaa noobaa --wait=false
+for kind in cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace; do
+  for it in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name 2>/dev/null); do
+    oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
+    oc -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
+  done
+done
+```
+
+With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job and zap the disk manually (see **Disk Cleanup**):
 
 ```bash
 oc -n openshift-storage get jobs | grep cluster-cleanup
+oc -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
+oc -n openshift-storage delete job cluster-cleanup-job-<node>          # then wipe the disk manually
 oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature
+```
+
+Also confirm no **stale krbd device** was leaked (deleting a NooBaa DB / ceph-rbd PVC before it was unmapped wedges a `/dev/rbdN` that later hangs a reinstall's `ceph-volume raw list`). See the Rook cleanup runbook's "Stale krbd Devices" section:
+
+```bash
+oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd* 2>/dev/null || echo "no /dev/rbd*"; ls /sys/bus/rbd/devices/'
 ```
 
 ### 4. Remove the operators

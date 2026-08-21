@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.5.0
+
+- Added **stale krbd device** detection and remediation, learned from a live Rook→ODF→Rook round-trip on SNO. A prior teardown that deleted an RBD-backed PVC (or its namespace) before the volume was unmapped — or destroyed the pool under a mapped image — leaves a wedged `/dev/rbdN` that hangs a new Rook OSD prepare forever at `ceph-volume raw list`. `references/install-and-preflight.md` now checks `/dev/rbd*` and `/sys/bus/rbd/devices`, and `references/maintenance-uninstall.md` adds a "Stale krbd Devices" section (drain consumers first, `rbd unmap`, and reboot/power-cycle a wedged VM).
+- Fixed the leftover-detection `/var/lib/rook` check to count entries instead of relying on `ls` exit code (an empty dir returns 0, a false "stale" positive).
+- Extended the package validator and tests to enforce the krbd guidance.
+
+## 1.4.0
+
+- Added a **Leftover Install Detection (Rook or ODF)** preflight to `references/install-and-preflight.md` that checks for a prior Rook *or* ODF footprint — leftover namespaces, CRDs (`ceph.rook.io`/`ocs.openshift.io`/`csi.ceph.io`/`noobaa.io`), orphaned StorageClasses/CSIDrivers/SCCs, stale `/var/lib/rook/mon-*` dirs, and residual BlueStore disk labels — before deploying, with a cleanup handoff.
+- Added **Ceph Version And ceph-csi Compatibility** guidance: pin `cephVersion.image` to a Ceph release whose cephx key cipher the deployed ceph-csi can decode. Documents the Tentacle `v20.2.4` AES256K vs ceph-csi v3.17 (librados 20.2.1) incompatibility that fails CSI provisioning with `failed to decode key` / `rados: ret=-22` while RGW/OBC keeps working, and recommends Squid `v19.2.2`.
+- Extended `references/maintenance-uninstall.md` with `cephnfs` teardown ordering, stuck `clientprofiles.csi.ceph.io` finalizer clearing that blocks namespace deletion, removal of orphaned cluster-scoped StorageClasses/CSIDriver objects, and `/var/lib/rook` clearing on each node.
+- Extended the package validator and tests to enforce the new leftover-detection, version-compatibility, and uninstall-cleanup guidance.
+
 ## 1.3.0
 
 - Added Product Ownership Gate for Rook vs ODF classification, openshift-versions handoff, and concrete helper invocations in install/validation runbooks.

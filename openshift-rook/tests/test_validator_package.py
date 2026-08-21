@@ -62,6 +62,50 @@ def test_missing_smoke_helper_invocation_fails(validator, package_factory, refer
     assert any("render_smoke_manifest.py" in issue for issue in issues)
 
 
+def test_missing_leftover_install_detection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("Leftover Install Detection", "Leftovers"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("leftover-install detection" in issue for issue in issues)
+
+
+def test_missing_ceph_csi_version_compat_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("AES256K", "some-cipher"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("version compatibility" in issue for issue in issues)
+
+
+def test_missing_orphaned_cleanup_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("clientprofiles.csi.ceph.io", "some-cr"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("orphaned cluster-scoped" in issue for issue in issues)
+
+
+def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("ceph-volume raw list", "volume listing"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("stale krbd device cleanup" in issue for issue in issues)
+
+
 def test_missing_ownership_gate_fails(validator, package_factory, make_skill_text):
     root = package_factory(
         skill_text=make_skill_text(missing_sections=["## Product Ownership Gate"])

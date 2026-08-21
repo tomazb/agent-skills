@@ -82,6 +82,14 @@ Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder man
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
 Run `bash scripts/post_uninstall_audit.sh` after uninstall.
+
+Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, and `oc get csidriver`.
+
+Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`.
+
+During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and `rm -rf /var/lib/rook` on each node.
+
+Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 """
 
 SKILL_TEMPLATE = """\

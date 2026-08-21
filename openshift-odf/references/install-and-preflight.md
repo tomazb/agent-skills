@@ -30,6 +30,30 @@ oc get pv,pvc -A -o wide
 oc get localvolumeset,localvolumediscovery -A 2>/dev/null || true
 ```
 
+### Leftover Install Detection (ODF or Rook)
+
+A prior **ODF** uninstall and a prior upstream **Rook** uninstall leave the same Ceph/Rook byproducts. Detect uncleaned state from **either** product before installing — a stale mon store or an OSD disk that still carries a BlueStore label makes the fresh mon crash and makes OSD prepare skip the disk (`Has BlueStore device label`). Do not treat namespace or CRD presence alone as ownership; classify with the Product Ownership Gate first.
+
+```bash
+# Cluster-scoped/namespaced leftovers from ODF or Rook (survive a namespace delete):
+oc get ns openshift-storage rook-ceph 2>/dev/null || true
+oc get crd | grep -E 'ceph\.rook\.io|ocs\.openshift\.io|csi\.ceph\.io|noobaa\.io' || echo "no rook/odf CRDs"
+oc get sc | grep -E 'ocs-storagecluster|rook-ceph|ceph\.rook\.io|csi\.ceph\.com|noobaa' || echo "no leftover StorageClasses"
+oc get csidriver | grep -E 'openshift-storage|rook-ceph|ceph\.com' || echo "no leftover Ceph CSIDrivers"
+oc get scc | grep -E 'rook-ceph|noobaa' || echo "no leftover Ceph SCCs"
+# Node-level leftovers on every candidate storage node:
+oc debug node/<node> -- chroot /host bash -c '
+  ls -d /var/lib/rook/mon-* /var/lib/rook/openshift-storage 2>/dev/null || echo "no stale mon dirs"
+  for d in <candidate-osd-by-id-paths>; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
+  # stale krbd device mappings leaked by a prior teardown (NooBaa DB and app PVCs use ceph-rbd):
+  ls /dev/rbd* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd* devices"
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done'
+```
+
+**Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`, and the device cannot be force-removed from userspace (it can even wedge a node shutdown). Clear it before installing; a wedged device may need a node reboot or hypervisor power-cycle.
+
+Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, `/var/lib/rook`, stale krbd mappings, and full-disk BlueStore zeroing is required in both cases.
+
 ### Upstream Rook Conflict Check (SNO / Bare-Metal)
 
 Before installing ODF on a node that has ever run a storage system, check for an upstream (non-OLM) Rook cluster:
