@@ -45,14 +45,16 @@ oc get scc | grep -E 'rook-ceph|noobaa' || echo "no leftover Ceph SCCs"
 oc debug node/<node> -- chroot /host bash -c '
   DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label; ceph-volume lvm list only covers LVM-backed OSDs.
-  for d in $DISKS; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label. ceph-volume is NOT present on the
+  # RHCOS host, so LVM-backed OSD metadata cannot be inspected here — run ceph-volume lvm list from a
+  # container that ships it (the rook-ceph image) if you need it; do not mask its absence with 2>/dev/null.
+  for d in $DISKS; do lsblk -f "$d"; done
   # stale krbd device mappings leaked by a prior teardown (NooBaa DB and app PVCs use ceph-rbd):
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done'
 ```
 
-**Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`. First try a forced local unmap (`rbd device unmap --force /dev/rbdN`, which does not need the pool); if that hangs the mapping is fully wedged and needs a node reboot or hypervisor power-cycle.
+**Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`. Remediation is node-local (run it inside `oc debug node/<node> -- chroot /host`): a forced unmap `timeout 30 rbd device unmap --force /dev/rbdN` (or the `/sys/bus/rbd/remove*` sysfs write when the `rbd` client is unavailable on the host), escalating to a node reboot or hypervisor power-cycle when the mapping is fully wedged. See the Rook cleanup runbook's "Stale krbd Devices" section for the exact commands.
 
 Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, the `dataDirHostPath` (`/var/lib/rook`), and stale krbd mappings is required in both cases. **Full-disk BlueStore zeroing is destructive and is only appropriate once ownership is classified, the operator has confirmed the disk is not a recovery candidate, and destructive confirmation is given for the exact device** — see the Disk Cleanup gate in `references/local-storage-disks.md`.
 

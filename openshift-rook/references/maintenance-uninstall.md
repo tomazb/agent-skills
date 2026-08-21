@@ -75,12 +75,18 @@ Also inspect `ceph.rook.io` CRs the same way if a `CephCluster` stays in `Deleti
 Several objects are **cluster-scoped and survive the namespace deletion** — they must be removed by name or a later reinstall reuses stale definitions. Query **both** StorageClasses and CSIDrivers (custom `CSI_DRIVER_NAME_PREFIX` values and user-created StorageClasses/VolumeSnapshotClasses may differ from the defaults), confirm nothing depends on them, then delete every match:
 
 ```bash
-# Discover every Rook-owned cluster-scoped object (not just the default names):
-oc get sc -o name | while read -r sc; do
-  oc get "$sc" -o jsonpath='{.metadata.name} {.provisioner}{"\n"}'; done | grep -E 'rook-ceph|ceph\.rook\.io|csi\.ceph\.com|\.ceph\.rook\.io/bucket'
-oc get csidriver -o name | grep -E 'rook-ceph|\.ceph\.com'
-oc get volumesnapshotclass -o name 2>/dev/null | xargs -r -I{} sh -c 'oc get {} -o jsonpath="{.metadata.name} {.driver}{\"\n\"}"' | grep -E 'rook-ceph|\.ceph\.com' || true
-# Confirm no PV/PVC still uses them, then delete each matched name:
+# This Rook cluster's CSI driver names share a fixed prefix (default "rook-ceph"; if the
+# operator sets CSI_DRIVER_NAME_PREFIX, use that). Match ONLY that prefix so a second Ceph
+# cluster's ".csi.ceph.com" drivers/snapshotclasses are never touched.
+PFX="rook-ceph"   # = CSI_DRIVER_NAME_PREFIX if customized
+# StorageClasses owned by this cluster (by provisioner):
+oc get sc -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.provisioner}{"\n"}{end}' \
+  | grep -E "(^| )${PFX}(-|\.)|${PFX}\.ceph\.rook\.io/bucket"
+# CSIDrivers and VolumeSnapshotClasses owned by this cluster (exact prefix, not a bare .ceph.com):
+oc get csidriver -o name | grep -E "/${PFX}\.(rbd|cephfs|nfs)\.csi\.ceph\.com$"
+oc get volumesnapshotclass -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.driver}{"\n"}{end}' 2>/dev/null \
+  | grep -E " ${PFX}\.(rbd|cephfs|nfs)\.csi\.ceph\.com$" || true
+# Print the matches, confirm no PV/PVC/snapshot still depends on them, THEN delete each matched name:
 oc delete sc <matched-storageclasses> --ignore-not-found
 oc delete csidriver <matched-csidrivers> --ignore-not-found
 oc delete volumesnapshotclass <matched-snapshotclasses> --ignore-not-found
@@ -100,15 +106,20 @@ Before removing the Ceph pools or a consumer namespace, make sure every RBD-back
 
 ```bash
 oc debug node/<node> -- chroot /host bash -c '
-  ls /dev/rbd* 2>/dev/null || echo "no /dev/rbd* devices"
+  ls /dev/rbd[0-9]* 2>/dev/null || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 '
 ```
 
-Unmap a leftover cleanly with the Ceph credentials while the cluster still exists — `rbd device unmap --force /dev/rbdN` (the `--force` kernel unmap is a local operation that does not need the pool, so it also works when the pool is missing). If even the forced unmap hangs (the mapping is fully wedged against a gone cluster), fall back to the sysfs interface — write `"<id> force"` to whichever exists (`single_major` depends on the RBD module option):
+Unmap a leftover from the affected node. `rbd device unmap --force` is a local kernel operation that does not need the pool, but it **waits for in-flight I/O**, so a fully wedged mapping can block — wrap it in `timeout` and fall back to the sysfs interface on timeout/failure (`single_major` depends on the RBD module option). Run it node-local, using the RBD id from `/sys/bus/rbd/devices/`:
 
 ```bash
-echo "<id> force" > /sys/bus/rbd/remove_single_major 2>/dev/null || echo "<id> force" > /sys/bus/rbd/remove
+oc debug node/<node> -- chroot /host bash -c '
+  ID="<rbd-id>"   # from /sys/bus/rbd/devices/
+  timeout 30 rbd device unmap --force "/dev/rbd${ID}" \
+    || echo "${ID} force" > /sys/bus/rbd/remove_single_major 2>/dev/null \
+    || echo "${ID} force" > /sys/bus/rbd/remove
+'
 ```
 
 If that still does not release it, a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd[0-9]*` is empty before reinstalling.

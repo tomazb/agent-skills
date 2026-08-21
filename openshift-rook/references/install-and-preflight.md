@@ -47,8 +47,10 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
   echo "== OSD disk still carries a BlueStore label? =="
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label; ceph-volume lvm list only covers LVM-backed OSDs.
-  for d in $DISKS; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label. ceph-volume is NOT present on the
+  # RHCOS host, so LVM-backed OSD metadata cannot be inspected here — run ceph-volume lvm list from a
+  # container that ships it (the rook-ceph image) if you need it; do not mask its absence with 2>/dev/null.
+  for d in $DISKS; do lsblk -f "$d"; done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
