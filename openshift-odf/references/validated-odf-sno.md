@@ -512,7 +512,8 @@ Observed on a fresh `stable-4.20` (`ocs-operator.v4.20.17-rhodf`) SNO install:
 
   ```bash
   OCS_CSV=$(oc -n openshift-storage get csv -o name | grep -m1 '/ocs-operator\.')
-  oc -n openshift-storage get "$OCS_CSV" -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*].name}'
+  oc -n openshift-storage get "$OCS_CSV" -o jsonpath='{range .spec.install.spec.deployments[0].spec.template.spec.containers[0].env[?(@.name=="SINGLE_NODE")]}{.name}={.value}{"\n"}{end}'
+  # must print exactly: SINGLE_NODE=true   (an empty or false value does not enable the single-node logic)
   ```
 
   The pod-level check only works after the StorageCluster scales ocs-operator up.

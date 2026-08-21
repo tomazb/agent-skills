@@ -102,19 +102,20 @@ will not be deleted until all dependents are removed:
   CephObjectStoreUser: [noobaa-ceph-objectstore-user ocs-storagecluster-cephobjectstoreuser prometheus-user]
 ```
 
-NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-objectstore-user`. The still-running CSI and `ocs-client` operators **recreate** the `CephClient`s as fast as you delete them, so scale those reconcilers down first, then delete NooBaa (clear its finalizer if stuck) and sweep the dependents in a loop until all four kinds are gone:
+NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-objectstore-user`. The `ocs-client-operator` and the ceph-csi controller **recreate** the `CephClient`s as fast as you delete them, so scale **those** reconcilers down first — **leave `rook-ceph-operator` running**, because rook is what deletes the `CephCluster` and launches the per-node `cluster-cleanup-job`. Then delete NooBaa (clear its finalizer if stuck) and sweep the dependents in a bounded loop that **fails** if they do not converge:
 
 ```bash
-# Stop the reconcilers that recreate CephClients so the sweep converges:
-oc -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/rook-ceph-operator --replicas=0
+# Stop only the reconcilers that recreate CephClients (NOT rook-ceph-operator):
+oc -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/ceph-csi-controller-manager --replicas=0
 
 oc -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
 oc -n openshift-storage delete noobaa noobaa --wait=false
 
-# Repeat until every dependent kind reports none (do not hide errors with 2>/dev/null):
-for pass in 1 2 3; do
+# Bounded sweep: repeat until every dependent kind reports none, else exit nonzero.
+KINDS="cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace"
+for pass in $(seq 1 12); do
   left=0
-  for kind in cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace; do
+  for kind in $KINDS; do
     for it in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name); do
       left=1
       oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}'
@@ -124,23 +125,32 @@ for pass in 1 2 3; do
   [ "$left" -eq 0 ] && break
   sleep 5
 done
-# Final check — all four kinds must be empty before continuing:
-oc -n openshift-storage get cephobjectstoreuser,cephclient,cephfilesystemsubvolumegroup,cephblockpoolradosnamespace
+# Fail closed if anything remains — do not continue teardown with live dependents:
+remaining=$(oc -n openshift-storage get ${KINDS// /,} --no-headers 2>/dev/null | wc -l)
+[ "$remaining" -eq 0 ] || { echo "dependents did not converge ($remaining left)" >&2; exit 1; }
 ```
 
-With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job and zap the disk manually (see **Disk Cleanup**):
+Once the `CephCluster` is deleted, scale `rook-ceph-operator` back to its original replica count if you changed it, and re-enable the reconcilers you stopped after the namespace teardown completes.
+
+With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job, **wait for the Job and its pod to actually terminate**, then zap the disk manually (deleting with `--wait=false` returns before the pod is gone, and wiping a disk the cleanup pod still holds races it):
 
 ```bash
 oc -n openshift-storage get jobs | grep cluster-cleanup
 oc -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
-oc -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false   # then wipe the disk manually
-oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature
+oc -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false
+# Wait until the Job and its pod are gone before touching the disk:
+for i in $(seq 1 30); do
+  oc -n openshift-storage get job/cluster-cleanup-job-<node> >/dev/null 2>&1 || \
+    { [ -z "$(oc -n openshift-storage get pods -l job-name=cluster-cleanup-job-<node> --no-headers 2>/dev/null)" ] && break; }
+  sleep 2
+done
+oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature; then wipe manually
 ```
 
 Also confirm no **stale krbd device** was leaked (deleting a NooBaa DB / ceph-rbd PVC before it was unmapped wedges a `/dev/rbdN` that later hangs a reinstall's `ceph-volume raw list`). See the Rook cleanup runbook's "Stale krbd Devices" section:
 
 ```bash
-oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd* 2>/dev/null || echo "no /dev/rbd*"; ls /sys/bus/rbd/devices/'
+oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd[0-9]* 2>/dev/null || echo "no /dev/rbd[0-9]*"; ls /sys/bus/rbd/devices/'
 ```
 
 ### 4. Remove the operators
