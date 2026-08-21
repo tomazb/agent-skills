@@ -104,6 +104,8 @@ Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/
 
 Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd.
 
+## ODF 4.20.17 Fresh-Install Observations
+
 ODF 4.20.17 gotchas: `enableCephTools` is rejected as an `unknown field`, `ocs-operator` `runs 0 replicas until` a StorageCluster exists, and ceph-volume may log `dmcrypt` without real encryption.
 """
 

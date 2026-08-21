@@ -1,7 +1,7 @@
 # Changelog
 
 ## 1.11.0
-
+- Addressed PR review feedback: made preflight/uninstall commands runnable (no shell-invalid placeholders, non-repeatable `--api-group` split, `/dev/rbd[0-9]*` glob, per-path stale-dir checks), discover ceph-csi version pre-install from the operator image-set, read `dataDirHostPath` instead of hardcoding `/var/lib/rook`, use `--wait=false` and a converging reconciler-stop loop in ODF teardown, gate destructive zeroing on confirmed abandonment, route 4.20.17 health checks off the toolbox, and bind the 4.20.17 validator check to its section.
 - Hardened the uninstall and preflight runbooks with findings from a live Rook→ODF→Rook round-trip on SNO:
   - **`references/install-and-preflight.md`** — the Leftover Install Detection now checks `/dev/rbd*` and `/sys/bus/rbd/devices` for stale krbd mappings (ODF's NooBaa DB and any `ceph-rbd` PVC use RBD), which otherwise hang a later OSD prepare's `ceph-volume raw list`.
   - **`references/maintenance-uninstall.md`** — documented that the `reconcileStrategy: ignore` teardown block covers `cephBlockPools`, `cephObjectStores`, **and** `cephFilesystems`, and that the `CephCluster` also waits on `CephBlockPoolRadosNamespace`, `CephClient`, `CephFilesystemSubVolumeGroup`, and `CephObjectStoreUser` dependents plus NooBaa's `graceful_finalizer`; added the `cluster-cleanup-job` hang on `ceph-volume raw/lvm list` and the stale-krbd cross-check.

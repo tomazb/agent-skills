@@ -297,7 +297,7 @@ def test_missing_odf_420_install_gotchas_fails(validator, package_factory, refer
         encoding="utf-8",
     )
     issues = validator.validate_root(root)
-    assert any("4.20.17 install gotchas" in issue for issue in issues)
+    assert any("Fresh-Install Observations" in issue for issue in issues)
 
 
 def test_missing_olm_install_ordering_fails(validator, package_factory, reference_text):

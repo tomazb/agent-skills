@@ -485,15 +485,30 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "HEALTH_OK",
         ],
     )
-    require(
-        "references/validated-odf-sno.md",
-        "ODF 4.20.17 install gotchas",
-        [
-            "unknown field",
-            "runs 0 replicas until",
-            "dmcrypt",
-        ],
+    # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
+    # cannot pass on incidental prose elsewhere in the file.
+    sno_text = read_reference("references/validated-odf-sno.md")
+    gotcha_match = re.search(
+        r"^##\s+ODF 4\.20\.17 Fresh-Install Observations.*?(?=^##\s|\Z)",
+        sno_text,
+        re.MULTILINE | re.DOTALL,
     )
+    if not gotcha_match:
+        issues.append(
+            "references/validated-odf-sno.md: missing 'ODF 4.20.17 Fresh-Install Observations' section"
+        )
+    else:
+        section = gotcha_match.group(0)
+        missing = [
+            needle
+            for needle in ("unknown field", "runs 0 replicas until", "dmcrypt")
+            if needle not in section
+        ]
+        if missing:
+            issues.append(
+                "references/validated-odf-sno.md: 'ODF 4.20.17 Fresh-Install Observations' "
+                f"section missing: {', '.join(missing)}"
+            )
     forbid_pattern_rel = "references/install-and-preflight.md"
     if re.search(
         r"operator-openshift\.yaml", read_reference(forbid_pattern_rel), re.MULTILINE

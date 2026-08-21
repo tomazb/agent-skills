@@ -43,16 +43,18 @@ oc get csidriver | grep -E 'openshift-storage|rook-ceph|ceph\.com' || echo "no l
 oc get scc | grep -E 'rook-ceph|noobaa' || echo "no leftover Ceph SCCs"
 # Node-level leftovers on every candidate storage node:
 oc debug node/<node> -- chroot /host bash -c '
-  ls -d /var/lib/rook/mon-* /var/lib/rook/openshift-storage 2>/dev/null || echo "no stale mon dirs"
-  for d in <candidate-osd-by-id-paths>; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
+  DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
+  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label; ceph-volume lvm list only covers LVM-backed OSDs.
+  for d in $DISKS; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
   # stale krbd device mappings leaked by a prior teardown (NooBaa DB and app PVCs use ceph-rbd):
-  ls /dev/rbd* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd* devices"
+  ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done'
 ```
 
-**Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`, and the device cannot be force-removed from userspace (it can even wedge a node shutdown). Clear it before installing; a wedged device may need a node reboot or hypervisor power-cycle.
+**Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`. First try a forced local unmap (`rbd device unmap --force /dev/rbdN`, which does not need the pool); if that hangs the mapping is fully wedged and needs a node reboot or hypervisor power-cycle.
 
-Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, `/var/lib/rook`, stale krbd mappings, and full-disk BlueStore zeroing is required in both cases.
+Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, the `dataDirHostPath` (`/var/lib/rook`), and stale krbd mappings is required in both cases. **Full-disk BlueStore zeroing is destructive and is only appropriate once ownership is classified, the operator has confirmed the disk is not a recovery candidate, and destructive confirmation is given for the exact device** — see the Disk Cleanup gate in `references/local-storage-disks.md`.
 
 ### Upstream Rook Conflict Check (SNO / Bare-Metal)
 
@@ -282,6 +284,14 @@ oc -n openshift-storage rollout status deploy/rook-ceph-tools --timeout=5m
 oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph -s
 oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph health detail
 ```
+
+> **Some builds reject `spec.enableCephTools`** (observed on `ocs-operator.v4.20.17-rhodf`, which returns `Warning: unknown field "spec.enableCephTools"`). The `rook-ceph-tools` Deployment then never appears and the `rollout status` above times out after 5m. If you hit that, skip the toolbox and run Ceph commands through the rook-operator pod with the cluster config instead (see `references/validated-odf-sno.md`, "ODF 4.20.17 Fresh-Install Observations"):
+>
+> ```bash
+> ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+> CONF=/var/lib/rook/openshift-storage/openshift-storage.config
+> oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" -s
+> ```
 
 Before declaring success, verify:
 

@@ -87,9 +87,9 @@ and the `StorageCluster` stays in `Deleting` past any timeout. Resolution: delet
 
 ```bash
 oc -n openshift-storage get cephblockpool cephfilesystem cephobjectstore
-oc -n openshift-storage delete cephblockpool <leftover-pools>
-oc -n openshift-storage delete cephfilesystem --all
-oc -n openshift-storage delete cephobjectstore --all
+oc -n openshift-storage delete cephblockpool <leftover-pools> --wait=false
+oc -n openshift-storage delete cephfilesystem --all --wait=false
+oc -n openshift-storage delete cephobjectstore --all --wait=false
 ```
 
 **The CephCluster can stay `Deleting` even after the frozen pools/fs/object stores are gone.** It also waits on its remaining dependents, which the frozen teardown left behind, plus NooBaa. On a live ODF 4.20 SNO uninstall the blocker was:
@@ -102,17 +102,30 @@ will not be deleted until all dependents are removed:
   CephObjectStoreUser: [noobaa-ceph-objectstore-user ocs-storagecluster-cephobjectstoreuser prometheus-user]
 ```
 
-NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-objectstore-user`. Delete NooBaa first (clear its finalizer if stuck), then the remaining dependents — the still-running CSI/ocs-client operators may recreate the `CephClient`s, so clear their finalizers as you delete:
+NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-objectstore-user`. The still-running CSI and `ocs-client` operators **recreate** the `CephClient`s as fast as you delete them, so scale those reconcilers down first, then delete NooBaa (clear its finalizer if stuck) and sweep the dependents in a loop until all four kinds are gone:
 
 ```bash
+# Stop the reconcilers that recreate CephClients so the sweep converges:
+oc -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/rook-ceph-operator --replicas=0
+
 oc -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
 oc -n openshift-storage delete noobaa noobaa --wait=false
-for kind in cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace; do
-  for it in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name 2>/dev/null); do
-    oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}' 2>/dev/null
-    oc -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
+
+# Repeat until every dependent kind reports none (do not hide errors with 2>/dev/null):
+for pass in 1 2 3; do
+  left=0
+  for kind in cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace; do
+    for it in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name); do
+      left=1
+      oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}'
+      oc -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
+    done
   done
+  [ "$left" -eq 0 ] && break
+  sleep 5
 done
+# Final check — all four kinds must be empty before continuing:
+oc -n openshift-storage get cephobjectstoreuser,cephclient,cephfilesystemsubvolumegroup,cephblockpoolradosnamespace
 ```
 
 With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job and zap the disk manually (see **Disk Cleanup**):
@@ -120,7 +133,7 @@ With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per nod
 ```bash
 oc -n openshift-storage get jobs | grep cluster-cleanup
 oc -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
-oc -n openshift-storage delete job cluster-cleanup-job-<node>          # then wipe the disk manually
+oc -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false   # then wipe the disk manually
 oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature
 ```
 

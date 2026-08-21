@@ -459,7 +459,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         [
             "clientprofiles.csi.ceph.io",
             "oc delete csidriver",
-            "rm -rf /var/lib/rook",
+            "dataDirHostPath",
         ],
     )
     require(
@@ -469,7 +469,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "Stale krbd Devices",
             "/sys/bus/rbd/devices",
             "ceph-volume raw list",
-            "rbd unmap",
+            "rbd device unmap",
         ],
     )
     require(
