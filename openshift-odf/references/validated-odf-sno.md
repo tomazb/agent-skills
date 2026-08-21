@@ -503,6 +503,16 @@ assuming a pre-existing default is present to be preserved.
 - In `managedFields`, the `CephBlockPool` CR's `size`, `requireSafeReplicaSize`, and `failureDomain` are owned by `kubectl-patch` while `ocs-operator` owns only `targetSizeRatio`. Direct confirmation that the size has to be patched into the CR by hand, and that the freeze keeps ocs-operator off those fields.
 - `builtin-mgr` still carries `size: 3`, `replicasPerFailureDomain: 1`, `failureDomain: osd` against a live `.mgr` pool at `size 1`, with no mgr restart since install and no pool reconcile logged by rook in 24h. Pool CRs are reconciled on trigger, not on a timer, so a stale CR value is a latent revert rather than an immediate one.
 
+## ODF 4.20.17 Fresh-Install Observations (procedure gotchas)
+
+Observed on a fresh `stable-4.20` (`ocs-operator.v4.20.17-rhodf`) SNO install:
+
+- **`enableCephTools` is rejected as an unknown field.** `oc patch OCSInitialization ocsinit -p '{"spec":{"enableCephTools":true}}'` returns `Warning: unknown field "spec.enableCephTools"` and makes no change on this build. Run Ceph commands through the rook-operator pod with the cluster config instead of the toolbox: `ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1); CONF=/var/lib/rook/openshift-storage/openshift-storage.config; oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF -s`.
+- **`ocs-operator` runs 0 replicas until a `StorageCluster` exists.** Right after the CSVs reach `Succeeded`, `deploy/ocs-operator` is `0/0`, so the Regression 1 verification `oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE` fails with no pod. Verify the patch on the **CSV/Deployment spec** at that stage (`... get csv <ocs-csv> -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*].name}'`); the pod-level check only works after the StorageCluster scales ocs-operator up.
+- **`SINGLE_NODE=true` is best applied before creating the StorageCluster**, so ocs-operator reconciles pools with the single-node logic from the start.
+- **`ceph-volume raw ... prepare successful` may print `dmcrypt` even when encryption is not configured.** It is misleading wording, not proof of an encrypted OSD — confirm with `dmsetup ls` / `lsblk` (no crypt layer) rather than trusting the log line.
+- On this z-stream the `StorageCluster` reached `phase: Ready` with `ReconcileComplete=True` after all workarounds; the permanent `phase: Error` node-count noise documented above was not reproduced on every 4.20.17 install, so gate on conditions and `ceph -s`, not folklore about a fixed phase value.
+
 ---
 
 # ODF 4.22 SNO Scenario (OCP 4.22.5) — Regression Workarounds Required

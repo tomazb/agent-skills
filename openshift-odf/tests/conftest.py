@@ -99,6 +99,12 @@ Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+
+Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, `oc get csidriver`, and `/sys/bus/rbd/devices`.
+
+Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd.
+
+ODF 4.20.17 gotchas: `enableCephTools` is rejected as an `unknown field`, `ocs-operator` `runs 0 replicas until` a StorageCluster exists, and ceph-volume may log `dmcrypt` without real encryption.
 """
 
 SKILL_TEMPLATE = """\

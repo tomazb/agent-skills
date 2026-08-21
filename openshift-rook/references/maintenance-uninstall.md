@@ -40,6 +40,7 @@ helm uninstall rook-ceph -n rook-ceph
 Delete the Rook Ceph resources in reverse order:
 
 ```bash
+oc -n rook-ceph delete cephnfs --all --wait=true --timeout=10m
 oc -n rook-ceph delete cephobjectstore --all --wait=true --timeout=10m
 oc -n rook-ceph delete cephfilesystem --all --wait=true --timeout=10m
 oc -n rook-ceph delete cephblockpool --all --wait=true --timeout=10m
@@ -50,9 +51,50 @@ Wait for the operator to clean up OSDs, mons, and mgrs. Then delete the operator
 
 ```bash
 oc delete -f /tmp/rook-ceph-operator.yaml
+oc delete -f /tmp/rook-ceph-csi-operator.yaml
 oc delete -f /tmp/rook-ceph-common.yaml
 oc delete namespace rook-ceph --wait=true --timeout=10m
 ```
+
+### Namespace Stuck Terminating And Orphaned Cluster-Scoped Objects
+
+Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps its finalizer after the operator is gone. Clear the finalizer, then the namespace terminates:
+
+```bash
+for kind in $(oc api-resources --api-group=csi.ceph.io -o name 2>/dev/null); do
+  for item in $(oc -n rook-ceph get "$kind" --no-headers -o custom-columns=:.metadata.name 2>/dev/null); do
+    oc -n rook-ceph patch "$kind" "$item" --type=merge -p '{"metadata":{"finalizers":[]}}'
+  done
+done
+```
+
+Several objects are **cluster-scoped and survive the namespace deletion** — they must be removed by name or a later reinstall reuses stale definitions:
+
+```bash
+# Orphaned StorageClasses (RBD, CephFS, NFS, RGW-OBC) and CSIDriver objects
+oc get sc | grep -E 'rook-ceph|ceph\.rook\.io|csi\.ceph\.com'
+oc delete sc rook-ceph-block rook-cephfs rook-nfs rook-ceph-rgw-obc --ignore-not-found
+oc delete csidriver rook-ceph.rbd.csi.ceph.com rook-ceph.cephfs.csi.ceph.com rook-ceph.nfs.csi.ceph.com --ignore-not-found
+```
+
+After the namespace is gone, clear the mon/OSD `dataDirHostPath` on every storage node so a reinstall starts clean (a leftover mon store crashes the new mon):
+
+```bash
+oc debug node/<node> -- chroot /host bash -c 'rm -rf /var/lib/rook/*; ls -la /var/lib/rook/'
+```
+
+### Stale krbd Devices
+
+Before removing the Ceph pools or a consumer namespace, make sure every RBD-backed PVC is unmounted and **unmapped**. If an RBD image is deleted (or its pool is destroyed) while a `/dev/rbdN` mapping is still open on a node, that mapping is orphaned against a cluster that no longer exists. A later Rook OSD prepare then hangs indefinitely at `ceph-volume raw list` (it probes the dead `/dev/rbdN`), and the device cannot be removed from userspace — `/sys/bus/rbd/remove*` blocks uninterruptibly and can wedge a node shutdown. Drain consumers first (delete app PVCs with `--wait=true` so CSI unmaps them), then check each node:
+
+```bash
+oc debug node/<node> -- chroot /host bash -c '
+  ls /dev/rbd* 2>/dev/null || echo "no /dev/rbd* devices"
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
+'
+```
+
+Unmap a leftover cleanly with the Ceph credentials while the cluster still exists (`rbd unmap /dev/rbdN`). If the backing cluster is already gone the mapping is wedged: `echo "<id> force" > /sys/bus/rbd/remove_single_major` may not release it, and a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd*` is empty before reinstalling.
 
 If the cluster was installed with the direct manifest path (crds.yaml was applied), delete the CRDs last. CRD deletion is irreversible and will cascade-delete any remaining custom resources — only proceed after the namespace is fully removed and the post-uninstall audit confirms no CRs remain:
 

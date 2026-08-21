@@ -267,6 +267,39 @@ def test_missing_olm_install_guidance_fails(validator, package_factory, referenc
     assert any("install-and-preflight.md" in issue and "OperatorGroup" in issue for issue in issues)
 
 
+def test_missing_leftover_install_detection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("Leftover Install Detection", "Leftovers"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("leftover-install detection" in issue for issue in issues)
+
+
+def test_missing_frozen_dependents_teardown_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("graceful_finalizer", "some-finalizer"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("frozen-dependents and stale-device" in issue for issue in issues)
+
+
+def test_missing_odf_420_install_gotchas_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    sno = root / "references" / "validated-odf-sno.md"
+    sno.write_text(
+        sno.read_text(encoding="utf-8").replace("runs 0 replicas until", "starts fine when"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("4.20.17 install gotchas" in issue for issue in issues)
+
+
 def test_missing_olm_install_ordering_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     install = root / "references" / "install-and-preflight.md"
