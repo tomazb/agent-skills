@@ -47,9 +47,11 @@ oc -n rook-ceph delete cephblockpool --all --wait=true --timeout=10m
 oc -n rook-ceph delete cephcluster rook-ceph --wait=true --timeout=10m
 ```
 
-Wait for the operator to clean up OSDs, mons, and mgrs. Then delete the operator, common resources, and namespace:
+Wait for the operator to clean up OSDs, mons, and mgrs. Then remove the CSI custom resources **before** the CSI operator (otherwise their finalizers block the operator and namespace teardown), then delete the operator, common resources, and namespace:
 
 ```bash
+# Delete ceph-csi CRs first so the csi-operator can finalize cleanly:
+oc -n rook-ceph delete drivers.csi.ceph.io,operatorconfigs.csi.ceph.io,cephconnections.csi.ceph.io,clientprofiles.csi.ceph.io,clientprofilemappings.csi.ceph.io --all --wait=false --ignore-not-found
 oc delete -f /tmp/rook-ceph-operator.yaml
 oc delete -f /tmp/rook-ceph-csi-operator.yaml
 oc delete -f /tmp/rook-ceph-common.yaml
@@ -58,7 +60,7 @@ oc delete namespace rook-ceph --wait=true --timeout=10m
 
 ### Namespace Stuck Terminating And Orphaned Cluster-Scoped Objects
 
-Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps its finalizer after the operator is gone. Clear the finalizer, then the namespace terminates:
+Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps its finalizer after the operator is gone. Prefer the targeted CR deletes above; if the namespace is still stuck, clear finalizers on the **confirmed** blocking CRs (inspect first, then patch):
 
 ```bash
 for kind in $(oc api-resources --api-group=csi.ceph.io -o name 2>/dev/null); do
@@ -68,19 +70,28 @@ for kind in $(oc api-resources --api-group=csi.ceph.io -o name 2>/dev/null); do
 done
 ```
 
-Several objects are **cluster-scoped and survive the namespace deletion** — they must be removed by name or a later reinstall reuses stale definitions:
+Also inspect `ceph.rook.io` CRs the same way if a `CephCluster` stays in `Deleting`. Keep mounts and consumers removed before clearing any finalizer.
+
+Several objects are **cluster-scoped and survive the namespace deletion** — they must be removed by name or a later reinstall reuses stale definitions. Query **both** StorageClasses and CSIDrivers (custom `CSI_DRIVER_NAME_PREFIX` values and user-created StorageClasses/VolumeSnapshotClasses may differ from the defaults), confirm nothing depends on them, then delete every match:
 
 ```bash
-# Orphaned StorageClasses (RBD, CephFS, NFS, RGW-OBC) and CSIDriver objects
-oc get sc | grep -E 'rook-ceph|ceph\.rook\.io|csi\.ceph\.com'
-oc delete sc rook-ceph-block rook-cephfs rook-nfs rook-ceph-rgw-obc --ignore-not-found
-oc delete csidriver rook-ceph.rbd.csi.ceph.com rook-ceph.cephfs.csi.ceph.com rook-ceph.nfs.csi.ceph.com --ignore-not-found
+# Discover every Rook-owned cluster-scoped object (not just the default names):
+oc get sc -o name | while read -r sc; do
+  oc get "$sc" -o jsonpath='{.metadata.name} {.provisioner}{"\n"}'; done | grep -E 'rook-ceph|ceph\.rook\.io|csi\.ceph\.com|\.ceph\.rook\.io/bucket'
+oc get csidriver -o name | grep -E 'rook-ceph|\.ceph\.com'
+oc get volumesnapshotclass -o name 2>/dev/null | xargs -r -I{} sh -c 'oc get {} -o jsonpath="{.metadata.name} {.driver}{\"\n\"}"' | grep -E 'rook-ceph|\.ceph\.com' || true
+# Confirm no PV/PVC still uses them, then delete each matched name:
+oc delete sc <matched-storageclasses> --ignore-not-found
+oc delete csidriver <matched-csidrivers> --ignore-not-found
+oc delete volumesnapshotclass <matched-snapshotclasses> --ignore-not-found
 ```
 
-After the namespace is gone, clear the mon/OSD `dataDirHostPath` on every storage node so a reinstall starts clean (a leftover mon store crashes the new mon):
+After the namespace is gone, clear the mon/OSD `dataDirHostPath` on every storage node so a reinstall starts clean (a leftover mon store crashes the new mon). Read the configured path from the `CephCluster` (do not assume `/var/lib/rook`) and remove **all** children including hidden entries:
 
 ```bash
-oc debug node/<node> -- chroot /host bash -c 'rm -rf /var/lib/rook/*; ls -la /var/lib/rook/'
+# Capture spec.dataDirHostPath BEFORE deleting the CephCluster (default /var/lib/rook):
+DDHP="$(oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.spec.dataDirHostPath}' 2>/dev/null || echo /var/lib/rook)"
+oc debug node/<node> -- chroot /host bash -c "shopt -s dotglob; rm -rf '${DDHP:-/var/lib/rook}'/*; ls -la '${DDHP:-/var/lib/rook}'/"
 ```
 
 ### Stale krbd Devices
@@ -94,7 +105,13 @@ oc debug node/<node> -- chroot /host bash -c '
 '
 ```
 
-Unmap a leftover cleanly with the Ceph credentials while the cluster still exists (`rbd unmap /dev/rbdN`). If the backing cluster is already gone the mapping is wedged: `echo "<id> force" > /sys/bus/rbd/remove_single_major` may not release it, and a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd*` is empty before reinstalling.
+Unmap a leftover cleanly with the Ceph credentials while the cluster still exists — `rbd device unmap --force /dev/rbdN` (the `--force` kernel unmap is a local operation that does not need the pool, so it also works when the pool is missing). If even the forced unmap hangs (the mapping is fully wedged against a gone cluster), fall back to the sysfs interface — write `"<id> force"` to whichever exists (`single_major` depends on the RBD module option):
+
+```bash
+echo "<id> force" > /sys/bus/rbd/remove_single_major 2>/dev/null || echo "<id> force" > /sys/bus/rbd/remove
+```
+
+If that still does not release it, a **node reboot (or hypervisor power-cycle for a wedged VM) is the reliable fix** — krbd mappings do not persist across reboot. After a reboot, confirm `/dev/rbd[0-9]*` is empty before reinstalling.
 
 If the cluster was installed with the direct manifest path (crds.yaml was applied), delete the CRDs last. CRD deletion is irreversible and will cascade-delete any remaining custom resources — only proceed after the namespace is fully removed and the post-uninstall audit confirms no CRs remain:
 

@@ -24,7 +24,7 @@ Cluster-scoped and namespaced leftovers (survive a namespace delete and must be 
 ```bash
 # Prior Rook AND prior ODF footprints
 oc get ns rook-ceph openshift-storage 2>/dev/null || true
-oc api-resources --api-group=ceph.rook.io --api-group=ocs.openshift.io 2>/dev/null || true
+for g in ceph.rook.io ocs.openshift.io csi.ceph.io noobaa.io; do oc api-resources --api-group="$g" 2>/dev/null; done  # one --api-group per call; the flag is not repeatable
 oc get crd | grep -E 'ceph\.rook\.io|ocs\.openshift\.io|csi\.ceph\.io|noobaa\.io' || echo "no rook/odf CRDs"
 oc get storagecluster -A 2>/dev/null || true         # ODF ownership signal
 oc get subscription,csv -A 2>/dev/null | grep -Ei 'rook|ocs|odf|mcg|cephcsi' || echo "no rook/odf OLM operators"
@@ -41,14 +41,16 @@ Node-level leftovers on every candidate storage node (the most common cause of a
 ```bash
 NODE="<node>"
 oc debug "node/${NODE}" -- chroot /host bash -c '
+  DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
   echo "== stale mon/OSD dataDirHostPath =="
-  n=$(ls -A /var/lib/rook 2>/dev/null | wc -l)   # count entries; ls exit code alone is 0 on an empty dir
-  [ "$n" -eq 0 ] && echo "/var/lib/rook empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }
-  ls -d /var/lib/rook/mon-* /var/lib/rook/openshift-storage 2>/dev/null || echo "no stale mon dirs"
+  if [ ! -d /var/lib/rook ]; then echo "/var/lib/rook absent (clean)"
+  else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
+  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
   echo "== OSD disk still carries a BlueStore label? =="
-  for d in <candidate-osd-by-id-paths>; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label; ceph-volume lvm list only covers LVM-backed OSDs.
+  for d in $DISKS; do lsblk -f "$d"; ceph-volume lvm list "$d" 2>/dev/null || true; done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
-  ls /dev/rbd* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd* devices"
+  ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 '
 ```
@@ -59,11 +61,22 @@ If any of these exist and the target node is not running an intended storage sys
 
 ## Ceph Version And ceph-csi Compatibility
 
-Pin the `CephCluster` `cephVersion.image` to a Ceph release whose cephx key cipher the deployed **ceph-csi** can decode. Discover the ceph-csi build Rook will deploy and match it — do not blindly accept the newest `quay.io/ceph/ceph` tag from the upstream `cluster.yaml`:
+Pin the `CephCluster` `cephVersion.image` to a Ceph release whose cephx key cipher the deployed **ceph-csi** can decode. Discover the ceph-csi build Rook will deploy and match it — do not blindly accept the newest `quay.io/ceph/ceph` tag from the upstream `cluster.yaml`.
+
+**Discover the ceph-csi version *before* creating the CephCluster** — the running CSI Deployment does not exist yet on a fresh install. Read the pinned image from the operator's CSI image-set instead of a live pod:
 
 ```bash
-# The Ceph version bundled in the ceph-csi image Rook deploys:
-oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version 2>/dev/null || true
+# Pre-install: the ceph-csi image Rook will deploy is pinned in the operator config.
+# For the OLM/csi-operator path it is the rook-csi-operator-image-set-configmap; for a
+# manifest install grep the operator manifest you are about to apply.
+oc -n rook-ceph get cm rook-csi-operator-image-set-configmap -o jsonpath='{.data.plugin}{"\n"}' 2>/dev/null \
+  || grep -E 'cephcsi/cephcsi:|ROOK_CSI_CEPH_IMAGE' /tmp/rook-ceph-operator.yaml
+```
+
+The ceph-csi release notes state the Ceph version its bundled librados targets. After the operator is running you can confirm from the live plugin (this is **post-install verification**, not the pre-install gate):
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
 ```
 
 **Known incompatibility:** Ceph **Tentacle** (`v20.2.4`) creates cephx keys with the new **AES256K** cipher (key byte `0x02`, base64 prefix `Ag`). ceph-csi **v3.17** bundles librados **20.2.1**, which cannot decode AES256K keys. Every RBD/CephFS/NFS `PersistentVolumeClaim` then stays `Pending` with `rados: ret=-22, Invalid argument`, and the CSI provisioner logs `failed to decode key`. RGW/OBC provisioning is unaffected because it does not use the CSI librados auth path, which makes the failure easy to misdiagnose. Classic AES keys (byte `0x01`, base64 prefix `AQ`) decode correctly.

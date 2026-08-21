@@ -87,9 +87,9 @@ Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking 
 
 Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`.
 
-During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and `rm -rf /var/lib/rook` on each node.
+During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node.
 
-Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
+Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 """
 
 SKILL_TEMPLATE = """\
