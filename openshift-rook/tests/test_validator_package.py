@@ -84,6 +84,19 @@ def test_missing_ceph_csi_version_compat_fails(validator, package_factory, refer
     assert any("version compatibility" in issue for issue in issues)
 
 
+def test_missing_helper_container_lvm_audit_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/run/lvm /run/lvm", "lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
 def test_missing_orphaned_cleanup_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"
@@ -104,6 +117,30 @@ def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference
     )
     issues = validator.validate_root(root)
     assert any("stale krbd device cleanup" in issue for issue in issues)
+
+
+def test_missing_detached_stale_krbd_fallback_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("setsid sh -c", "sh -c"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("detached stale-krbd fallback" in issue for issue in issues)
+
+
+def test_missing_stale_krbd_postcheck_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(
+            "If either path is still populated", "If cleanup still looks odd"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("stale krbd post-check" in issue for issue in issues)
 
 
 def test_missing_ownership_gate_fails(validator, package_factory, make_skill_text):

@@ -25,6 +25,8 @@ Never run or recommend `wipefs` before explicit destructive confirmation.
 
 Use `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence.
 
+On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`.
+
 Use stable `/dev/disk/by-id/*` paths.
 
 For SNO, use `replicated.size: 1` and `requireSafeReplicaSize: false`.
@@ -90,6 +92,8 @@ Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `f
 During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node.
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
+
+If `rbd device unmap` times out, launch the `/sys/bus/rbd/remove_single_major` or `/sys/bus/rbd/remove` fallback detached with `setsid sh -c`, then re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 """
 
 SKILL_TEMPLATE = """\

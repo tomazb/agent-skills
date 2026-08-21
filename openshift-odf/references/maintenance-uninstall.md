@@ -116,18 +116,29 @@ KINDS="cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpool
 for pass in $(seq 1 12); do
   left=0
   for kind in $KINDS; do
-    for it in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name); do
-      left=1
+    items="$(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name)" || {
+      echo "failed to list $kind" >&2
+      exit 1
+    }
+    [ -z "$items" ] && continue
+    left=1
+    while IFS= read -r it; do
+      [ -n "$it" ] || continue
       oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}'
       oc -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
-    done
+    done <<EOF
+$items
+EOF
   done
   [ "$left" -eq 0 ] && break
   sleep 5
 done
 # Fail closed if anything remains — do not continue teardown with live dependents:
-remaining=$(oc -n openshift-storage get ${KINDS// /,} --no-headers 2>/dev/null | wc -l)
-[ "$remaining" -eq 0 ] || { echo "dependents did not converge ($remaining left)" >&2; exit 1; }
+remaining="$(oc -n openshift-storage get ${KINDS// /,} --no-headers -o name)" || {
+  echo "failed to recheck dependents" >&2
+  exit 1
+}
+[ -z "$remaining" ] || { printf '%s\n' "$remaining"; echo "dependents did not converge" >&2; exit 1; }
 ```
 
 Once the `CephCluster` is deleted, scale `rook-ceph-operator` back to its original replica count if you changed it, and re-enable the reconcilers you stopped after the namespace teardown completes.
@@ -139,11 +150,23 @@ oc -n openshift-storage get jobs | grep cluster-cleanup
 oc -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
 oc -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false
 # Wait until the Job and its pod are gone before touching the disk:
+job_gone=0
 for i in $(seq 1 30); do
-  oc -n openshift-storage get job/cluster-cleanup-job-<node> >/dev/null 2>&1 || \
-    { [ -z "$(oc -n openshift-storage get pods -l job-name=cluster-cleanup-job-<node> --no-headers 2>/dev/null)" ] && break; }
+  job="$(oc -n openshift-storage get job/cluster-cleanup-job-<node> --ignore-not-found -o name)" || {
+    echo "failed to query cleanup job" >&2
+    exit 1
+  }
+  pods="$(oc -n openshift-storage get pods -l job-name=cluster-cleanup-job-<node> --no-headers -o custom-columns=:.metadata.name)" || {
+    echo "failed to query cleanup pods" >&2
+    exit 1
+  }
+  if [ -z "$job" ] && [ -z "$pods" ]; then
+    job_gone=1
+    break
+  fi
   sleep 2
 done
+[ "$job_gone" -eq 1 ] || { echo "cleanup job/pod did not terminate within 60s" >&2; exit 1; }
 oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature; then wipe manually
 ```
 

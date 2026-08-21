@@ -127,6 +127,32 @@ def test_missing_destructive_confirmation_language_fails(validator, package_fact
     assert any("destructive disk safety" in issue for issue in issues)
 
 
+def test_missing_helper_container_lvm_audit_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/run/lvm /run/lvm", "lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
+def test_missing_fail_closed_cleanup_checks_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(
+            "cleanup job/pod did not terminate within 60s", "cleanup wait exceeded"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed cleanup convergence" in issue for issue in issues)
+
+
 def test_missing_sno_replica_and_default_storageclass_rules_fail(validator, package_factory, reference_text):
     text = (
         reference_text()
