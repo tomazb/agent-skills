@@ -106,17 +106,18 @@ NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-
 
 ```bash
 # Stop only the reconcilers that recreate CephClients (NOT rook-ceph-operator):
-oc -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/ceph-csi-controller-manager --replicas=0
+OC="oc --request-timeout=30s"
+$OC -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/ceph-csi-controller-manager --replicas=0
 
-oc -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
-oc -n openshift-storage delete noobaa noobaa --wait=false
+$OC -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
+$OC -n openshift-storage delete noobaa noobaa --wait=false
 
 # Bounded sweep: repeat until every dependent kind reports none, else exit nonzero.
 KINDS="cephobjectstoreuser cephclient cephfilesystemsubvolumegroup cephblockpoolradosnamespace"
 for pass in $(seq 1 12); do
   left=0
   for kind in $KINDS; do
-    items="$(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name)" || {
+    items="$($OC -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name)" || {
       echo "failed to list $kind" >&2
       exit 1
     }
@@ -124,8 +125,8 @@ for pass in $(seq 1 12); do
     left=1
     while IFS= read -r it; do
       [ -n "$it" ] || continue
-      oc -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}'
-      oc -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
+      $OC -n openshift-storage patch "$kind" "$it" --type merge -p '{"metadata":{"finalizers":[]}}'
+      $OC -n openshift-storage delete "$kind" "$it" --wait=false --ignore-not-found
     done <<EOF
 $items
 EOF
@@ -134,7 +135,7 @@ EOF
   sleep 5
 done
 # Fail closed if anything remains — do not continue teardown with live dependents:
-remaining="$(oc -n openshift-storage get ${KINDS// /,} --no-headers -o name)" || {
+remaining="$($OC -n openshift-storage get ${KINDS// /,} --no-headers -o name)" || {
   echo "failed to recheck dependents" >&2
   exit 1
 }
@@ -146,17 +147,18 @@ Once the `CephCluster` is deleted, scale `rook-ceph-operator` back to its origin
 With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job, **wait for the Job and its pod to actually terminate**, then zap the disk manually (deleting with `--wait=false` returns before the pod is gone, and wiping a disk the cleanup pod still holds races it):
 
 ```bash
-oc -n openshift-storage get jobs | grep cluster-cleanup
-oc -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
-oc -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false
+OC="oc --request-timeout=30s"
+$OC -n openshift-storage get jobs | grep cluster-cleanup
+$OC -n openshift-storage logs job/cluster-cleanup-job-<node> --tail=5   # stuck at "ceph-volume ... raw/lvm list"?
+$OC -n openshift-storage delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found
 # Wait until the Job and its pod are gone before touching the disk:
 job_gone=0
 for i in $(seq 1 30); do
-  job="$(oc -n openshift-storage get job/cluster-cleanup-job-<node> --ignore-not-found -o name)" || {
+  job="$($OC -n openshift-storage get job/cluster-cleanup-job-<node> --ignore-not-found -o name)" || {
     echo "failed to query cleanup job" >&2
     exit 1
   }
-  pods="$(oc -n openshift-storage get pods -l job-name=cluster-cleanup-job-<node> --no-headers -o custom-columns=:.metadata.name)" || {
+  pods="$($OC -n openshift-storage get pods -l job-name=cluster-cleanup-job-<node> --no-headers -o custom-columns=:.metadata.name)" || {
     echo "failed to query cleanup pods" >&2
     exit 1
   }
