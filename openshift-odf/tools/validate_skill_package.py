@@ -97,20 +97,24 @@ MAX_SKILL_LINES = 180
 
 
 def read_text(path: Path) -> str:
+    """Return file contents as UTF-8 text with replacement on decode errors."""
     return path.read_text(encoding="utf-8", errors="replace")
 
 
 def ends_with_newline(path: Path) -> bool:
+    """Report whether the file is empty or ends with a newline byte."""
     content = path.read_bytes()
     return not content or content.endswith(b"\n")
 
 
 def fence_count_ok(text: str) -> bool:
+    """Return True when fenced code blocks are balanced."""
     fences = sum(1 for line in text.splitlines() if FENCE_RE.match(line))
     return fences % 2 == 0
 
 
 def parse_frontmatter(skill_text: str) -> dict[str, str] | None:
+    """Parse the SKILL.md frontmatter into a simple key-value map."""
     match = FRONTMATTER_RE.match(skill_text)
     if not match:
         return None
@@ -125,6 +129,7 @@ def parse_frontmatter(skill_text: str) -> dict[str, str] | None:
 
 
 def check_markdown_file(path: Path, root: Path) -> list[str]:
+    """Validate newline and code-fence hygiene for one markdown file."""
     issues: list[str] = []
     rel = str(path.relative_to(root))
     text = read_text(path)
@@ -138,6 +143,7 @@ def check_markdown_file(path: Path, root: Path) -> list[str]:
 
 
 def check_required_files(root: Path) -> list[str]:
+    """Return missing required package files."""
     return [
         f"Missing required file: {rel}"
         for rel in REQUIRED_FILES
@@ -146,6 +152,7 @@ def check_required_files(root: Path) -> list[str]:
 
 
 def check_frontmatter(root: Path) -> list[str]:
+    """Validate the skill frontmatter name and description fields."""
     skill_file = root / "SKILL.md"
     if not skill_file.exists():
         return ["Missing SKILL.md at package root."]
@@ -168,6 +175,7 @@ def check_frontmatter(root: Path) -> list[str]:
 
 
 def check_expected_references(root: Path) -> list[str]:
+    """Return missing reference documents that every package must ship."""
     return [
         f"Missing expected reference: {rel}"
         for rel in EXPECTED_REFERENCES
@@ -176,6 +184,7 @@ def check_expected_references(root: Path) -> list[str]:
 
 
 def check_required_sections(skill_text: str) -> list[str]:
+    """Ensure SKILL.md still contains the required top-level sections."""
     missing = [
         section
         for section in REQUIRED_SKILL_SECTIONS
@@ -187,6 +196,7 @@ def check_required_sections(skill_text: str) -> list[str]:
 
 
 def extract_section(skill_text: str, heading: str) -> str | None:
+    """Extract one level-two markdown section by heading text."""
     match = re.search(
         rf"^## {re.escape(heading.lstrip('# ').strip())}\s*$",
         skill_text,
@@ -284,6 +294,7 @@ REQUIRED_CONTENT_SUBSTRINGS = [
 
 
 def package_markdown_text(root: Path) -> str:
+    """Concatenate package markdown, excluding README and changelog."""
     return "\n".join(
         read_text(path)
         for path in sorted(root.rglob("*.md"))
@@ -292,10 +303,12 @@ def package_markdown_text(root: Path) -> str:
 
 
 def missing_phrases(text: str, phrases: list[str]) -> list[str]:
+    """Return the phrases that are absent from the provided text."""
     return [phrase for phrase in phrases if phrase not in text]
 
 
 def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
+    """Validate that a required group of phrases is present."""
     missing = missing_phrases(text, phrases)
     if missing:
         return [f"Missing {label} guidance: {', '.join(missing)}"]
@@ -303,6 +316,7 @@ def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
 
 
 def check_content_regressions(root: Path) -> list[str]:
+    """Scan markdown for forbidden patterns and required substrings."""
     issues: list[str] = []
     files = [
         path
@@ -324,6 +338,7 @@ def check_content_regressions(root: Path) -> list[str]:
 
 
 def check_required_reference_guidance(root: Path) -> list[str]:
+    """Validate required guidance phrases inside the reference runbooks."""
     issues: list[str] = []
 
     _cache: dict[str, str] = {}
@@ -352,6 +367,17 @@ def check_required_reference_guidance(root: Path) -> list[str]:
 
     require(
         "references/install-and-preflight.md",
+        "leftover-install detection (ODF or Rook)",
+        [
+            "Leftover Install Detection",
+            "/var/lib/rook/mon-",
+            "Has BlueStore device label",
+            "oc get csidriver",
+            "/sys/bus/rbd/devices",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
         "OLM install guidance",
         [
             "openshift-storage",
@@ -363,6 +389,25 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "monDataDirHostPath",
             "enableCephTools",
             "python3 scripts/render_storagecluster.py",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
+        "helper-container LVM residue audit",
+        [
+            "mount --rbind /host/dev /dev",
+            "mount --rbind /host/run/lvm /run/lvm",
+            "mount --rbind /host/etc/lvm /etc/lvm",
+            "LVM residue audit failed; do not reuse the disk",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
+        "fail-closed candidate disk inspection",
+        [
+            "no candidate disks configured",
+            "invalid candidate disk",
+            "node leftover inspection failed; do not reuse the disk",
         ],
     )
     require_order(
@@ -443,6 +488,30 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/maintenance-uninstall.md",
+        "frozen-dependents and stale-device teardown guidance",
+        [
+            "CephObjectStoreUser",
+            "graceful_finalizer",
+            "cluster-cleanup-job",
+            "ceph-volume raw list",
+            "/sys/bus/rbd/devices",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "fail-closed cleanup convergence",
+        [
+            "failed to list $kind",
+            "failed to recheck dependents",
+            "--request-timeout=30s",
+            "--ignore-not-found -o name",
+            "delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found",
+            "failed to query cleanup pods",
+            "cleanup job/pod did not terminate within 60s",
+        ],
+    )
+    require(
         "references/validation-hardening.md",
         "ODF validation/monitoring guidance",
         [
@@ -463,6 +532,30 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "HEALTH_OK",
         ],
     )
+    # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
+    # cannot pass on incidental prose elsewhere in the file.
+    sno_text = read_reference("references/validated-odf-sno.md")
+    gotcha_match = re.search(
+        r"^##\s+ODF 4\.20\.17 Fresh-Install Observations.*?(?=^##\s|\Z)",
+        sno_text,
+        re.MULTILINE | re.DOTALL,
+    )
+    if not gotcha_match:
+        issues.append(
+            "references/validated-odf-sno.md: missing 'ODF 4.20.17 Fresh-Install Observations' section"
+        )
+    else:
+        section = gotcha_match.group(0)
+        missing = [
+            needle
+            for needle in ("unknown field", "runs 0 replicas until", "dmcrypt")
+            if needle not in section
+        ]
+        if missing:
+            issues.append(
+                "references/validated-odf-sno.md: 'ODF 4.20.17 Fresh-Install Observations' "
+                f"section missing: {', '.join(missing)}"
+            )
     forbid_pattern_rel = "references/install-and-preflight.md"
     if re.search(
         r"operator-openshift\.yaml", read_reference(forbid_pattern_rel), re.MULTILINE
@@ -475,6 +568,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
 
 
 def check_version_sync(root: Path) -> list[str]:
+    """Ensure VERSION and package.json stay in sync."""
     version_file = root / "VERSION"
     package_file = root / "package.json"
     if not version_file.exists():
@@ -501,6 +595,7 @@ def check_version_sync(root: Path) -> list[str]:
 
 
 def check_changelog_version(root: Path) -> list[str]:
+    """Ensure the changelog contains the current package version."""
     version_file = root / "VERSION"
     changelog_file = root / "CHANGELOG.md"
     if not changelog_file.exists():
@@ -519,6 +614,7 @@ README_VERSION_RE = re.compile(r"Current version:\s*\*\*(?P<version>[^*]+)\*\*")
 
 
 def check_readme_version(root: Path) -> list[str]:
+    """Ensure README advertises the current package version."""
     version_file = root / "VERSION"
     readme_file = root / "README.md"
     if not readme_file.exists() or not version_file.exists():
@@ -537,6 +633,7 @@ def check_readme_version(root: Path) -> list[str]:
 
 
 def check_skill_file(root: Path) -> list[str]:
+    """Run SKILL.md-specific structural checks."""
     skill_file = root / "SKILL.md"
     if not skill_file.exists():
         return ["Missing SKILL.md at package root."]
@@ -555,6 +652,7 @@ def check_skill_file(root: Path) -> list[str]:
 
 
 def check_versions_handoff(skill_text: str) -> list[str]:
+    """Require the skill to route version questions to openshift-versions."""
     source_checks = extract_section(skill_text, "Required Source Checks") or ""
     if "openshift-versions" not in source_checks:
         return [
@@ -573,6 +671,7 @@ def check_versions_handoff(skill_text: str) -> list[str]:
 
 
 def validate_root(root: Path) -> list[str]:
+    """Run the full package validation suite and return every issue found."""
     issues: list[str] = []
     skill_file = root / "SKILL.md"
 
@@ -602,6 +701,7 @@ def validate_root(root: Path) -> list[str]:
 
 
 def main() -> int:
+    """Run the validator as a CLI and print any package issues."""
     root = Path(__file__).resolve().parents[1]
     issues = validate_root(root)
 

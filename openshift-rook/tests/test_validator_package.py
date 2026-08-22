@@ -62,6 +62,113 @@ def test_missing_smoke_helper_invocation_fails(validator, package_factory, refer
     assert any("render_smoke_manifest.py" in issue for issue in issues)
 
 
+def test_missing_leftover_install_detection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("Leftover Install Detection", "Leftovers"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("leftover-install detection" in issue for issue in issues)
+
+
+def test_missing_ceph_csi_version_compat_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("AES256K", "some-cipher"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("version compatibility" in issue for issue in issues)
+
+
+def test_missing_helper_container_lvm_audit_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/run/lvm /run/lvm", "lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
+def test_missing_helper_container_etc_lvm_mount_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/etc/lvm /etc/lvm", "etc lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
+def test_missing_fail_closed_candidate_disk_inspection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "no candidate disks configured", "missing disks list"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed candidate disk inspection" in issue for issue in issues)
+
+
+def test_missing_orphaned_cleanup_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("clientprofiles.csi.ceph.io", "some-cr"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("orphaned cluster-scoped" in issue for issue in issues)
+
+
+def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("ceph-volume raw list", "volume listing"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("stale krbd device cleanup" in issue for issue in issues)
+
+
+def test_missing_stale_krbd_unmap_reboot_escalation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("skip sysfs remove*", "try sysfs remove"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("stale-krbd unmap timeout then reboot" in issue for issue in issues)
+
+
+def test_missing_stale_krbd_postcheck_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(
+            "If either path is still populated", "If cleanup still looks odd"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("stale krbd post-check" in issue for issue in issues)
+
+
 def test_missing_ownership_gate_fails(validator, package_factory, make_skill_text):
     root = package_factory(
         skill_text=make_skill_text(missing_sections=["## Product Ownership Gate"])

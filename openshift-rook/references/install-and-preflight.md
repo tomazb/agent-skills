@@ -15,14 +15,99 @@ oc get ns rook-ceph || true
 oc -n rook-ceph get pods,cephclusters.ceph.rook.io,cephblockpools.ceph.rook.io,cephfilesystems.ceph.rook.io,cephobjectstores.ceph.rook.io 2>/dev/null || true
 ```
 
-Also discover leftovers from a previous lifecycle before reinstalling:
+## Leftover Install Detection (Rook or ODF)
+
+Before any fresh install, detect uncleaned state from a previous Rook **or** ODF lifecycle. A prior ODF install ships the same Rook/Ceph components under different names, so check for **both** products — a stale mon store or an OSD disk that still carries a BlueStore label will make a fresh mon crash (SIGABRT) and make OSD prepare skip the disk (`Has BlueStore device label`). Namespace or CRD presence alone is not proof of ownership — classify with the Product Ownership Gate first.
+
+Cluster-scoped and namespaced leftovers (survive a namespace delete and must be removed by name):
 
 ```bash
-oc api-resources --api-group=ceph.rook.io
-oc get sc
-oc get machineconfig | grep -i rook || true
-oc get pv,pvc -A -o wide
+# Prior Rook AND prior ODF footprints
+oc get ns rook-ceph openshift-storage 2>/dev/null || true
+for g in ceph.rook.io ocs.openshift.io csi.ceph.io noobaa.io; do oc api-resources --api-group="$g" 2>/dev/null; done  # one --api-group per call; the flag is not repeatable
+oc get crd | grep -E 'ceph\.rook\.io|ocs\.openshift\.io|csi\.ceph\.io|noobaa\.io' || echo "no rook/odf CRDs"
+oc get storagecluster -A 2>/dev/null || true         # ODF ownership signal
+oc get subscription,csv -A 2>/dev/null | grep -Ei 'rook|ocs|odf|mcg|cephcsi' || echo "no rook/odf OLM operators"
+# Orphaned cluster-scoped objects that block a clean reinstall:
+oc get sc | grep -E 'rook-ceph|ocs-storagecluster|ceph\.rook\.io|csi\.ceph\.com|noobaa' || echo "no leftover StorageClasses"
+oc get csidriver | grep -E 'rook-ceph|ceph\.com' || echo "no leftover Ceph CSIDrivers"
+oc get scc | grep -E 'rook-ceph|noobaa' || echo "no leftover Ceph SCCs"
+oc get machineconfig | grep -iE 'rook|ocs|odf' || true
+oc get pv,pvc -A -o wide 2>/dev/null | grep -E 'rook-ceph|ocs-storagecluster' || echo "no leftover PV/PVC"
 ```
+
+Node-level leftovers on every candidate storage node (the most common cause of a failed reinstall):
+
+```bash
+NODE="<node>"
+DISKS="/dev/disk/by-id/<osd-disk-id>"   # edit: space-separated candidate OSD disk(s) by stable path
+oc debug "node/${NODE}" -- chroot /host bash -c '
+  echo "== stale mon/OSD dataDirHostPath =="
+  if [ ! -d /var/lib/rook ]; then echo "/var/lib/rook absent (clean)"
+  else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
+  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
+  echo "== OSD disk still carries a raw BlueStore label? =="
+  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
+  [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
+  for d in '"$DISKS"'; do
+    [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
+    lsblk -f "$d" || exit 1
+  done
+  echo "== stale krbd device mappings (leaked by a prior teardown)? =="
+  ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
+' || { echo "node leftover inspection failed; do not reuse the disk" >&2; exit 1; }
+
+# RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
+# container that carries it and bind the host device/LVM paths into that container.
+# If this command fails, fail closed and do not reuse the disk.
+ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v19.2.2"   # or the cephVersion.image you plan to deploy
+oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -ceu '
+  mkdir -p /run/lvm /etc/lvm
+  mount --rbind /host/dev /dev
+  mount --rbind /host/run/lvm /run/lvm
+  mount --rbind /host/etc/lvm /etc/lvm
+  [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
+  for d in '"$DISKS"'; do
+    [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
+    ceph-volume lvm list "$d"
+  done
+' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+```
+
+**Stale krbd devices are a silent killer.** If a prior Rook/ODF teardown deleted an RBD-backed PVC (or its whole namespace) *before* the volume was unmapped, or deleted the Ceph pool out from under a mapped image, the node keeps a wedged `/dev/rbdN` device pointing at a pool that no longer exists. A fresh Rook OSD prepare then hangs **forever** at `ceph-volume raw list` (it probes every block device, including the dead `/dev/rbdN`). The device cannot be force-removed from userspace — `/sys/bus/rbd/remove*` blocks uninterruptibly, and it can even wedge a node shutdown. Clear it before installing (see `maintenance-uninstall.md`, "Stale krbd Devices"); a wedged device may require a node reboot or hypervisor power-cycle.
+
+If any of these exist and the target node is not running an intended storage system, remove them before installing — follow `maintenance-uninstall.md` (orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, `/var/lib/rook` clearing, stale krbd unmap, and full-disk BlueStore zeroing). A Rook cleanup handoff is required when the leftover is upstream Rook; an ODF cleanup handoff (`openshift-odf`) is required when the leftover is ODF-owned. Only after the leftover audit is clean should you proceed.
+
+## Ceph Version And ceph-csi Compatibility
+
+Pin the `CephCluster` `cephVersion.image` to a Ceph release whose cephx key cipher the deployed **ceph-csi** can decode. Discover the ceph-csi build Rook will deploy and match it — do not blindly accept the newest `quay.io/ceph/ceph` tag from the upstream `cluster.yaml`.
+
+**Discover the ceph-csi version *before* creating the CephCluster** — the running CSI Deployment does not exist yet on a fresh install. Read the pinned image from the operator's CSI image-set instead of a live pod:
+
+```bash
+# Pre-install: the ceph-csi image Rook will deploy is pinned in the operator config.
+# For the OLM/csi-operator path it is the rook-csi-operator-image-set-configmap; for a
+# manifest install grep the operator manifest you are about to apply.
+oc -n rook-ceph get cm rook-csi-operator-image-set-configmap -o jsonpath='{.data.plugin}{"\n"}' 2>/dev/null \
+  || grep -E 'cephcsi/cephcsi:|ROOK_CSI_CEPH_IMAGE' /tmp/rook-ceph-operator.yaml
+```
+
+The ceph-csi release notes state the Ceph version its bundled librados targets. After the operator is running you can confirm from the live plugin (this is **post-install verification**, not the pre-install gate):
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
+```
+
+**Known incompatibility:** Ceph **Tentacle** (`v20.2.4`) creates cephx keys with the new **AES256K** cipher (key byte `0x02`, base64 prefix `Ag`). ceph-csi **v3.17** bundles librados **20.2.1**, which cannot decode AES256K keys. Every RBD/CephFS/NFS `PersistentVolumeClaim` then stays `Pending` with `rados: ret=-22, Invalid argument`, and the CSI provisioner logs `failed to decode key`. RGW/OBC provisioning is unaffected because it does not use the CSI librados auth path, which makes the failure easy to misdiagnose. Classic AES keys (byte `0x01`, base64 prefix `AQ`) decode correctly.
+
+Prefer a Ceph release that uses classic AES keys and is supported by the deployed ceph-csi — for Rook v1.20 with ceph-csi v3.17, pin **Squid `v19.2.2`** (or another Reef/Squid build) rather than Tentacle `v20.2.4`. Verify the cipher after the cluster is `Ready`:
+
+```bash
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth get-key client.admin | head -c 2  # expect 'AQ', not 'Ag'
+```
+
+Do not downgrade a running cluster to fix this — a `v20`-formatted mon/OSD store is incompatible with `v19` (`unsupported features: ...aes256k`). Wipe and redeploy on the compatible version instead.
 
 ## Node and Disk Discovery
 

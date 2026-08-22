@@ -4,4 +4,4 @@ Red Hat OpenShift Data Foundation (ODF) lifecycle skill for OpenShift/OKD coveri
 
 The package includes renderers for `StorageCluster` and RBD/CephFS smoke manifests, plus a post-uninstall audit. `references/validated-odf-sno.md` records observed SNO configurations and ODF 4.20 and 4.22 SNO workarounds; revalidate them against the target release before use.
 
-Current version: **1.9.0**
+Current version: **1.11.0**

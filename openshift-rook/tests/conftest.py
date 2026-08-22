@@ -25,6 +25,8 @@ Never run or recommend `wipefs` before explicit destructive confirmation.
 
 Use `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence.
 
+On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`. Fail closed when `DISKS` is empty (`no candidate disks configured`), when a path is not a block device (`invalid candidate disk`), or when node leftover inspection fails (`node leftover inspection failed; do not reuse the disk`).
+
 Use stable `/dev/disk/by-id/*` paths.
 
 For SNO, use `replicated.size: 1` and `requireSafeReplicaSize: false`.
@@ -82,6 +84,16 @@ Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder man
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
 Run `bash scripts/post_uninstall_audit.sh` after uninstall.
+
+Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, and `oc get csidriver`.
+
+Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`.
+
+During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node.
+
+Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
+
+If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 """
 
 SKILL_TEMPLATE = """\
