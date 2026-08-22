@@ -127,6 +127,58 @@ def test_missing_destructive_confirmation_language_fails(validator, package_fact
     assert any("destructive disk safety" in issue for issue in issues)
 
 
+def test_missing_helper_container_lvm_audit_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/run/lvm /run/lvm", "lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
+def test_missing_helper_container_etc_lvm_mount_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "mount --rbind /host/etc/lvm /etc/lvm", "etc lvm helper skipped"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("helper-container LVM residue audit" in issue for issue in issues)
+
+
+def test_missing_fail_closed_candidate_disk_inspection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "no candidate disks configured", "missing disks list"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed candidate disk inspection" in issue for issue in issues)
+
+
+def test_missing_fail_closed_cleanup_checks_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(
+            "cleanup job/pod did not terminate within 60s", "cleanup wait exceeded"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed cleanup convergence" in issue for issue in issues)
+
+
 def test_missing_sno_replica_and_default_storageclass_rules_fail(validator, package_factory, reference_text):
     text = (
         reference_text()
@@ -265,6 +317,39 @@ def test_missing_olm_install_guidance_fails(validator, package_factory, referenc
     )
     issues = validator.validate_root(root)
     assert any("install-and-preflight.md" in issue and "OperatorGroup" in issue for issue in issues)
+
+
+def test_missing_leftover_install_detection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("Leftover Install Detection", "Leftovers"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("leftover-install detection" in issue for issue in issues)
+
+
+def test_missing_frozen_dependents_teardown_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("graceful_finalizer", "some-finalizer"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("frozen-dependents and stale-device" in issue for issue in issues)
+
+
+def test_missing_odf_420_install_gotchas_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    sno = root / "references" / "validated-odf-sno.md"
+    sno.write_text(
+        sno.read_text(encoding="utf-8").replace("runs 0 replicas until", "starts fine when"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("Fresh-Install Observations" in issue for issue in issues)
 
 
 def test_missing_olm_install_ordering_fails(validator, package_factory, reference_text):

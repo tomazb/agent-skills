@@ -38,7 +38,10 @@ Substitute the namespace into `CONF` if the cluster is not in
 `openshift-storage`. This is the same form the `.mgr` drift check below uses.
 
 **Route B — the toolbox** (creates a Deployment; useful if you want a persistent
-CLI for ongoing operations):
+CLI for ongoing operations). **Some builds reject `spec.enableCephTools`**
+(observed on `ocs-operator.v4.20.17-rhodf`: `Warning: unknown field
+"spec.enableCephTools"`); the Deployment then never appears and the
+`rollout status` times out. On those builds use Route A instead.
 
 ```bash
 oc patch OCSInitialization ocsinit -n openshift-storage --type merge \

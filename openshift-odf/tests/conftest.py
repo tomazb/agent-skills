@@ -24,6 +24,8 @@ Never run or recommend `wipefs` before explicit destructive confirmation.
 
 Use `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence.
 
+On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`. Fail closed when `DISKS` is empty (`no candidate disks configured`), when a path is not a block device (`invalid candidate disk`), or when node leftover inspection fails (`node leftover inspection failed; do not reuse the disk`).
+
 Use stable `/dev/disk/by-id/*` paths.
 
 For SNO, use `replicated.size: 1` and `requireSafeReplicaSize: false`.
@@ -99,6 +101,16 @@ Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+
+Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, `oc get csidriver`, and `/sys/bus/rbd/devices`.
+
+Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd.
+
+Teardown queries must fail closed: if `oc get` cannot list a dependent kind, stop with `failed to list $kind`, and if the final recheck fails, stop with `failed to recheck dependents`. Use `OC="oc --request-timeout=30s"` for bounded dependent sweeps. Before disk cleanup, delete with `delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found`, use `--ignore-not-found -o name` for the cleanup Job query, require the pod query to succeed with `failed to query cleanup pods`, and exit with `cleanup job/pod did not terminate within 60s` if the Job or pod remains.
+
+## ODF 4.20.17 Fresh-Install Observations
+
+ODF 4.20.17 gotchas: `enableCephTools` is rejected as an `unknown field`, `ocs-operator` `runs 0 replicas until` a StorageCluster exists, and ceph-volume may log `dmcrypt` without real encryption.
 """
 
 SKILL_TEMPLATE = """\
