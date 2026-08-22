@@ -48,11 +48,15 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
   echo "== OSD disk still carries a raw BlueStore label? =="
   # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
-  for d in '"$DISKS"'; do lsblk -f "$d"; done
+  [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
+  for d in '"$DISKS"'; do
+    [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
+    lsblk -f "$d" || exit 1
+  done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
-'
+' || { echo "node leftover inspection failed; do not reuse the disk" >&2; exit 1; }
 
 # RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
 # container that carries it and bind the host device/LVM paths into that container.
@@ -63,7 +67,11 @@ oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -ceu '
   mount --rbind /host/dev /dev
   mount --rbind /host/run/lvm /run/lvm
   mount --rbind /host/etc/lvm /etc/lvm
-  for d in '"$DISKS"'; do ceph-volume lvm list "$d"; done
+  [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
+  for d in '"$DISKS"'; do
+    [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
+    ceph-volume lvm list "$d"
+  done
 ' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
 ```
 

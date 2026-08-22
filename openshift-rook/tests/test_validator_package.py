@@ -110,6 +110,19 @@ def test_missing_helper_container_etc_lvm_mount_fails(validator, package_factory
     assert any("helper-container LVM residue audit" in issue for issue in issues)
 
 
+def test_missing_fail_closed_candidate_disk_inspection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "no candidate disks configured", "missing disks list"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed candidate disk inspection" in issue for issue in issues)
+
+
 def test_missing_orphaned_cleanup_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"
@@ -132,15 +145,15 @@ def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference
     assert any("stale krbd device cleanup" in issue for issue in issues)
 
 
-def test_missing_bounded_stale_krbd_sysfs_fallback_fails(validator, package_factory, reference_text):
+def test_missing_stale_krbd_unmap_reboot_escalation_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"
     uninstall.write_text(
-        uninstall.read_text(encoding="utf-8").replace("timeout 60 sh -c", "sh -c"),
+        uninstall.read_text(encoding="utf-8").replace("skip sysfs remove*", "try sysfs remove"),
         encoding="utf-8",
     )
     issues = validator.validate_root(root)
-    assert any("bounded stale-krbd sysfs fallback" in issue for issue in issues)
+    assert any("stale-krbd unmap timeout then reboot" in issue for issue in issues)
 
 
 def test_missing_stale_krbd_postcheck_fails(validator, package_factory, reference_text):

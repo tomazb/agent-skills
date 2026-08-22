@@ -25,7 +25,7 @@ Never run or recommend `wipefs` before explicit destructive confirmation.
 
 Use `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence.
 
-On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`.
+On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`. Fail closed when `DISKS` is empty (`no candidate disks configured`), when a path is not a block device (`invalid candidate disk`), or when node leftover inspection fails (`node leftover inspection failed; do not reuse the disk`).
 
 Use stable `/dev/disk/by-id/*` paths.
 
@@ -93,7 +93,7 @@ During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc 
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
-If `rbd device unmap` times out, run the `/sys/bus/rbd/remove_single_major` or `/sys/bus/rbd/remove` fallback synchronously under `timeout 60 sh -c`, then re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
+If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 """
 
 SKILL_TEMPLATE = """\
