@@ -397,6 +397,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         [
             "mount --rbind /host/dev /dev",
             "mount --rbind /host/run/lvm /run/lvm",
+            "mount --rbind /host/etc/lvm /etc/lvm",
             "LVM residue audit failed; do not reuse the disk",
         ],
     )
@@ -494,7 +495,9 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         [
             "failed to list $kind",
             "failed to recheck dependents",
+            "--request-timeout=30s",
             "--ignore-not-found -o name",
+            "delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found",
             "failed to query cleanup pods",
             "cleanup job/pod did not terminate within 60s",
         ],

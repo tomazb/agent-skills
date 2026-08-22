@@ -93,7 +93,7 @@ During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc 
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
-If `rbd device unmap` times out, launch the `/sys/bus/rbd/remove_single_major` or `/sys/bus/rbd/remove` fallback detached with `setsid sh -c`, then re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
+If `rbd device unmap` times out, run the `/sys/bus/rbd/remove_single_major` or `/sys/bus/rbd/remove` fallback synchronously under `timeout 60 sh -c`, then re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 """
 
 SKILL_TEMPLATE = """\

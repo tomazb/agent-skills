@@ -106,7 +106,7 @@ Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/
 
 Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd.
 
-Teardown queries must fail closed: if `oc get` cannot list a dependent kind, stop with `failed to list $kind`, and if the final recheck fails, stop with `failed to recheck dependents`. Before disk cleanup, use `--ignore-not-found -o name` for the cleanup Job query, require the pod query to succeed with `failed to query cleanup pods`, and exit with `cleanup job/pod did not terminate within 60s` if the Job or pod remains.
+Teardown queries must fail closed: if `oc get` cannot list a dependent kind, stop with `failed to list $kind`, and if the final recheck fails, stop with `failed to recheck dependents`. Use `OC="oc --request-timeout=30s"` for bounded dependent sweeps. Before disk cleanup, delete with `delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found`, use `--ignore-not-found -o name` for the cleanup Job query, require the pod query to succeed with `failed to query cleanup pods`, and exit with `cleanup job/pod did not terminate within 60s` if the Job or pod remains.
 
 ## ODF 4.20.17 Fresh-Install Observations
 

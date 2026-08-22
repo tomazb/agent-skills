@@ -407,6 +407,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         [
             "mount --rbind /host/dev /dev",
             "mount --rbind /host/run/lvm /run/lvm",
+            "mount --rbind /host/etc/lvm /etc/lvm",
             "LVM residue audit failed; do not reuse the disk",
         ],
     )
@@ -498,9 +499,9 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     )
     require(
         "references/maintenance-uninstall.md",
-        "detached stale-krbd fallback",
+        "bounded stale-krbd sysfs fallback",
         [
-            "setsid sh -c",
+            "timeout 60 sh -c",
             "/sys/bus/rbd/remove_single_major",
             "/sys/bus/rbd/remove",
         ],

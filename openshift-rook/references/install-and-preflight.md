@@ -48,7 +48,7 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
   echo "== OSD disk still carries a raw BlueStore label? =="
   # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
-  for d in $DISKS; do lsblk -f "$d"; done
+  for d in '"$DISKS"'; do lsblk -f "$d"; done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
   for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
