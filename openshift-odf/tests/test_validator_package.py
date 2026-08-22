@@ -153,6 +153,19 @@ def test_missing_helper_container_etc_lvm_mount_fails(validator, package_factory
     assert any("helper-container LVM residue audit" in issue for issue in issues)
 
 
+def test_missing_fail_closed_candidate_disk_inspection_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "no candidate disks configured", "missing disks list"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("fail-closed candidate disk inspection" in issue for issue in issues)
+
+
 def test_missing_fail_closed_cleanup_checks_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"

@@ -411,6 +411,15 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "LVM residue audit failed; do not reuse the disk",
         ],
     )
+    require(
+        "references/install-and-preflight.md",
+        "fail-closed candidate disk inspection",
+        [
+            "no candidate disks configured",
+            "invalid candidate disk",
+            "node leftover inspection failed; do not reuse the disk",
+        ],
+    )
     require_order(
         "references/install-and-preflight.md",
         "CSI/operator manifest ordering",
@@ -499,11 +508,11 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     )
     require(
         "references/maintenance-uninstall.md",
-        "bounded stale-krbd sysfs fallback",
+        "stale-krbd unmap timeout then reboot",
         [
-            "timeout 60 sh -c",
-            "/sys/bus/rbd/remove_single_major",
-            "/sys/bus/rbd/remove",
+            "timeout 30 rbd device unmap",
+            "skip sysfs remove*",
+            "escalate to reboot",
         ],
     )
     require(

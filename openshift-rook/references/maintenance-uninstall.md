@@ -111,21 +111,18 @@ oc debug node/<node> -- chroot /host bash -c '
 '
 ```
 
-Unmap a leftover from the affected node. `rbd device unmap --force` is a local kernel operation that does not need the pool, but it **waits for in-flight I/O**, so a fully wedged mapping can block — wrap it in `timeout`. If that times out, run the sysfs fallback synchronously under its own `timeout` (a background job inside `oc debug` dies with the debug pod). Run it node-local, using the RBD id from `/sys/bus/rbd/devices/`:
+Unmap a leftover from the affected node. `rbd device unmap --force` is a local kernel operation that does not need the pool, but it **waits for in-flight I/O**, so a fully wedged mapping can block — wrap it in `timeout`. If that times out, **do not wait on `/sys/bus/rbd/remove*`**: a write into those sysfs nodes can enter uninterruptible sleep (D-state), where `timeout` cannot kill the waiter and an `oc debug` session stays blocked. Skip the sysfs wait and escalate. Run the bounded unmap node-local, using the RBD id from `/sys/bus/rbd/devices/`:
 
 ```bash
 oc debug node/<node> -- chroot /host bash -c '
   ID="<rbd-id>"   # from /sys/bus/rbd/devices/
   timeout 30 rbd device unmap --force "/dev/rbd${ID}" && exit 0
-  if [ -e /sys/bus/rbd/remove_single_major ]; then
-    timeout 60 sh -c "printf \"%s force\n\" \"${ID}\" > /sys/bus/rbd/remove_single_major"
-  else
-    timeout 60 sh -c "printf \"%s force\n\" \"${ID}\" > /sys/bus/rbd/remove"
-  fi
+  echo "unmap timed out or failed; skip sysfs remove* (can block in D-state) — escalate to reboot" >&2
+  exit 1
 '
 ```
 
-After either path, re-check both `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*` before pool deletion or reinstall:
+After a successful unmap (or before reboot escalation), re-check both `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*` before pool deletion or reinstall:
 
 ```bash
 oc debug node/<node> -- chroot /host bash -c '

@@ -401,6 +401,15 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "LVM residue audit failed; do not reuse the disk",
         ],
     )
+    require(
+        "references/install-and-preflight.md",
+        "fail-closed candidate disk inspection",
+        [
+            "no candidate disks configured",
+            "invalid candidate disk",
+            "node leftover inspection failed; do not reuse the disk",
+        ],
+    )
     require_order(
         "references/install-and-preflight.md",
         "OLM install ordering",
