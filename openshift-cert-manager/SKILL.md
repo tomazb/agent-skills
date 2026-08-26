@@ -51,4 +51,4 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Separate read-only discovery from mutating actions.
 - Show commands with placeholders for cluster-specific values instead of fabricating FQDNs or tokens.
 - Include post-change validation, kubeconfig CA notes, and rollback patches.
-- Run `python3 scripts/discover_tls.py` before recommending apply. Run `python3 scripts/check_http01_reachability.py` before HTTP-01 issuance.
+- Run `python3 scripts/discover_tls.py --execute` before recommending apply. Run `python3 scripts/check_http01_reachability.py` before HTTP-01 issuance.

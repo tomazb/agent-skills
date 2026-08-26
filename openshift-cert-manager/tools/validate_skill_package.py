@@ -46,6 +46,8 @@ SAFETY_PHRASES = [
     "router-certs-default",
     "certificate-authority-data",
     "Do not patch",
+    "PRIOR_DEFAULT_CERT",
+    "PRIOR_SERVING_CERTS",
 ]
 
 CERT_MANAGER_PHRASES = [
@@ -89,8 +91,8 @@ MAX_SKILL_LINES = 180
 REQUIRED_HELPER_INVOCATIONS = [
     (
         "references/install-and-preflight.md",
-        "python3 scripts/discover_tls.py",
-        "TLS discovery helper invocation",
+        "python3 scripts/discover_tls.py --context \"<oc-context>\" --execute",
+        "TLS discovery helper invocation with --execute",
     ),
     (
         "references/acme-http01-proof.md",
@@ -99,13 +101,13 @@ REQUIRED_HELPER_INVOCATIONS = [
     ),
     (
         "references/validation-troubleshooting.md",
-        "python3 scripts/discover_tls.py",
-        "TLS discovery helper invocation",
+        "python3 scripts/discover_tls.py --context \"<oc-context>\" --execute",
+        "TLS discovery helper invocation with --execute",
     ),
     (
         "references/platform-certs.md",
-        "python3 scripts/discover_tls.py",
-        "TLS discovery helper invocation",
+        "python3 scripts/discover_tls.py --context \"<oc-context>\" --execute",
+        "TLS discovery helper invocation with --execute",
     ),
 ]
 

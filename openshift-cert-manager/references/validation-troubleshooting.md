@@ -3,7 +3,7 @@
 Use this runbook after install, after ACME proof, and after platform cert patches. Prefer helpers before ad-hoc `oc` loops.
 
 ```bash
-python3 scripts/discover_tls.py --context "<oc-context>"
+python3 scripts/discover_tls.py --context "<oc-context>" --execute
 python3 scripts/check_http01_reachability.py --hostname "<challenge-hostname>"
 ```
 
