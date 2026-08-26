@@ -40,7 +40,10 @@ DNS-01 uses dns01 cloudflare for wildcards.
 
 On SNO, a bad API patch can lock out oc.
 
-Use python3 scripts/discover_tls.py for discovery.
+Record PRIOR_DEFAULT_CERT and PRIOR_SERVING_CERTS before patching.
+Restore the recorded prior default certificate and exact prior servingCerts.
+
+Use python3 scripts/discover_tls.py --context "<oc-context>" --execute for discovery.
 """
 
 SKILL_TEMPLATE = """\

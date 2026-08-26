@@ -7,7 +7,7 @@ Use this runbook for discovery, OperatorHub checks, and first install of the **R
 Collect current state before choosing a path. Prefer the helper so FQDNs, cert issuers, and port probes are not guessed:
 
 ```bash
-python3 scripts/discover_tls.py --context "<oc-context>"
+python3 scripts/discover_tls.py --context "<oc-context>" --execute
 ```
 
 Equivalent manual commands:

@@ -287,12 +287,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.parse_openssl:
-        text = open(args.parse_openssl, encoding="utf-8").read()
+        with open(args.parse_openssl, encoding="utf-8") as handle:
+            text = handle.read()
         print(json.dumps(parse_openssl_x509(text), indent=2, sort_keys=True))
         return 0
 
     if args.parse_certificate_status:
-        payload = json.loads(open(args.parse_certificate_status, encoding="utf-8").read())
+        with open(args.parse_certificate_status, encoding="utf-8") as handle:
+            payload = json.loads(handle.read())
         status = payload.get("status") if isinstance(payload, dict) else None
         if isinstance(payload, dict) and "conditions" in payload and "status" not in payload:
             status = payload
