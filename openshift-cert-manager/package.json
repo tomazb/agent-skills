@@ -1,0 +1,22 @@
+{
+  "name": "openshift-cert-manager",
+  "version": "1.0.0",
+  "description": "OpenShift/OKD cert-manager lifecycle skill covering Red Hat operator install, Let's Encrypt ACME HTTP-01 proof, DNS-01 issuers, default ingress and API serving-cert replacement, validation, and uninstall.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q"
+  },
+  "keywords": [
+    "openshift",
+    "okd",
+    "cert-manager",
+    "letsencrypt",
+    "acme",
+    "http-01",
+    "dns-01",
+    "ingress",
+    "api-server",
+    "tls",
+    "sno"
+  ]
+}
