@@ -8,7 +8,7 @@ The skill routes work through focused reference runbooks:
 
 - Operator install and preflight
 - HTTP-01 ACME proof (staging then production)
-- DNS-01 issuers (Cloudflare default template)
+- DNS-01 issuers (Red Hat-supported Route 53 / Azure / GCP; Cloudflare as unsupported path)
 - Platform ingress and API certificate replacement
 - validation and troubleshooting
 - maintenance and uninstall

@@ -97,6 +97,13 @@ def summarize(hostname: str, probes: Sequence[AddressProbe]) -> str:
     return "\n".join(lines)
 
 
+def positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("timeout must be greater than 0")
+    return parsed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Fail if TCP :80 is closed on any A/AAAA for HTTP-01."
@@ -105,9 +112,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--port", type=int, default=80, help="TCP port (default 80)")
     parser.add_argument(
         "--timeout",
-        type=float,
+        type=positive_float,
         default=5.0,
-        help="Per-address connect timeout seconds",
+        help="Per-address connect timeout seconds (must be > 0)",
     )
     return parser
 

@@ -41,7 +41,7 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Current TLS: ingress default secret issuer/SANs, API serving cert issuer/SANs, whether `APIServer` already has `namedCertificates`.
 - cert-manager state: absent, RH operator installed, community operator present, CRDs, `ClusterIssuer` names, `Certificate` Ready conditions.
 - ACME email, staging vs production intent, and HTTP-01 hostname for the proof Route.
-- DNS-01 provider (Cloudflare is the default template), API token Secret location, and zone that hosts the API and `*.apps` names.
+- DNS-01 provider (prefer Red Hat-supported Route 53 / Azure DNS / Google Cloud DNS; Cloudflare only as an explicit unsupported path), API token Secret location, and zone that hosts the API and `*.apps` names.
 - Whether the user wants only install+proof, or also platform `*.apps` / API replacement, plus a maintenance window.
 
 ## Output Expectations

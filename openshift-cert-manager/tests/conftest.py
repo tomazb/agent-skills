@@ -36,7 +36,8 @@ Patch defaultCertificate and namedCertificates only after Ready.
 HTTP-01 needs public port 80 on A and AAAA. Run
 python3 scripts/check_http01_reachability.py before Challenges.
 
-DNS-01 uses dns01 cloudflare for wildcards.
+DNS-01 uses dns01 cloudflare for wildcards when unsupported path is accepted.
+Prefer route53 azureDNS cloudDNS when Red Hat support is required.
 
 On SNO, a bad API patch can lock out oc.
 
