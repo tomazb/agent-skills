@@ -8,6 +8,7 @@ no addresses resolve. Let's Encrypt often prefers IPv6 when AAAA exists.
 from __future__ import annotations
 
 import argparse
+import math
 import socket
 from dataclasses import dataclass
 from typing import Sequence
@@ -99,7 +100,7 @@ def summarize(hostname: str, probes: Sequence[AddressProbe]) -> str:
 
 def positive_float(value: str) -> float:
     parsed = float(value)
-    if parsed <= 0:
+    if not math.isfinite(parsed) or parsed <= 0:
         raise argparse.ArgumentTypeError("timeout must be greater than 0")
     return parsed
 

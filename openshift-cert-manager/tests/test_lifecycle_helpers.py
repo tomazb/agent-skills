@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -168,11 +169,14 @@ def test_http01_timeout_must_be_positive():
         http01.main(["--hostname", "example.com", "--timeout", "0"])
     with pytest.raises(SystemExit):
         http01.main(["--hostname", "example.com", "--timeout", "-1"])
+    with pytest.raises(SystemExit):
+        http01.main(["--hostname", "example.com", "--timeout", "nan"])
+    with pytest.raises(SystemExit):
+        http01.main(["--hostname", "example.com", "--timeout", "inf"])
 
 
 def test_positive_float_helper():
     assert http01.positive_float("1.5") == 1.5
-    with pytest.raises(Exception):
-        http01.positive_float("0")
-    with pytest.raises(Exception):
-        http01.positive_float("-2")
+    for bad in ("0", "-2", "nan", "inf", "-inf"):
+        with pytest.raises(argparse.ArgumentTypeError, match="greater than 0"):
+            http01.positive_float(bad)
