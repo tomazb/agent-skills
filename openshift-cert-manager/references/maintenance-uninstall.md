@@ -4,13 +4,15 @@ Uninstall only after reverting platform certificates. Leaving `IngressController
 
 ## Revert Platform Certs First
 
+Use the conditional rollback in `references/platform-certs.md`. Do **not** unconditionally delete `spec.defaultCertificate` or `spec.servingCerts` — that discards any pre-existing custom ingress cert or other API named certificates.
+
 1. Confirm `router-certs-default` still exists in `openshift-ingress`.
-2. Remove `spec.defaultCertificate` from IngressController `default` (see `references/platform-certs.md` rollback).
-3. Remove `spec.servingCerts` from `APIServer` `cluster`.
-4. Validate console and `oc` still work with original cluster CAs.
+2. Restore `IngressController.spec.defaultCertificate` from the recorded `PRIOR_DEFAULT_CERT` (set the prior secret name, or remove the field only when it was previously unset).
+3. Restore `APIServer.spec.servingCerts` from the recorded `PRIOR_SERVING_CERTS` JSON (merge the exact prior object, or remove the field only when it was previously empty).
+4. Validate console and `oc` still work with the restored trust chain.
 5. Only then delete `Certificate` objects `apps-wildcard-tls` and `api-serving-tls`.
 
-Do not delete `router-certs-default`.
+If `PRIOR_*` values were never captured, stop and rediscover current platform TLS before changing anything. Do not delete `router-certs-default`.
 
 ## Uninstall Operator
 
@@ -33,7 +35,7 @@ Do not delete OpenShift Virtualization `kubemacpool-cert-manager` resources.
 oc --context "<oc-context>" get crd | grep cert-manager || true
 oc --context "<oc-context>" get clusterissuer,certificate -A 2>/dev/null || true
 oc --context "<oc-context>" get ingresscontroller default -n openshift-ingress-operator -o jsonpath='{.spec.defaultCertificate}{"\n"}'
-oc --context "<oc-context>" get apiserver cluster -o jsonpath='{.spec.servingCerts}{"\n"}'
+oc --context "<oc-context>" get apiserver cluster -o json | jq -c '.spec.servingCerts // empty'
 ```
 
 Stop if platform patches still reference deleted Secret names.

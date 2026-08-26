@@ -73,6 +73,8 @@ DNS01_PHRASES = [
     "cloudflare",
     "dns01",
     "wildcard",
+    "route53",
+    "unsupported",
 ]
 
 SNO_PHRASES = [

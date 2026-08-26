@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
@@ -159,3 +161,18 @@ def test_http01_main_fail(monkeypatch):
         lambda *args, **kwargs: [],
     )
     assert http01.main(["--hostname", "example.com"]) == 1
+
+
+def test_http01_timeout_must_be_positive():
+    with pytest.raises(SystemExit):
+        http01.main(["--hostname", "example.com", "--timeout", "0"])
+    with pytest.raises(SystemExit):
+        http01.main(["--hostname", "example.com", "--timeout", "-1"])
+
+
+def test_positive_float_helper():
+    assert http01.positive_float("1.5") == 1.5
+    with pytest.raises(Exception):
+        http01.positive_float("0")
+    with pytest.raises(Exception):
+        http01.positive_float("-2")

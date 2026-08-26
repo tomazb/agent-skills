@@ -20,7 +20,8 @@ Do not delete `router-certs-default` in `openshift-ingress`. Capture the prior v
 
 ```bash
 PRIOR_DEFAULT_CERT="$(oc --context "<oc-context>" -n openshift-ingress-operator get ingresscontroller default -o jsonpath='{.spec.defaultCertificate.name}')"
-PRIOR_SERVING_CERTS="$(oc --context "<oc-context>" get apiserver cluster -o jsonpath='{.spec.servingCerts}')"
+# jsonpath on an object can print Go map[...] text; capture real JSON for rollback.
+PRIOR_SERVING_CERTS="$(oc --context "<oc-context>" get apiserver cluster -o json | jq -c '.spec.servingCerts // empty')"
 ```
 
 ## Ingress Wildcard Certificate
