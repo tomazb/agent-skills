@@ -47,6 +47,50 @@ Apply Patrick Winston's MIT presentation framework to craft compelling talks, au
 - Provides structured talk planning, slide auditing with 10 slide crimes, and delivery coaching
 - Includes misinterpretation guards for commonly misquoted Winston advice
 
+### [OpenShift Rook](openshift-rook/)
+
+Upstream Rook Ceph lifecycle router for OpenShift/OKD on SNO and multi-node clusters. Starts with a product-ownership gate so ODF-managed clusters hand off to `openshift-odf` instead of mixing raw Rook manifests with OLM-managed state.
+
+**Key capabilities:**
+
+- Routes across install/preflight, OSD disk prep, RBD block, CephFS, RGW/S3 object, expand/shrink, upgrade, backup/DR, maintenance/uninstall, and validation runbooks
+- Enforces destructive-disk safety gates (explicit confirmation, `readlink -f`/`lsblk -f`/`wipefs -n` evidence, stable `/dev/disk/by-id/*` paths)
+- Covers CDI/KubeVirt VM storage defaults and StorageProfile configuration
+- Separates SNO single-replica settings from multi-node production topology
+
+### [OpenShift ODF](openshift-odf/)
+
+Red Hat OpenShift Data Foundation lifecycle skill for internal and external modes on SNO, compact, and multi-node clusters. Manages storage through the `odf-operator`/`ocs-operator` and the `StorageCluster` CR, never raw upstream Rook manifests.
+
+**Key capabilities:**
+
+- Routes across install/preflight, Local Storage Operator disk prep, ceph-rbd block, cephfs filesystem, MCG/NooBaa and RGW object, expansion, upgrade, backup/DR, maintenance, and validation runbooks
+- Mirrors the Rook ownership gate in reverse (unmanaged Rook hands off to `openshift-rook`) and forbids hand-editing ODF-owned Rook CRs except the version-scoped SNO workaround
+- Captures ODF 4.20/4.22 SNO single-OSD regression evidence and remediation rendering via `scripts/render_sno_remediation.py`
+- Enforces OLM-only install/upgrade, SNO replica-count discovery, and single-default-StorageClass safety
+
+### [OpenShift Longhorn](openshift-longhorn/)
+
+Longhorn lifecycle router for OpenShift/OKD covering V1 filesystem and V2 block/SPDK data engines on SNO and multi-node clusters.
+
+**Key capabilities:**
+
+- Routes across install/preflight, V1 filesystem disks, V2 block/SPDK setup, V1↔V2 migration, upgrade, backup/restore/DR, maintenance/uninstall, and validation runbooks
+- Enforces destructive-action confirmation, stable `/dev/disk/by-id/*` targeting, and temporary privileged SCC only for SPDK preflight
+- Treats StorageClass parameters as effectively immutable (recreate instead of editing) and keeps SNO single-replica defaults out of multi-node plans
+- Records observed OpenShift 4.22 SNO / Longhorn v1.12.0 V2 evidence without turning host-specific values into defaults
+
+### [OpenShift LVM Storage](openshift-lvm-storage/)
+
+LVM Storage (LVMS) and TopoLVM lifecycle skill for SNO and multi-node clusters, from volume-group provisioning through filesystem and raw-block volumes.
+
+**Key capabilities:**
+
+- Routes across install/preflight, volume-group/thin-pool provisioning, filesystem and block volumes, expand/shrink, upgrade, backup/DR, maintenance/uninstall, and validation runbooks
+- Requires explicit destructive confirmation plus `pvs`/`vgs`/`lvs` evidence for PV/VG/LV operations
+- Enforces `volumeBindingMode: WaitForFirstConsumer` for TopoLVM and guards against thin-pool over-provisioning
+- Keeps SNO single-node defaults separate from multi-node production plans
+
 ### [OpenShift Cluster Health Check](openshift-cluster-health-check/)
 
 Platform-aware OpenShift cluster health diagnostics for control plane, operators, nodes, MCPs, and key platform subsystems across bare metal, virtualized, cloud, and SNO environments. Emphasizes read-only investigation and evidence-based severity classification.
@@ -58,6 +102,17 @@ Platform-aware OpenShift cluster health diagnostics for control plane, operators
 - Classifies findings into **Healthy**, **Warning**, and **Critical** with explicit blast-radius and impact guidance
 - Distinguishes quota/app issues from platform-level failures for pending/crashing pods to avoid false escalation
 - Produces actionable output with executive summary, evidence, priority actions, and uncertainty notes
+
+### [OpenShift cert-manager](openshift-cert-manager/)
+
+Red Hat cert-manager Operator and Let's Encrypt lifecycle skill for OpenShift/OKD on SNO and multi-node clusters, from OperatorHub install through platform certificate replacement.
+
+**Key capabilities:**
+
+- Routes across install/preflight, ACME HTTP-01 proof (staging then production), DNS-01 issuers for wildcards and API certs, platform ingress/API cert replacement, validation/troubleshooting, and maintenance/uninstall runbooks
+- Enforces staging-before-production issuance, `Ready=True` from the production issuer before touching platform certs, and public TCP `:80` preflight for HTTP-01
+- Encodes DNS-01 requirements (`*.apps` wildcards and API serving certs must use DNS-01) and keeps `router-certs-default` for rollback
+- Ships discovery helpers (`scripts/discover_tls.py`, `scripts/check_http01_reachability.py`) with unit-tested timeout and JSON-parsing guards
 
 ### [PR Comments](pr-comments/)
 
@@ -108,6 +163,17 @@ Risk-first QA skill for requirement tracing, test planning, defect reproduction,
 - Test quality standards covering determinism, speed, readability, isolation, maintainability, and trustworthiness
 - Special considerations for AI-generated code with 11 blind-spot signals
 
+### [Skill Authoring](skill-authoring/)
+
+Meta-skill for creating and maintaining skills in this collection with in-sync packaging, versioning, and validation.
+
+**Key capabilities:**
+
+- Defines required vs optional package layout (`SKILL.md`, `package.json`, `VERSION`, `CHANGELOG.md`, per-skill `README.md`, plus `references/`, `tools/`, `scripts/`, `assets/`, `tests/`)
+- Enforces `Use when...` frontmatter without the legacy `tools` field and concise `SKILL.md` with detail pushed into references or scripts
+- Encodes semantic version sync across `VERSION`, `package.json`, `CHANGELOG.md`, and the README version line
+- Names the collection validator, isolated test runner, per-skill package check, and the root `README.md` + `AGENTS.md` index sync
+
 ## Skill Structure
 
 Each skill follows a consistent package layout:
@@ -118,8 +184,12 @@ skill-name/
 ├── package.json      # Name, version, description, keywords
 ├── VERSION           # Current version
 ├── CHANGELOG.md      # Version history
-├── references/       # Deep-dive reference materials
-└── tools/            # Validation and utility scripts
+├── README.md         # Per-skill readme with version line
+├── references/       # Optional deep-dive reference materials
+├── tools/            # Optional validation and utility scripts
+├── scripts/          # Optional runtime helper scripts
+├── assets/           # Optional static assets
+└── tests/            # Adjacent validation/tests
 ```
 
 ## Validation
