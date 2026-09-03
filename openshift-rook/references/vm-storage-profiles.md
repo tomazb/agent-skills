@@ -14,6 +14,7 @@ The two can coexist on different classes without conflict. A common layout is a 
 Set the VM default on an RBD class. First remove the annotation from any class that already holds it to prevent `CDIMultipleDefaultVirtStorageClasses`:
 
 ```bash
+set -euo pipefail
 oc get sc -o json \
   | python3 -c "import json,sys; [print(i['metadata']['name']) for i in json.load(sys.stdin)['items'] if i.get('metadata',{}).get('annotations',{}).get('storageclass.kubevirt.io/is-default-virt-class') == 'true']" \
   | xargs -r -I{} oc annotate storageclass {} storageclass.kubevirt.io/is-default-virt-class-
@@ -161,16 +162,14 @@ spec:
           blank: {}
 ```
 
-Apply both manifests, then wait for them to settle before reading status:
+Apply both manifests, then check which StorageClass was selected. The `spec.storageClassName` is populated immediately on create, before the PVC is bound:
 
 ```bash
 oc apply -n storage-default-test -f <pvc-manifest.yaml>
 oc apply -n storage-default-test -f <vm-manifest.yaml>
-oc wait -n storage-default-test pvc/default-sc-test-pvc --for=condition=Bound --timeout=120s
-oc wait -n storage-default-test datavolume/default-sc-test-dv --for=condition=Ready --timeout=300s
 ```
 
-Confirm:
+Confirm StorageClass selection (no wait required for this check):
 
 ```bash
 oc -n storage-default-test get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} phase={.status.phase}{"\n"}'
@@ -178,7 +177,18 @@ oc -n storage-default-test get pvc default-sc-test-dv -o jsonpath='sc={.spec.sto
 oc -n storage-default-test get dv default-sc-test-dv -o jsonpath='phase={.status.phase} progress={.status.progress}{"\n"}'
 ```
 
-Expect the plain PVC on the general default (`Filesystem`), and the DataVolume PVC on the VM default with the StorageProfile's first set (for example `rook-ceph-block`, `Block`, `ReadWriteMany`) with DV `Succeeded`. Clean up:
+Expect the plain PVC on the general default (`Filesystem`) and the DataVolume PVC on the VM default with the StorageProfile's first set (for example `rook-ceph-block`, `Block`, `ReadWriteMany`).
+
+To also confirm provisioning completes, wait for binding. This requires the StorageClass to use `volumeBindingMode: Immediate` (the Rook Ceph default). If the default class uses `WaitForFirstConsumer` (the LVMS default), the plain PVC stays Pending until a Pod is scheduled, and the DataVolume stays in `WaitForFirstConsumer` phase until the VM runs. In that case either set `running: true` on the test VM or force immediate binding on the DataVolume with the annotation `cdi.kubevirt.io/storage.bind.immediate.requested: "true"`:
+
+```bash
+oc wait -n storage-default-test pvc/default-sc-test-pvc \
+  --for=jsonpath='{.status.phase}'=Bound --timeout=120s
+oc wait -n storage-default-test datavolume/default-sc-test-dv \
+  --for=condition=Ready --timeout=300s
+```
+
+Clean up:
 
 ```bash
 oc delete ns storage-default-test --wait
