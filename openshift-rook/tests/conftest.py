@@ -94,6 +94,8 @@ During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
 If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
+
+VM storage defaults: set `storageclass.kubevirt.io/is-default-virt-class` for the CDI/KubeVirt virtualization default, keep `storageclass.kubernetes.io/is-default-class` for the general default, and configure StorageProfile `claimPropertySets` (`ReadWriteMany` + `volumeMode: Block` for RBD, `Filesystem` for CephFS/NFS). Resolve `CDIStorageProfilesIncomplete` for an `UnrecognizedProvisioner` by setting `spec.claimPropertySets`. When moving a default off an LVMS class, set `LVMCluster.spec.storage.deviceClasses[].default: false` because the operator re-pins the annotation.
 """
 
 SKILL_TEMPLATE = """\

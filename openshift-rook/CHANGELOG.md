@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.6.0
+
+- Added **VM storage defaults and CDI StorageProfiles** guidance in `references/vm-storage-profiles.md`: the two-default model (`storageclass.kubernetes.io/is-default-class` for general PVCs vs `storageclass.kubevirt.io/is-default-virt-class` for CDI/KubeVirt VirtualMachine disks), StorageProfile `claimPropertySets` priority and block-mode RBD tuning, resolving the `CDIStorageProfilesIncomplete` alert for unrecognized provisioners (for example `rook-ceph.nfs.csi.ceph.com`), and the operator-reconcile gotcha when moving a default between Rook and another operator (LVMS re-pins `is-default-class` from `LVMCluster`/`LVMVolumeGroup` `default`).
+- Cross-linked `references/rbd-block-pools.md` and `references/cephfs-filesystem.md` to the VM storage reference.
+- Extended the package validator and tests to enforce the new VM storage profile guidance.
+
 ## 1.5.0
 - Addressed PR review feedback: made preflight/uninstall commands runnable (no shell-invalid placeholders, non-repeatable `--api-group` split, `/dev/rbd[0-9]*` glob, per-path stale-dir checks), discover ceph-csi version pre-install from the operator image-set, read `dataDirHostPath` instead of hardcoding `/var/lib/rook`, use `--wait=false` and a converging reconciler-stop loop in ODF teardown, gate destructive zeroing on confirmed abandonment, route 4.20.17 health checks off the toolbox, and bind the 4.20.17 validator check to its section.
 - Added **stale krbd device** detection and remediation, learned from a live Rook→ODF→Rook round-trip on SNO. A prior teardown that deleted an RBD-backed PVC (or its namespace) before the volume was unmapped — or destroyed the pool under a mapped image — leaves a wedged `/dev/rbdN` that hangs a new Rook OSD prepare forever at `ceph-volume raw list`. `references/install-and-preflight.md` now checks `/dev/rbd*` and `/sys/bus/rbd/devices`, and `references/maintenance-uninstall.md` adds a "Stale krbd Devices" section (drain consumers first, `rbd unmap`, and reboot/power-cycle a wedged VM).

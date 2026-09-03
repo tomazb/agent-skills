@@ -5,7 +5,7 @@ This repository stores reusable agent skills. Each skill should live in its own 
 ## Skill Inventory
 
 ### OpenShift storage
-- `openshift-rook` — Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD for SNO or multi-node clusters.
+- `openshift-rook` — Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD for SNO or multi-node clusters, including CDI/KubeVirt VM storage defaults and StorageProfile configuration.
 - `openshift-odf` — Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting OpenShift Data Foundation (ODF) on OpenShift/OKD for SNO or multi-node clusters.
 - `openshift-longhorn` — Use when discovering, planning, installing, validating, hardening, upgrading, migrating, backing up, restoring, maintaining, uninstalling, or troubleshooting Longhorn on OpenShift/OKD.
 - `openshift-lvm-storage` — Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting LVM Storage (LVMS) on OpenShift/OKD for SNO or multi-node clusters.

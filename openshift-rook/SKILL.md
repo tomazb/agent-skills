@@ -1,6 +1,6 @@
 ---
 name: openshift-rook
-description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, host networking, device discovery, stretch clusters, PG/PGP tuning, and operator lifecycle safety.
+description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, host networking, device discovery, stretch clusters, PG/PGP tuning, CDI/KubeVirt VM storage defaults and StorageProfile configuration, and operator lifecycle safety.
 ---
 
 # OpenShift Rook Ceph Lifecycle
@@ -35,6 +35,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Backup, DR, and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node eviction, OSD replacement, operator uninstall, or cluster destruction**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **VM storage defaults, CDI StorageProfiles, or `CDIStorageProfilesIncomplete`**: use `references/vm-storage-profiles.md`.
 
 ## Core Safety Rules
 

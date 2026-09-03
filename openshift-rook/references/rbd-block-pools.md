@@ -124,6 +124,8 @@ volumeBindingMode: Immediate
 
 Keep exactly one default StorageClass unless the user explicitly requests another policy.
 
+For VirtualMachine disks, prefer a VM/virt default via `storageclass.kubevirt.io/is-default-virt-class` and block-mode `StorageProfile` `claimPropertySets` — see `references/vm-storage-profiles.md`.
+
 ## Validation
 
 Create a test PVC and pod. Confirm:

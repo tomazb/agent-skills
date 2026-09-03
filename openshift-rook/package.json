@@ -1,7 +1,7 @@
 {
   "name": "openshift-rook",
-  "version": "1.5.0",
-  "description": "OpenShift/OKD Rook Ceph lifecycle skill covering discovery, install, OSD disk prep, RBD block pools, CephFS filesystem, RGW object store, cluster expansion, upgrade, backup/restore, maintenance, uninstall, validation, hardening, and troubleshooting.",
+  "version": "1.6.0",
+  "description": "OpenShift/OKD Rook Ceph lifecycle skill covering discovery, install, OSD disk prep, RBD block pools, CephFS filesystem, RGW object store, cluster expansion, upgrade, backup/restore, maintenance, uninstall, validation, hardening, troubleshooting, and CDI/KubeVirt VM storage defaults and StorageProfile configuration.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",
     "test": "pytest -q"

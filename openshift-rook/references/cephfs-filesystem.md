@@ -87,6 +87,8 @@ volumeBindingMode: Immediate
 
 Keep exactly one default StorageClass unless the user explicitly requests another policy.
 
+For VirtualMachine disks on CephFS, configure `StorageProfile` `claimPropertySets` (`Filesystem` mode) — see `references/vm-storage-profiles.md`.
+
 ## Validation
 
 Create a test PVC and pod. Confirm:
