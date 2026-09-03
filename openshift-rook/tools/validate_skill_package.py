@@ -21,6 +21,7 @@ EXPECTED_REFERENCES = [
     "references/maintenance-uninstall.md",
     "references/validation-hardening.md",
     "references/validated-rook-ceph-sno.md",
+    "references/vm-storage-profiles.md",
 ]
 
 REQUIRED_FILES = [
@@ -533,6 +534,19 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "mon_max_pg_per_osd",
             "rook-ceph-rgw-obc",
             "Backend: rook",
+        ],
+    )
+    require(
+        "references/vm-storage-profiles.md",
+        "VM storage profile guidance",
+        [
+            "storageclass.kubevirt.io/is-default-virt-class",
+            "claimPropertySets",
+            "CDIStorageProfilesIncomplete",
+            "UnrecognizedProvisioner",
+            "ReadWriteMany",
+            "volumeMode: Block",
+            "LVMCluster",
         ],
     )
     forbid_pattern(
