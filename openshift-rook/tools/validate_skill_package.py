@@ -541,12 +541,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "VM storage profile guidance",
         [
             "storageclass.kubevirt.io/is-default-virt-class",
+            "storageclass.kubernetes.io/is-default-class",
             "claimPropertySets",
             "CDIStorageProfilesIncomplete",
             "UnrecognizedProvisioner",
             "ReadWriteMany",
             "volumeMode: Block",
             "LVMCluster",
+            "default: false",
         ],
     )
     forbid_pattern(

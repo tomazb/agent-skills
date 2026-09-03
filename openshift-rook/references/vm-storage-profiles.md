@@ -11,10 +11,19 @@ Kubernetes and CDI use two independent default mechanisms:
 
 The two can coexist on different classes without conflict. A common layout is a general-purpose default on `rook-nfs` or `rook-cephfs` and a VM default on `rook-ceph-block`.
 
-Set the VM default on an RBD class:
+Set the VM default on an RBD class. First remove the annotation from any class that already holds it to prevent `CDIMultipleDefaultVirtStorageClasses`:
 
 ```bash
+oc get sc -o json \
+  | python3 -c "import json,sys; [print(i['metadata']['name']) for i in json.load(sys.stdin)['items'] if i.get('metadata',{}).get('annotations',{}).get('storageclass.kubevirt.io/is-default-virt-class') == 'true']" \
+  | xargs -r -I{} oc annotate storageclass {} storageclass.kubevirt.io/is-default-virt-class-
 oc annotate storageclass rook-ceph-block storageclass.kubevirt.io/is-default-virt-class=true --overwrite
+```
+
+Verify exactly one class carries the annotation:
+
+```bash
+oc get sc -o jsonpath='{range .items[*]}{.metadata.name}: {.metadata.annotations.storageclass\.kubevirt\.io/is-default-virt-class}{"\n"}{end}'
 ```
 
 Remove it:
@@ -44,7 +53,7 @@ Set user-defined `claimPropertySets` to override CDI auto-detection.
 
 ### RBD block mode for VM disks (recommended)
 
-Prefer raw block RBD for VirtualMachine disks (fewer layers, better performance). Put `ReadWriteMany` first so live migration works when the pool supports multi-attach:
+Prefer raw block RBD for VirtualMachine disks (fewer layers, better performance). Ceph RBD block mode supports multi-attach (RWX) via the CSI driver, which is required for live migration. Put `ReadWriteMany` first so CDI infers RWX as the default when a DataVolume omits `accessModes`; keep `ReadWriteOnce` as the fallback. If live migration is not needed or multi-attach is not confirmed, reverse the order:
 
 ```bash
 oc patch storageprofile rook-ceph-block --type=merge -p '{"spec":{"claimPropertySets":[{"accessModes":["ReadWriteMany"],"volumeMode":"Block"},{"accessModes":["ReadWriteOnce"],"volumeMode":"Block"}]}}'
@@ -74,10 +83,18 @@ An empty `spec` and empty `status.claimPropertySets` with `reason: UnrecognizedP
 
 ## Moving A Default Between Operators
 
-Some storage operators reconcile the `is-default-class` annotation from their own CRs and will re-add it within seconds if you only delete the annotation. The LVMS operator is one example: it pins the default from `LVMCluster.spec.storage.deviceClasses[].default` and `LVMVolumeGroup.spec.default`. To stop it pinning a class as default, set `default: false` on the owning CR, not just the StorageClass annotation:
+Some storage operators reconcile the `is-default-class` annotation from their own CRs and will re-add it within seconds if you only delete the annotation. The LVMS operator is one example: it pins the default from `LVMCluster.spec.storage.deviceClasses[].default` and `LVMVolumeGroup.spec.default`. To stop it pinning a class as default, set `default: false` on the owning CR, not just the StorageClass annotation.
+
+First, find the index of the deviceClass that is currently pinned as default:
 
 ```bash
-oc patch lvmcluster <name> -n openshift-storage --type=json -p '[{"op":"replace","path":"/spec/storage/deviceClasses/0/default","value":false}]'
+oc get lvmcluster <name> -n openshift-storage -o jsonpath='{range .spec.storage.deviceClasses[*]}{.name}: default={.default}{"\n"}{end}'
+```
+
+Then patch using the correct index (0, 1, …):
+
+```bash
+oc patch lvmcluster <name> -n openshift-storage --type=json -p '[{"op":"replace","path":"/spec/storage/deviceClasses/<index>/default","value":false}]'
 oc patch lvmvolumegroup <name> -n openshift-storage --type=merge -p '{"spec":{"default":false}}'
 oc annotate storageclass <lvms-class> storageclass.kubernetes.io/is-default-class-
 ```
@@ -86,7 +103,11 @@ Generalize: before fighting a re-pinning controller, check the StorageClass `met
 
 ## Verification
 
-Create a throwaway namespace and two resources, then delete it.
+Create a throwaway namespace:
+
+```bash
+oc create ns storage-default-test
+```
 
 Plain PVC (omits `storageClassName`) should bind on the general-purpose default:
 
@@ -97,7 +118,7 @@ metadata:
   name: default-sc-test-pvc
   namespace: storage-default-test
 spec:
-  accessModes: ["ReadWriteMany"]
+  accessModes: ["ReadWriteOnce"]
   resources:
     requests:
       storage: 1Gi
@@ -138,6 +159,15 @@ spec:
               storage: 1Gi
         source:
           blank: {}
+```
+
+Apply both manifests, then wait for them to settle before reading status:
+
+```bash
+oc apply -n storage-default-test -f <pvc-manifest.yaml>
+oc apply -n storage-default-test -f <vm-manifest.yaml>
+oc wait -n storage-default-test pvc/default-sc-test-pvc --for=condition=Bound --timeout=120s
+oc wait -n storage-default-test datavolume/default-sc-test-dv --for=condition=Ready --timeout=300s
 ```
 
 Confirm:

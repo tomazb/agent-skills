@@ -545,3 +545,33 @@ def test_missing_vm_storage_profile_guidance_fails(validator, package_factory, r
         "references/vm-storage-profiles.md" in issue and "is-default-virt-class" in issue
         for issue in issues
     )
+
+
+def test_missing_general_default_class_annotation_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    vm = root / "references" / "vm-storage-profiles.md"
+    vm.write_text(
+        vm.read_text(encoding="utf-8").replace(
+            "storageclass.kubernetes.io/is-default-class", "k8s-default-class"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "references/vm-storage-profiles.md" in issue and "is-default-class" in issue
+        for issue in issues
+    )
+
+
+def test_missing_lvms_default_false_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    vm = root / "references" / "vm-storage-profiles.md"
+    vm.write_text(
+        vm.read_text(encoding="utf-8").replace("default: false", "default: true"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "references/vm-storage-profiles.md" in issue and "default: false" in issue
+        for issue in issues
+    )
