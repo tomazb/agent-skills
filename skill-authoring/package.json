@@ -1,0 +1,17 @@
+{
+  "name": "skill-authoring",
+  "version": "0.1.0",
+  "description": "Create and maintain skills in this collection with in-sync packaging, versioning, and validation.",
+  "scripts": {
+    "validate": "bash tools/validate_skill_package.sh",
+    "test": "pytest -q tests",
+    "bump:version": "python3 tools/bump_version.py"
+  },
+  "keywords": [
+    "skill-authoring",
+    "packaging",
+    "versioning",
+    "validation",
+    "maintainability"
+  ]
+}

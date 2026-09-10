@@ -12,7 +12,7 @@ Fetch all review comments from the current branch's GitHub PR and display them v
 - Verify auth: `gh auth status`
 - Fetch the JSON payload: `python3 <skill_dir>/scripts/fetch_github_review_comments.py`
 - Render the comments: call `insert_code_review_comments` with the script output
-- Act on the feedback afterward: use `gh-address-comments`
+- Act on the feedback afterward only when the user explicitly asks for changes
 
 ## Procedure
 
@@ -37,7 +37,7 @@ Fetch all review comments from the current branch's GitHub PR and display them v
 
 4. Stop and wait for the user. After displaying each batch of comments, you MUST ask the user how they would like to proceed. Do NOT take any further action until the user provides explicit instructions unless the user explicitly asks you to.
 Do NOT make code changes in response to the fetched comments unless the user tells you to. Do NOT impersonate the user by submitting review responses.
-Your role when fetching and displaying comments is purely informational — present the comments and wait for direction. If the user wants to address the feedback, transition to `gh-address-comments`.
+Your role when fetching and displaying comments is purely informational — present the comments and wait for direction. If the user wants to address the feedback, help them address it once they explicitly say so.
 
 ## What the Script Handles
 
