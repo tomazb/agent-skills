@@ -33,6 +33,10 @@ Do not use this skill as the primary driver for:
 - CI/CD or framework setup tasks,
 - unrelated code simplification work.
 
+The frontmatter `allowed-tools` restriction is intentional: it confines this
+skill to quality workflows (reading, searching, executing tests, and editing
+test code) and keeps it off the unrelated work listed above.
+
 ## Operating Modes
 
 Select one mode per response unless mixed intent requires a two-phase sequence.

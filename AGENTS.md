@@ -25,9 +25,12 @@ This repository stores reusable agent skills. Each skill should live in its own 
 - `challenging-decisions` — Use when a decision sounds reasonable but still needs pressure-testing before agreement, especially for scope, architecture, sequencing, or irreversible trade-offs.
 - `how-to-speak-winston-framework` — Use when crafting, auditing, or coaching presentations, slide decks, pitches, talk structure, or memorable teaching props and stories.
 
+### Repository maintenance
+- `skill-authoring` — Use when creating a new skill in this collection, or modifying an existing skill's SKILL.md, package layout, version, changelog, tests, or validation tooling.
+
 ## Skill Authoring Conventions
 - Write skill descriptions in `Use when...` form so they describe triggering conditions, not workflow summaries.
-- Do not use the legacy frontmatter field `tools`; use Agent Skills `allowed-tools` when tool restrictions are needed.
+- Do not use the legacy frontmatter field `tools`; `allowed-tools` is opt-in — use it only when a tool restriction is genuinely needed, and state the reason in the skill (see `qa-agent`).
 - Keep skill instructions concise and move heavy operational detail into scripts or tests when possible.
 - When changing a skill's behavior, update the skill document and its adjacent validation/tests together.
 
