@@ -173,10 +173,11 @@ done
 oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature; then wipe manually
 ```
 
-**Cleanup-job success is not a clean disk.** On a live ODF 4.20 SNO uninstall with LSO `LocalVolume` (filesystem/XFS path) and `cleanup-policy=delete`, the job completed and removed BlueStore metadata, but left:
+**Cleanup-job success is not a clean disk.** On a live ODF 4.20 SNO uninstall with LSO `LocalVolume` and `cleanup-policy=delete`, the job can complete while still leaving:
 
-1. An **empty** `/var/lib/rook` directory (harmless until a later leftover check treats the path as residue).
-2. An **XFS** signature on the OSD disk (LSO formatted the device; rook's sanitize does not always clear a non-BlueStore filesystem). A reinstall that expects a raw disk then fails discovery or fights the old FS UUID.
+1. An **empty** `/var/lib/rook` directory.
+2. An **XFS** signature (when LSO used a filesystem path).
+3. **BlueStore labels at 10 GiB / 100 GiB** (and other official offsets) that `wipefs -n` / `lsblk -f` do **not** show. A later OSD prepare then CrashLoopBackOffs with `osd.0 belonging to a different ceph cluster "<old-fsid>"`.
 
 After the job (or after a manual zap), verify and finish host cleanup before calling the uninstall done:
 
@@ -184,18 +185,21 @@ After the job (or after a manual zap), verify and finish host cleanup before cal
 oc debug node/<node> -- chroot /host bash -c '
 set -e
 DISK=/dev/disk/by-id/<stable-disk-id>
-# Empty dir left after DataDirHostPath cleanup:
 if [ -d /var/lib/rook ] && [ -z "$(ls -A /var/lib/rook)" ]; then
   rmdir /var/lib/rook
 fi
 ls -la /var/lib/rook 2>/dev/null || echo "no /var/lib/rook"
-# Any FSTYPE (xfs, ceph_bluestore, ...) means wipe before a fresh install:
 lsblk -f "$DISK"
-wipefs -n "$DISK" || echo "no signatures (clean)"
+wipefs -n "$DISK" || echo "no signatures (wipefs)"
+'
+# Authoritative BlueStore check (RHCOS has no ceph-volume on the host):
+oc debug node/<node> --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list /dev/disk/by-id/<stable-disk-id> --format json   # must be {}
 '
 ```
 
-If `lsblk -f` still shows a filesystem or `wipefs -n` prints a signature, run **Disk Cleanup** below (with destructive confirmation for that exact by-id path) before reinstalling. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
+If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md` (BlueStore labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB**, or full-disk zero) with destructive confirmation for that exact by-id path. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
 
 Also confirm no **stale krbd device** was leaked (deleting a NooBaa DB / ceph-rbd PVC before it was unmapped wedges a `/dev/rbdN` that later hangs a reinstall's `ceph-volume raw list`). See the Rook cleanup runbook's "Stale krbd Devices" section:
 
@@ -424,7 +428,7 @@ After uninstall, confirm:
 
 - `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating). When the namespace was kept for LVMS/LSO: it contains no rook/ceph/noobaa/ocs/odf secrets, configmaps, services, or workloads, and the LVMS/LSO pods are still Running.
 - The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io`, `csiaddons.openshift.io`, `objectbucket.io` — plus `local.storage.openshift.io` only if LSO was removed too.
-- OSD disks show no filesystem or BlueStore signature (`lsblk -f` / `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
+- OSD disks pass `ceph-volume raw list` → `{}` (not only a clean `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
 - No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
 - No StorageClass uses an ODF provisioner (`openshift-storage.rbd.csi.ceph.com`, `openshift-storage.cephfs.csi.ceph.com`, `openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`).
 - No PV/PVC uses an ODF StorageClass or is stuck Terminating.
@@ -525,7 +529,7 @@ Repeat for each stuck namespace (`rook-ceph`, `openshift-local-storage`, smoke/t
 
 ## Disk Cleanup (Data Loss)
 
-An uninstall with `cleanup-policy="delete"` wipes the OSD disks automatically. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD requires full-disk zeroing to clear the labels at its midpoint and end:
+An uninstall with `cleanup-policy="delete"` wipes the OSD disks automatically. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed) — see `references/local-storage-disks.md`. Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
 
 ```bash
 NODE="<node>"
@@ -538,16 +542,27 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
   sgdisk --zap-all '${DISK}'
 "
 
-# Required only when the disk previously held a BlueStore OSD:
-oc debug "node/${NODE}" -- chroot /host bash -c "
-  set -e
-  dd if=/dev/zero of='${DISK}' bs=4M status=progress
+# Required when the disk previously held a BlueStore OSD (fast path):
+oc debug "node/${NODE}" -- chroot /host bash -ceu "
+  DISK='${DISK}'
+  BYTES=\$(blockdev --getsize64 \"\$DISK\")
+  G=\$((1024*1024*1024))
+  for mult in 0 1 10 100 1000; do
+    off=\$((mult * G))
+    [ \"\$off\" -ge \"\$BYTES\" ] && continue
+    dd if=/dev/zero of=\"\$DISK\" bs=4096 seek=\$((off/4096)) count=256 status=none conv=fsync
+  done
   sync
-  lsblk -f '${DISK}'
 "
+
+# Authoritative check — must print {}:
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json
+'
 ```
 
-Full-disk zeroing can take a long time. See `references/local-storage-disks.md` for the BlueStore cleanup rationale and post-wipe checks.
+Full-disk zeroing remains valid when policy requires total erasure; it can take a long time. See `references/local-storage-disks.md` for the BlueStore cleanup rationale.
 
 ## MachineConfig Cleanup
 

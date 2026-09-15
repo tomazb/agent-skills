@@ -241,8 +241,8 @@ def test_cleanup_job_success_requires_disk_and_rook_dir_verification():
     text = _uninstall_text()
     assert "/var/lib/rook" in text
     assert "rmdir /var/lib/rook" in text
-    assert "XFS" in text
-    assert "wipefs -n" in text
+    assert "ceph-volume raw list" in text
+    assert "10" in text and "GiB" in text  # BlueStore label offsets
     assert "Cleanup-job success is not a clean disk" in text
 
 

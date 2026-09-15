@@ -265,10 +265,10 @@ oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
 oc -n openshift-storage get cephblockpool ocs-storagecluster-cephblockpool \
   -o jsonpath='{.spec.replicated.size}{"\n"}'   # must print 1
 
-# Step 5: Patch ODF-managed object store CR to size=1
-oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
-  --type merge \
-  -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
+# Step 5: Do NOT use a size-only `--type merge` on CephObjectStore /
+# CephFilesystem — merge leaves replicasPerFailureDomain in place and Rook
+# keeps rejecting the CR ("size must be greater"). Use the JSON patches in the
+# next section (failureDomain=host + remove replicasPerFailureDomain + size=1).
 
 # Step 6: Archive crash history and mute expected SNO warning
 oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF crash archive-all
@@ -312,15 +312,18 @@ oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
   ]'
 
 # CephObjectStore: data + metadata pools -> size 1, host failure domain
+# Use JSON remove — a merge size-only patch leaves replicasPerFailureDomain.
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
   --type json -p '[
     {"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"},
     {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/metadataPool/replicated/size","value":1},
+    {"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false},
     {"op":"replace","path":"/spec/dataPool/failureDomain","value":"host"},
-    {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
+    {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/dataPool/replicated/size","value":1},
+    {"op":"add","path":"/spec/dataPool/replicated/requireSafeReplicaSize","value":false}
   ]'
-oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
-  --type merge -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
 ```
 
 The `.mgr` pool is recreated at `size=3` whenever the mgr restarts. Re-check and

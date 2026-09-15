@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.14.0
+
+- Live ODF 4.20.18 SNO reinstall on prod1 after uninstall:
+  - **BlueStore labels** live at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB**, not midpoint/end. Head/tail wipes left foreign-cluster labels; `ceph-volume raw list` is the authoritative clean check. Updated `local-storage-disks.md` and uninstall Disk Cleanup.
+  - **CephObjectStore / CephFilesystem** on 4.20 also reject `size=1` + `replicasPerFailureDomain=1` (previously documented as 4.22-only). `render_sno_remediation.py --release 4.20` now emits the JSON remove + `failureDomain=host` patches; removed the merge-only size footgun from the 4.20 runbook.
+
 ## 1.13.0
 
 - Hardened uninstall from a live ODF 4.20 SNO round-trip on prod1:

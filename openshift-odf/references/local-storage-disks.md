@@ -238,7 +238,16 @@ The `StorageCluster` in `references/install-and-preflight.md` then references `s
 
 If a disk still carries old signatures and must be reused for a new OSD, clean it only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target.
 
-**Important:** `wipefs -af` + `sgdisk --zap-all` alone are **not sufficient** for disks that previously held a Ceph BlueStore OSD. BlueStore writes its superblock at the start, midpoint (`size/2 - 2K`), and near the end (`size - 4K`) of the device. `ceph-volume raw list` will detect surviving secondary or tertiary copies even after a partial wipe. Full-disk zeroing is required:
+**Important:** `wipefs -af` + `sgdisk --zap-all` alone are **not sufficient** for disks that previously held a Ceph BlueStore OSD. Modern BlueStore replicates its **block device label** at offsets **0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB** (whichever fit on the device). A head/tail (or even midpoint) wipe leaves the 10 GiB / 100 GiB copies intact. On a live ODF 4.20 reinstall, `ceph-volume raw list` then fails with:
+
+```text
+osd.0 belonging to a different ceph cluster "<old-fsid>"
+```
+
+even when `lsblk -f` and `wipefs -n` look clean. Prefer either:
+
+1. **Targeted label wipe** (fast; enough when you only need to clear BlueStore ownership), or
+2. **Full-disk zeroing** (slow; when policy requires total erasure).
 
 ```bash
 # Standard wipe (removes filesystem signatures and GPT; sufficient for non-Ceph disks)
@@ -248,8 +257,23 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
   sgdisk --zap-all '${DISK}'
 "
 
-# Required for disks previously used as Ceph BlueStore OSDs (raw mode)
-# Full-disk zero clears all three BlueStore superblock copies
+# Fast BlueStore label wipe — clear every official main-device label offset
+# that fits on the disk (0 / 1GiB / 10GiB / 100GiB / 1000GiB):
+oc debug "node/${NODE}" -- chroot /host bash -ceu "
+  DISK='${DISK}'
+  BYTES=\$(blockdev --getsize64 \"\$DISK\")
+  G=\$((1024*1024*1024))
+  for mult in 0 1 10 100 1000; do
+    off=\$((mult * G))
+    [ \"\$off\" -ge \"\$BYTES\" ] && continue
+    dd if=/dev/zero of=\"\$DISK\" bs=4096 seek=\$((off/4096)) count=256 status=none conv=fsync
+  done
+  wipefs -af \"\$DISK\" || true
+  sgdisk --zap-all \"\$DISK\" || true
+  sync
+"
+
+# Full-disk zero only when policy requires total erasure (can take a long time):
 oc debug "node/${NODE}" -- chroot /host bash -c "
   set -euo pipefail
   dd if=/dev/zero of='${DISK}' bs=4M status=progress
@@ -258,16 +282,18 @@ oc debug "node/${NODE}" -- chroot /host bash -c "
 "
 ```
 
-Verify it is clean (no signatures, no BlueStore detection):
+Verify with **`ceph-volume raw list`** (not only `wipefs -n`). RHCOS has no `ceph-volume`; run it from a Ceph image:
 
 ```bash
-oc debug "node/${NODE}" -- chroot /host bash -c "
-  lsblk -f '${DISK}'
-  wipefs -n '${DISK}' || true
-"
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json   # must print {}
+  lsblk -f '"${DISK}"'
+  wipefs -n '"${DISK}"' || true
+'
 ```
 
-Note: `ceph-volume` is not available on RHCOS hosts. The OSD prepare job will run `ceph-volume raw list` inside the container and fail if any BlueStore label remains.
+Do not call the disk clean until `ceph-volume raw list` returns `{}`. The OSD prepare job runs the same check and CrashLoopBackOffs on a foreign-cluster label.
 
 ## Validation
 

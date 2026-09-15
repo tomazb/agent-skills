@@ -141,13 +141,17 @@ _MUTE = """\
 #      oc -n {ns} exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
 """
 
-# ODF 4.22 only (Ceph 20.2 "tentacle").
+# Both 4.20 and 4.22: CephObjectStore / CephFilesystem reject size=1 while
+# replicasPerFailureDomain=1 ("size must be greater"). Observed on ODF 4.20.18
+# (Ceph 19.2) and ODF 4.22.1 (Ceph 20.2). A merge patch that only sets size
+# leaves the field in place — use JSON remove. Also switch failureDomain to
+# host so Rook accepts size=1 the same way as the block-pool fix.
 _OBJECT_FILE_FD = """\
-# {n}. ODF 4.22 (Ceph 20.2 tentacle): the CephObjectStore and CephFilesystem
-#    metadata/data pools reject size=1 while replicasPerFailureDomain=1
-#    ("size must be greater"). CephBlockPool tolerates it, but the object and
-#    file controllers do not — RGW and MDS never start. Drop the field (keep
-#    size=1) so both reconcile.
+# {n}. CephObjectStore and CephFilesystem metadata/data pools reject size=1
+#    while replicasPerFailureDomain=1 ("size must be greater"). Drop the field,
+#    set failureDomain=host, and persist size=1. A `--type merge` size-only
+#    patch does NOT remove replicasPerFailureDomain and leaves RGW/MDS stuck
+#    Progressing / Failure.
 # Precondition: exactly one CephFilesystem data pool. The patch below targets
 # /spec/dataPools/0; with more pools the others would keep the rejected field,
 # so stop and patch each index by hand instead.
@@ -159,12 +163,24 @@ if [ "${{#DATA_POOLS}}" -ne 1 ]; then
   exit 1
 fi
 oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type json -p '[
+  {{"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
-  {{"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}}
+  {{"op":"replace","path":"/spec/metadataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false}},
+  {{"op":"replace","path":"/spec/dataPool/failureDomain","value":"host"}},
+  {{"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}},
+  {{"op":"replace","path":"/spec/dataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/dataPool/replicated/requireSafeReplicaSize","value":false}}
 ]'
 oc -n {ns} patch cephfilesystem {name}-cephfilesystem --type json -p '[
+  {{"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
-  {{"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}}
+  {{"op":"replace","path":"/spec/metadataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false}},
+  {{"op":"replace","path":"/spec/dataPools/0/failureDomain","value":"host"}},
+  {{"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}},
+  {{"op":"replace","path":"/spec/dataPools/0/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/dataPools/0/replicated/requireSafeReplicaSize","value":false}}
 ]'
 """
 
@@ -205,6 +221,7 @@ _BLOCKS = {
         _RECONCILE_IGNORE,
         _TOPOLOGYKEY,
         _BLOCKPOOL_FD,
+        _OBJECT_FILE_FD,
         _CSI_REPLICAS,
         _MUTE,
     ),
