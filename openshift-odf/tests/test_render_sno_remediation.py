@@ -238,14 +238,19 @@ def test_module_docstring_matches_release_block_scope():
 
     doc = mod.__doc__ or ""
     assert "CephBlockPool" in doc
-    assert "object/file" in doc.lower() or "CephFilesystem" in doc
     assert "resource-request" in doc.lower() or "resource request" in doc.lower()
-    # Must not reintroduce the stale "object/file only on 4.22" split.
+    # 4.20 must document object/file (or CephObjectStore/CephFilesystem) on the
+    # same line as the release — not via a DOTALL match to a later paragraph.
     assert re.search(
-        r"4\.20[^\n]*object/file|object/file[^\n]*4\.20|4\.20.*CephBlockPool",
+        r"^.*\b4\.20\b.*(object/file|CephObjectStore|CephFilesystem).*$",
         doc,
-        re.IGNORECASE | re.DOTALL,
-    )
+        re.IGNORECASE | re.MULTILINE,
+    ), "4.20 block scope must mention object/file CR-spec fixes on the same line"
+    assert re.search(
+        r"^.*\b4\.20\b.*CephBlockPool.*$",
+        doc,
+        re.IGNORECASE | re.MULTILINE,
+    ), "4.20 block scope must mention the CephBlockPool failure-domain fix"
     assert "4.22 only" not in doc
 
 

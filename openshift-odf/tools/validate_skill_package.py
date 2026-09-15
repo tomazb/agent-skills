@@ -317,6 +317,52 @@ def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
     return []
 
 
+_DESTRUCTIVE_PLUGINS_REPLACE = re.compile(
+    r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
+    r'\[\s*["\']odf-console["\']\s*\]',
+    re.IGNORECASE,
+)
+_PLUGINS_REPLACE_FORBID_MARKER = re.compile(
+    r"\b(never|not|do not|don't|replaces)\b",
+    re.IGNORECASE,
+)
+
+
+def _line_at(text: str, pos: int) -> tuple[int, int, str]:
+    """Return (start, end, content) for the line containing pos (end exclusive of newline)."""
+    line_start = text.rfind("\n", 0, pos) + 1
+    line_end = text.find("\n", pos)
+    if line_end == -1:
+        line_end = len(text)
+    return line_start, line_end, text[line_start:line_end]
+
+
+def plugins_replace_marked_forbidden(text: str, match: re.Match[str]) -> bool:
+    """True when the oc-patch command line or its preceding line forbids the op.
+
+    Distant prose ("Do not run:") must not exempt an unmarked replace. A `# NEVER`
+    comment on the line immediately above the command (or on the command line)
+    does mark it forbidden.
+    """
+    _line_start, _line_end, command_line = _line_at(text, match.start())
+    if _line_start == 0:
+        preceding = ""
+    else:
+        _ps, _pe, preceding = _line_at(text, _line_start - 1)
+    return bool(
+        _PLUGINS_REPLACE_FORBID_MARKER.search(command_line)
+        or _PLUGINS_REPLACE_FORBID_MARKER.search(preceding)
+    )
+
+
+def unmarked_destructive_plugins_replaces(text: str) -> bool:
+    """True if text contains a destructive /spec/plugins replace lacking a local forbid marker."""
+    return any(
+        not plugins_replace_marked_forbidden(text, match)
+        for match in _DESTRUCTIVE_PLUGINS_REPLACE.finditer(text)
+    )
+
+
 def check_content_regressions(root: Path) -> list[str]:
     """Scan markdown for forbidden patterns and required substrings."""
     issues: list[str] = []
@@ -557,25 +603,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     # Reject unmarked destructive replace-all of /spec/plugins with only
-    # odf-console (the ODF 4.20 troubleshooting footgun). Allowed only when the
-    # same line (or an immediate # NEVER comment line) marks it forbidden.
+    # odf-console. Forbid markers must sit on the oc-patch command line or the
+    # immediately preceding line — not in distant "Do not run:" prose.
     console_plugin_text = read_reference("references/console-plugin.md")
-    for match in re.finditer(
-        r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
-        r'\[\s*["\']odf-console["\']\s*\]',
-        console_plugin_text,
-        re.IGNORECASE,
-    ):
-        window_start = max(0, match.start() - 120)
-        window = console_plugin_text[window_start : match.end()]
-        if not re.search(
-            r"\b(never|not|do not|don't|replaces)\b", window, re.IGNORECASE
-        ):
-            issues.append(
-                "references/console-plugin.md: unmarked destructive "
-                "spec.plugins replace with only odf-console"
-            )
-            break
+    if unmarked_destructive_plugins_replaces(console_plugin_text):
+        issues.append(
+            "references/console-plugin.md: unmarked destructive "
+            "spec.plugins replace with only odf-console"
+        )
     # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
     # cannot pass on incidental prose elsewhere in the file.
     sno_text = read_reference("references/validated-odf-sno.md")

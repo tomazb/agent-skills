@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.17.2
+
+- PR review: bind console-plugin forbid markers to the `oc patch` line and its
+  immediately preceding comment (not a 120-char prose window), with fixtures for
+  distant "Do not" vs `# NEVER` above the command; tighten the 4.20 docstring
+  contract to require object/file on the same line as `4.20`.
+
 ## 1.17.1
 
 - Sync SNO remediation docs with `_BLOCKS`: module docstring and

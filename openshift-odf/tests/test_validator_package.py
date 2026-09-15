@@ -532,6 +532,30 @@ def test_unmarked_console_plugin_replace_fails(
     )
 
 
+def test_distant_do_not_prose_does_not_mark_plugins_replace_forbidden(validator):
+    """Unrelated 'Do not' text must not exempt an unmarked destructive replace."""
+    text = (
+        "Do not run random commands against production.\n\n"
+        "```bash\n"
+        "oc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n'
+        "```\n"
+    )
+    assert validator.unmarked_destructive_plugins_replaces(text)
+
+
+def test_preceding_never_comment_marks_plugins_replace_forbidden(validator):
+    """A # NEVER comment on the line immediately above the oc patch is enough."""
+    text = (
+        "```bash\n"
+        "# NEVER replaces spec.plugins with only odf-console\n"
+        "oc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n'
+        "```\n"
+    )
+    assert not validator.unmarked_destructive_plugins_replaces(text)
+
+
 def test_missing_validated_sno_evidence_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     sno = root / "references" / "validated-odf-sno.md"

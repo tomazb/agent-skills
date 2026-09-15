@@ -44,26 +44,25 @@ def test_runbook_discovers_crs_and_enabled_list_separately():
 
 def test_runbook_forbids_replacing_the_plugins_array_with_only_odf_console():
     """The Red Hat 4.20 troubleshooting patch is the failure this runbook exists to stop."""
+    import sys
+
+    tools = REPO_ROOT / "openshift-odf" / "tools"
+    sys.path.insert(0, str(tools))
+    from validate_skill_package import (  # noqa: E402
+        _DESTRUCTIVE_PLUGINS_REPLACE,
+        plugins_replace_marked_forbidden,
+    )
+
     text = _runbook()
-    # The dangerous op must be named as something not to run, not as the procedure.
     assert "/spec/plugins/-" in text, (
         "append with JSON Pointer /spec/plugins/- so existing plugins stay enabled"
     )
-    # Single-line and multiline JSON Patch forms that replace /spec/plugins
-    # (not append via /spec/plugins/-) with only odf-console.
-    for match in re.finditer(
-        r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
-        r'\[\s*["\']odf-console["\']\s*\]',
-        text,
-        re.IGNORECASE,
-    ):
-        window_start = max(0, match.start() - 120)
-        window = text[window_start : match.end()]
-        assert re.search(
-            r"\b(not|never|do not|don't|replaces)\b", window, re.IGNORECASE
-        ), (
+    matches = list(_DESTRUCTIVE_PLUGINS_REPLACE.finditer(text))
+    assert matches, "runbook must show the forbidden replace-all example"
+    for match in matches:
+        assert plugins_replace_marked_forbidden(text, match), (
             "a patch that sets spec.plugins to only odf-console must be marked "
-            f"as forbidden, not as the enable command: {match.group(0)[:160]!r}"
+            f"forbidden on the command line or the preceding line: {match.group(0)[:160]!r}"
         )
 
 
