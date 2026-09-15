@@ -232,6 +232,23 @@ def test_step_labels_form_the_expected_sequence_per_release():
     ]
 
 
+def test_module_docstring_matches_release_block_scope():
+    """Keep the generator docstring aligned with `_BLOCKS` (not the old 4.22-only claim)."""
+    import render_sno_remediation as mod
+
+    doc = mod.__doc__ or ""
+    assert "CephBlockPool" in doc
+    assert "object/file" in doc.lower() or "CephFilesystem" in doc
+    assert "resource-request" in doc.lower() or "resource request" in doc.lower()
+    # Must not reintroduce the stale "object/file only on 4.22" split.
+    assert re.search(
+        r"4\.20[^\n]*object/file|object/file[^\n]*4\.20|4\.20.*CephBlockPool",
+        doc,
+        re.IGNORECASE | re.DOTALL,
+    )
+    assert "4.22 only" not in doc
+
+
 @pytest.mark.parametrize("release", RELEASES)
 def test_release_preflight_precedes_every_mutating_command(release):
     # --release only selects templates. Without a preflight the wrong-release

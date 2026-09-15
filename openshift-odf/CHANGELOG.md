@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.17.1
+
+- Sync SNO remediation docs with `_BLOCKS`: module docstring and
+  `validated-odf-sno.md` now state that **4.20** emits CephBlockPool + object/file
+  CR-spec fixes, **4.22** emits object/file CR-spec fixes + resource-request floor,
+  and live `ceph osd pool set` / mute / StorageClient recovery stay manual.
+
 ## 1.17.0
 
 - PR review hardening for console-plugin enablement and uninstall teardown:

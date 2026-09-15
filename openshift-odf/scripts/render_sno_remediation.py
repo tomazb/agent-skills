@@ -2,16 +2,23 @@
 """Render the deterministic ODF 4.20/4.22 SNO post-install remediation commands.
 
 This is a GENERATOR: it prints a reviewable bash script and never executes
-`oc` or `ceph`. It emits only the fixed, kube-API-level patches that are safe
-to apply once the CephCluster is Ready. Pool sizing (the live `ceph osd pool
-ls` loop and the CephFilesystem/CephObjectStore size patches), the health mute
-and client recovery are intentionally NOT emitted as executable commands;
-follow the runbooks referenced in the banner for those stateful steps.
+`oc` or `ceph`. It emits fixed kube-API-level patches that are safe to apply
+once the CephCluster is Ready — including CephFilesystem / CephObjectStore
+CR-spec pool patches (failureDomain=host, remove replicasPerFailureDomain,
+size=1). Live `ceph osd pool set` sizing, the POOL_NO_REDUNDANCY mute, and
+StorageClient onboarding recovery are intentionally NOT emitted; follow the
+runbooks referenced in the banner for those stateful steps.
 
-The remediation differs per ODF release, so `--release` is mandatory: the
-CephBlockPool failure-domain fix applies to 4.20 only, while the object/file
-`replicasPerFailureDomain` removal and the resource-request floor apply to
-4.22 only. Emitting both against one cluster would fail under `set -e`.
+`--release` is mandatory because the block sets differ:
+
+* **4.20** — CephBlockPool failure-domain fix + object/file CR-spec fixes
+  (shared with 4.22) + CSI replicas + mute note.
+* **4.22** — object/file CR-spec fixes + resource-request floor + CSI replicas
+  + mute note (no CephBlockPool failure-domain rewrite).
+
+Emitting the wrong release against a cluster fails under `set -e` on the first
+inapplicable patch; the rendered preflight aborts before any mutation when the
+installed CSV does not match.
 """
 from __future__ import annotations
 
@@ -243,10 +250,13 @@ _BLOCKS = {
 
 
 def _validate_name(label: str, value: str) -> str:
-    # 63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
-    # fine here but every emitted `oc` command would be rejected by the API.
-    # fullmatch, not match: `$` also matches before a trailing newline, so
-    # "my-ns\n" would pass and then split every emitted `oc` command in two.
+    """Reject names that would break rendered `oc` argv or Kubernetes DNS labels.
+
+    63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
+    fine here but every emitted `oc` command would be rejected by the API.
+    fullmatch, not match: `$` also matches before a trailing newline, so
+    "my-ns\\n" would pass and then split every emitted `oc` command in two.
+    """
     if _RFC1123.fullmatch(value) is None or len(value) > 63:
         raise ValueError(
             f"{label} {value!r} is not a valid RFC 1123 name "
@@ -262,6 +272,11 @@ def render_sno_remediation(
     namespace: str = "openshift-storage",
     output: str | None = None,
 ) -> str:
+    """Return (and optionally write) the reviewable remediation bash script.
+
+    Selects the release-specific `_BLOCKS` templates, numbers steps contiguously,
+    and prefixes the BANNER that documents what is and is not emitted.
+    """
     if release not in _BLOCKS:
         raise ValueError(
             f"release {release!r} is not a validated ODF SNO release; "
@@ -284,6 +299,7 @@ def render_sno_remediation(
 
 
 def main() -> int:
+    """CLI entry: parse `--release` / name / namespace / output and print or write."""
     parser = argparse.ArgumentParser(
         description="Render deterministic ODF SNO remediation commands (review before running)."
     )

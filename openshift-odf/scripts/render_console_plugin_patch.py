@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Render console.operator merge patches that enable or prune ODF plugins.
+
+Merges against the live `spec.plugins` list so enabling `odf-console` does not
+replace monitoring/networking plugins. Default `--add` is `odf-console` only;
+pass `odf-client-console` explicitly when that ConsolePlugin CR exists (see
+`references/console-plugin.md`).
+"""
 from __future__ import annotations
 
 import argparse
@@ -96,6 +103,7 @@ def render_remove_patch(
 
 
 def main() -> int:
+    """CLI entry: parse current plugins and write an add or remove merge patch."""
     parser = argparse.ArgumentParser(
         description=(
             "Render a console.operator.openshift.io merge patch that enables or "
