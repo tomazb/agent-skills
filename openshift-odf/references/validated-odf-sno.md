@@ -406,6 +406,11 @@ oc -n openshift-storage delete pod <old-rbd-ctrlplugin-pod>
 # wait for 1/1, then repeat for cephfs
 ```
 
+Alternatively, patch both ctrlplugin Deployments to `strategy: Recreate` (so
+`maxSurge` cannot create a second pod), then scale any non-ready ctrlplugin
+ReplicaSet to 0. `ceph-csi-operator` may flip the Deployment strategy back on
+the next reconcile — treat Recreate as a one-shot unblock, not a permanent fix.
+
 Expect this on **every** CSI image change, including automatic z-stream
 upgrades, until the deployment strategy or the anti-affinity rule changes
 upstream. On a cluster with `installPlanApproval: Automatic` it happens

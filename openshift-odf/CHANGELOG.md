@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.16.0
+
+- Validated full ODF 4.20.18 SNO uninstall → clean slate → fresh redeploy on prod1 after a D-state hang and reboot:
+  - CSI ctrlplugin **RollingUpdate surge** on SNO still deadlocks after `replicas: 1`; document one-shot `strategy: Recreate` + scale non-ready RS to 0 (operator may revert strategy).
+  - Post-teardown D-state (`lvs`/`sgdisk`/`umount`/`jbd2/rbd*`) cleared by reboot; prefer hard reset over soft reboot when hung tasks spam the console.
+
 ## 1.15.0
 
 - Uninstall gaps from the final prod1 round-trip (reinstall aborted after a SNO **reboot loop**; node destroyed):
