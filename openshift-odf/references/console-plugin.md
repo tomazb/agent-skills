@@ -52,9 +52,15 @@ Read the live list, merge, then patch the **full observed list**:
 CURRENT=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
 [ -n "$CURRENT" ] || CURRENT='[]'
 
+# Only enable plugins whose ConsolePlugin CR exists. The helper defaults to
+# odf-console alone when --add is omitted; do not add odf-client-console unless
+# that CR is present (otherwise you leave a stale name in spec.plugins).
+ADD=(odf-console)
+oc get consoleplugin odf-client-console >/dev/null 2>&1 && ADD+=(odf-client-console)
+
 python3 scripts/render_console_plugin_patch.py \
   --current-plugins "$CURRENT" \
-  --add odf-console odf-client-console \
+  --add "${ADD[@]}" \
   --output /tmp/odf-console-plugins.patch.json
 
 # Review: the rendered spec.plugins MUST still contain every name from CURRENT.

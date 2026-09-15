@@ -49,14 +49,21 @@ def test_runbook_forbids_replacing_the_plugins_array_with_only_odf_console():
     assert "/spec/plugins/-" in text, (
         "append with JSON Pointer /spec/plugins/- so existing plugins stay enabled"
     )
-    for line in text.splitlines():
-        if 'value": ["odf-console"]' not in line and "value': ['odf-console']" not in line:
-            continue
-        if "oc patch" not in line:
-            continue
-        assert re.search(r"\b(not|never|do not|don't|replaces)\b", line, re.IGNORECASE), (
-            f"a patch that sets spec.plugins to only odf-console must be marked "
-            f"as forbidden, not as the enable command: {line}"
+    # Single-line and multiline JSON Patch forms that replace /spec/plugins
+    # (not append via /spec/plugins/-) with only odf-console.
+    for match in re.finditer(
+        r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
+        r'\[\s*["\']odf-console["\']\s*\]',
+        text,
+        re.IGNORECASE,
+    ):
+        window_start = max(0, match.start() - 120)
+        window = text[window_start : match.end()]
+        assert re.search(
+            r"\b(not|never|do not|don't|replaces)\b", window, re.IGNORECASE
+        ), (
+            "a patch that sets spec.plugins to only odf-console must be marked "
+            f"as forbidden, not as the enable command: {match.group(0)[:160]!r}"
         )
 
 
@@ -75,6 +82,12 @@ def test_runbook_is_idempotent_when_plugins_are_already_enabled():
     text = _runbook()
     assert re.search(r"already|skip|nothing to (patch|add)", text, re.IGNORECASE)
     assert "python3 scripts/render_console_plugin_patch.py" in text
+
+
+def test_runbook_adds_odf_client_console_only_when_cr_exists():
+    text = _runbook()
+    assert "oc get consoleplugin odf-client-console" in text
+    assert 'ADD+=(odf-client-console)' in text or "ADD+=(odf-client-console)" in text
 
 
 def test_runbook_validates_data_foundation_nav_and_console_rollout():

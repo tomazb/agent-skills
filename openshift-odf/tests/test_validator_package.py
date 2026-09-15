@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_valid_package_passes_cleanly(validator, package_factory):
     root = package_factory()
@@ -341,6 +343,29 @@ def test_missing_frozen_dependents_teardown_guidance_fails(validator, package_fa
     assert any("frozen-dependents and stale-device" in issue for issue in issues)
 
 
+@pytest.mark.parametrize(
+    "term,replacement",
+    [
+        ("CronJob", "status-job"),
+        ("sgdisk", "disk-zap"),
+        ("lvs", "lvm-vols"),
+    ],
+)
+def test_missing_frozen_dependents_specific_term_fails(
+    validator, package_factory, reference_text, term, replacement
+):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(term, replacement),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "frozen-dependents and stale-device" in issue and term in issue for issue in issues
+    )
+
+
 def test_missing_odf_420_install_gotchas_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     sno = root / "references" / "validated-odf-sno.md"
@@ -486,6 +511,24 @@ def test_missing_console_plugin_append_guidance_fails(
     issues = validator.validate_root(root)
     assert any(
         "console-plugin.md" in issue and "/spec/plugins/-" in issue for issue in issues
+    )
+
+
+def test_unmarked_console_plugin_replace_fails(
+    validator, package_factory, reference_text
+):
+    root = package_factory(reference_content=reference_text())
+    runbook = root / "references" / "console-plugin.md"
+    # Append an unmarked destructive replace so the forbid check must fire.
+    runbook.write_text(
+        runbook.read_text(encoding="utf-8")
+        + "\n\noc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n',
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "unmarked destructive" in issue and "odf-console" in issue for issue in issues
     )
 
 

@@ -34,11 +34,16 @@ BANNER = """\
 #
 # Prerequisite: the CephCluster is Ready (mons up, OSD up/in).
 #
-# This script applies ONLY the deterministic, kube-API patches validated for
-# ODF {release}. It does NOT perform pool sizing, the POOL_NO_REDUNDANCY mute
-# or StorageClient onboarding recovery, which are stateful:
-#   * Pool sizing (size=1 loop, CephFilesystem/CephObjectStore pool patches):
-#     follow references/validated-odf-sno.md "Regression 2".
+# This script applies the deterministic kube-API patches validated for this
+# ODF release ({release}), including CephFilesystem / CephObjectStore CR-spec
+# pool patches (failureDomain=host, remove replicasPerFailureDomain, size=1).
+# Do not re-run those same JSON removes from the runbook afterward — the fields
+# are already gone and `set -e` would stop the script.
+#
+# It does NOT perform live `ceph osd pool set` sizing, the POOL_NO_REDUNDANCY
+# mute, or StorageClient onboarding recovery (stateful / cluster-specific):
+#   * Live pool sizing / mute: follow references/validated-odf-sno.md
+#     "Regression 2" (the ceph CLI steps only).
 #   * StorageClient onboarding recovery:
 #     follow references/validation-hardening.md troubleshooting.
 set -euo pipefail

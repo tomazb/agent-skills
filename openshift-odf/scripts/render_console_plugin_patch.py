@@ -3,9 +3,51 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from pathlib import Path
 
-DEFAULT_ODF_PLUGINS = ("odf-console", "odf-client-console")
+# Sole implicit default when --add is omitted. Add odf-client-console only when
+# its ConsolePlugin CR exists (see references/console-plugin.md).
+DEFAULT_ODF_PLUGINS = ("odf-console",)
+
+
+def parse_current_plugins(raw: str) -> list[str]:
+    """Parse --current-plugins from JSON or oc/kubectl jsonpath array forms.
+
+    Accepts:
+      - JSON arrays: '["a","b"]' or '[]'
+      - jsonpath-ish: '[a b]', '[a,b]', or bare 'a b'
+    """
+    text = (raw or "").strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        parsed = None
+    else:
+        if parsed is None:
+            return []
+        if isinstance(parsed, list):
+            if not all(isinstance(item, str) for item in parsed):
+                raise argparse.ArgumentTypeError(
+                    "--current-plugins JSON array must contain only strings"
+                )
+            return list(parsed)
+        raise argparse.ArgumentTypeError("--current-plugins must be a JSON array of strings")
+
+    # jsonpath often prints [name1 name2] without quotes/commas
+    inner = text
+    if inner.startswith("[") and inner.endswith("]"):
+        inner = inner[1:-1].strip()
+    if not inner:
+        return []
+    parts = [p for p in re.split(r"[\s,]+", inner) if p]
+    if not parts:
+        raise argparse.ArgumentTypeError(
+            f"--current-plugins is not valid JSON or jsonpath array output: {raw!r}"
+        )
+    return parts
 
 
 def merge_console_plugins(
@@ -64,13 +106,20 @@ def main() -> int:
     parser.add_argument(
         "--current-plugins",
         default="[]",
-        help='JSON array of currently enabled plugins, e.g. \'["monitoring-plugin"]\'',
+        type=parse_current_plugins,
+        help=(
+            "Currently enabled plugins as a JSON array or oc jsonpath output "
+            "(e.g. '[\"monitoring-plugin\"]' or '[monitoring-plugin networking-console-plugin]')"
+        ),
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         "--add",
         nargs="+",
-        help="Plugin names to enable (default when neither --add nor --remove)",
+        help=(
+            "Plugin names to enable. When omitted, defaults to odf-console only — "
+            "pass odf-client-console explicitly when that ConsolePlugin CR exists"
+        ),
     )
     group.add_argument(
         "--remove",
@@ -79,9 +128,7 @@ def main() -> int:
     )
     parser.add_argument("--output", required=True, help="Output JSON path")
     args = parser.parse_args()
-    current = json.loads(args.current_plugins)
-    if current is not None and not isinstance(current, list):
-        raise ValueError("--current-plugins must be a JSON array")
+    current = args.current_plugins
 
     if args.remove:
         render_remove_patch(current, args.remove, args.output)

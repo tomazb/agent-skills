@@ -158,8 +158,17 @@ for kind in storageclient storageconsumer; do
     oc -n openshift-storage delete "$name" --wait=false --ignore-not-found
   done
 done
-# Cluster-scoped StorageClient (ocs.openshift.io) if present:
+# Cluster-scoped StorageClient (ocs.openshift.io): delete ONLY the client that
+# matches the StorageCluster being removed (default name ocs-storagecluster).
+# Other StorageClients may belong to a different / external consumer — do not
+# wipe the whole cluster-scoped list without explicit confirmation.
+TARGET_STORAGECLIENT="${TARGET_STORAGECLIENT:-ocs-storagecluster}"
 for name in $(oc get storageclients.ocs.openshift.io -o name --ignore-not-found); do
+  short="${name##*/}"
+  if [ "$short" != "$TARGET_STORAGECLIENT" ]; then
+    echo "skipping unrelated StorageClient $short (want $TARGET_STORAGECLIENT)" >&2
+    continue
+  fi
   oc patch "$name" --type merge -p '{"metadata":{"finalizers":[]}}'
   oc delete "$name" --wait=false --ignore-not-found
 done

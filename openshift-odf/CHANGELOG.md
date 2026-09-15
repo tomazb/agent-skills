@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.17.0
+
+- PR review hardening for console-plugin enablement and uninstall teardown:
+  - `render_console_plugin_patch.py` accepts oc/kubectl jsonpath array forms (`[a b]`), defaults `--add` to `odf-console` only, and the runbook adds `odf-client-console` only when that ConsolePlugin CR exists.
+  - SNO remediation BANNER no longer implies CephFilesystem/CephObjectStore CR-spec pool patches are out of scope (those patches are in the script; only live `ceph osd pool set` / mute / StorageClient recovery stay manual).
+  - Package validator + contract tests reject unmarked `spec.plugins` replace-with-only-`odf-console` (including multiline forms).
+  - Uninstall scopes cluster-scoped `StorageClient` delete to `TARGET_STORAGECLIENT` (default `ocs-storagecluster`); frozen-dependents validator now also requires `CronJob` / `sgdisk` / `lvs`.
+
 ## 1.16.0
 
 - Validated full ODF 4.20.18 SNO uninstall → clean slate → fresh redeploy on prod1 after a D-state hang and reboot:

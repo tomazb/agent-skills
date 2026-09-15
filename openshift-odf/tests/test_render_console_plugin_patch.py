@@ -9,7 +9,38 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-from render_console_plugin_patch import merge_console_plugins, render_merge_patch
+from render_console_plugin_patch import (
+    merge_console_plugins,
+    parse_current_plugins,
+    render_merge_patch,
+)
+
+
+def test_parse_current_plugins_accepts_json_and_jsonpath_forms():
+    assert parse_current_plugins("[]") == []
+    assert parse_current_plugins('["monitoring-plugin","networking-console-plugin"]') == [
+        "monitoring-plugin",
+        "networking-console-plugin",
+    ]
+    assert parse_current_plugins("[monitoring-plugin networking-console-plugin]") == [
+        "monitoring-plugin",
+        "networking-console-plugin",
+    ]
+    assert parse_current_plugins("[monitoring-plugin,networking-console-plugin]") == [
+        "monitoring-plugin",
+        "networking-console-plugin",
+    ]
+    assert parse_current_plugins("monitoring-plugin networking-console-plugin") == [
+        "monitoring-plugin",
+        "networking-console-plugin",
+    ]
+
+
+def test_parse_current_plugins_rejects_non_string_json_array():
+    import argparse
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        parse_current_plugins("[1, 2]")
 
 
 def test_merge_preserves_existing_plugins_and_appends_new():
@@ -99,3 +130,24 @@ def test_render_remove_patch_writes_remaining_list(tmp_path: Path):
     )
     payload = json.loads(output.read_text(encoding="utf-8"))
     assert payload == {"spec": {"plugins": ["monitoring-plugin"]}}
+
+
+def test_cli_default_add_is_odf_console_only(tmp_path: Path, monkeypatch):
+    from render_console_plugin_patch import main
+
+    output = tmp_path / "default.patch.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "render_console_plugin_patch.py",
+            "--current-plugins",
+            '["monitoring-plugin"]',
+            "--output",
+            str(output),
+        ],
+    )
+    assert main() == 0
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["spec"]["plugins"] == ["monitoring-plugin", "odf-console"]
+    assert "odf-client-console" not in payload["spec"]["plugins"]

@@ -500,6 +500,9 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "/sys/bus/rbd/devices",
             "StorageClient",
             "status-reporter",
+            "CronJob",
+            "sgdisk",
+            "lvs",
             "D-state",
             "reboot loop",
             "rook-ceph-osd-prepare",
@@ -553,6 +556,26 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "Data Foundation",
         ],
     )
+    # Reject unmarked destructive replace-all of /spec/plugins with only
+    # odf-console (the ODF 4.20 troubleshooting footgun). Allowed only when the
+    # same line (or an immediate # NEVER comment line) marks it forbidden.
+    console_plugin_text = read_reference("references/console-plugin.md")
+    for match in re.finditer(
+        r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
+        r'\[\s*["\']odf-console["\']\s*\]',
+        console_plugin_text,
+        re.IGNORECASE,
+    ):
+        window_start = max(0, match.start() - 120)
+        window = console_plugin_text[window_start : match.end()]
+        if not re.search(
+            r"\b(never|not|do not|don't|replaces)\b", window, re.IGNORECASE
+        ):
+            issues.append(
+                "references/console-plugin.md: unmarked destructive "
+                "spec.plugins replace with only odf-console"
+            )
+            break
     # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
     # cannot pass on incidental prose elsewhere in the file.
     sno_text = read_reference("references/validated-odf-sno.md")
