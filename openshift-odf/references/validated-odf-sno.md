@@ -265,10 +265,10 @@ oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
 oc -n openshift-storage get cephblockpool ocs-storagecluster-cephblockpool \
   -o jsonpath='{.spec.replicated.size}{"\n"}'   # must print 1
 
-# Step 5: Patch ODF-managed object store CR to size=1
-oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
-  --type merge \
-  -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
+# Step 5: Do NOT use a size-only `--type merge` on CephObjectStore /
+# CephFilesystem — merge leaves replicasPerFailureDomain in place and Rook
+# keeps rejecting the CR ("size must be greater"). Use the JSON patches in the
+# next section (failureDomain=host + remove replicasPerFailureDomain + size=1).
 
 # Step 6: Archive crash history and mute expected SNO warning
 oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF crash archive-all
@@ -312,15 +312,18 @@ oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem \
   ]'
 
 # CephObjectStore: data + metadata pools -> size 1, host failure domain
+# Use JSON remove — a merge size-only patch leaves replicasPerFailureDomain.
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
   --type json -p '[
     {"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"},
     {"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/metadataPool/replicated/size","value":1},
+    {"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false},
     {"op":"replace","path":"/spec/dataPool/failureDomain","value":"host"},
-    {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}
+    {"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/dataPool/replicated/size","value":1},
+    {"op":"add","path":"/spec/dataPool/replicated/requireSafeReplicaSize","value":false}
   ]'
-oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
-  --type merge -p '{"spec":{"dataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}},"metadataPool":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}}'
 ```
 
 The `.mgr` pool is recreated at `size=3` whenever the mgr restarts. Re-check and
@@ -403,6 +406,11 @@ oc -n openshift-storage delete pod <old-rbd-ctrlplugin-pod>
 # wait for 1/1, then repeat for cephfs
 ```
 
+Alternatively, patch both ctrlplugin Deployments to `strategy: Recreate` (so
+`maxSurge` cannot create a second pod), then scale any non-ready ctrlplugin
+ReplicaSet to 0. `ceph-csi-operator` may flip the Deployment strategy back on
+the next reconcile — treat Recreate as a one-shot unblock, not a permanent fix.
+
 Expect this on **every** CSI image change, including automatic z-stream
 upgrades, until the deployment strategy or the anti-affinity rule changes
 upstream. On a cluster with `installPlanApproval: Automatic` it happens
@@ -443,8 +451,8 @@ After both patch, the MDS and RGW pods schedule, the filesystem is created, and
 `ocs-storagecluster-cephfs` StorageClasses appear.
 
 The deterministic patches in this section (Regression 3 + 4, plus
-`reconcileStrategy: ignore` and the CephBlockPool failure-domain fix) can be
-generated for review with:
+`reconcileStrategy: ignore`, the CephBlockPool failure-domain fix, and the
+object/file CR-spec pool fixes) can be generated for review with:
 
 ```bash
 python3 scripts/render_sno_remediation.py --release 4.20 \
@@ -452,12 +460,15 @@ python3 scripts/render_sno_remediation.py --release 4.20 \
 ```
 
 `--release` is mandatory and the emitted blocks differ per release: `4.20`
-renders the CephBlockPool failure-domain fix, `4.22` renders the object/file
-`replicasPerFailureDomain` removal and the resource-request floor instead. The
-generated script opens with a preflight that reads the installed `ocs-operator`
-CSV and exits before any patch when it does not match the rendered release —
-`set -euo pipefail` alone would abort only *after* the earlier, still-valid
-patches had already mutated the cluster.
+emits the CephBlockPool failure-domain fix plus the object/file CR-spec fixes
+(`failureDomain=host`, remove `replicasPerFailureDomain`, `size=1`); `4.22`
+emits the same object/file CR-spec fixes plus the resource-request floor (no
+CephBlockPool failure-domain rewrite). Live `ceph osd pool set` sizing, the
+`POOL_NO_REDUNDANCY` mute, and StorageClient onboarding recovery remain manual
+runbook steps. The generated script opens with a preflight that reads the
+installed `ocs-operator` CSV and exits before any patch when it does not match
+the rendered release — `set -euo pipefail` alone would abort only *after* the
+earlier, still-valid patches had already mutated the cluster.
 
 If the internal `StorageClient` is stuck in `Initializing` with a
 "crypto/rsa: verification error" after a reinstall, see the onboarding
@@ -843,16 +854,17 @@ oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.cephfs.csi.c
 ## Validation Notes (ODF 4.22 SNO)
 
 The deterministic 4.22 patches (reconcile freeze, MDS/RGW `topologyKey`, the
-object/file `replicasPerFailureDomain` removal, CSI `Driver` replicas, and the
-resource-request floor) can be generated for review with:
+object/file CR-spec pool fixes, CSI `Driver` replicas, and the resource-request
+floor) can be generated for review with:
 
 ```bash
 python3 scripts/render_sno_remediation.py --release 4.22 \
   --name ocs-storagecluster --namespace openshift-storage
 ```
 
-Pool sizing and the `POOL_NO_REDUNDANCY` mute are not emitted as commands —
-apply them from the Pool Sizes regression section above.
+Live `ceph osd pool set` sizing and the `POOL_NO_REDUNDANCY` mute are not
+emitted as commands — apply them from the Pool Sizes regression section above
+(CR-spec object/file pool patches are already in the generated script).
 
 - After applying the SINGLE_NODE patch, placement overrides, pool size workaround, and CSI replica fix, the `StorageCluster` reached `Ready`.
 - `ceph -s` showed `HEALTH_OK` (with `POOL_NO_REDUNDANCY` muted).

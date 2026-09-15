@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_valid_package_passes_cleanly(validator, package_factory):
     root = package_factory()
@@ -341,6 +343,29 @@ def test_missing_frozen_dependents_teardown_guidance_fails(validator, package_fa
     assert any("frozen-dependents and stale-device" in issue for issue in issues)
 
 
+@pytest.mark.parametrize(
+    "term,replacement",
+    [
+        ("CronJob", "status-job"),
+        ("sgdisk", "disk-zap"),
+        ("lvs", "lvm-vols"),
+    ],
+)
+def test_missing_frozen_dependents_specific_term_fails(
+    validator, package_factory, reference_text, term, replacement
+):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace(term, replacement),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "frozen-dependents and stale-device" in issue and term in issue for issue in issues
+    )
+
+
 def test_missing_odf_420_install_gotchas_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     sno = root / "references" / "validated-odf-sno.md"
@@ -456,6 +481,79 @@ def test_missing_validation_dashboard_guidance_fails(validator, package_factory,
     assert any(
         "validation-hardening.md" in issue and "Data Foundation" in issue for issue in issues
     )
+
+
+def test_missing_console_plugin_runbook_fails(validator, package_factory):
+    root = package_factory()
+    missing = root / "references" / "console-plugin.md"
+    missing.unlink()
+    issues = validator.validate_root(root)
+    assert any("console-plugin.md" in issue for issue in issues)
+
+
+def test_missing_console_plugin_routing_fails(validator, package_factory, make_skill_text):
+    root = package_factory(
+        skill_text=make_skill_text().replace("references/console-plugin.md", "console UI")
+    )
+    issues = validator.validate_root(root)
+    assert any("console plugin routing" in issue for issue in issues)
+
+
+def test_missing_console_plugin_append_guidance_fails(
+    validator, package_factory, reference_text
+):
+    root = package_factory(reference_content=reference_text())
+    runbook = root / "references" / "console-plugin.md"
+    runbook.write_text(
+        runbook.read_text(encoding="utf-8").replace("/spec/plugins/-", "/spec/plugins"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "console-plugin.md" in issue and "/spec/plugins/-" in issue for issue in issues
+    )
+
+
+def test_unmarked_console_plugin_replace_fails(
+    validator, package_factory, reference_text
+):
+    root = package_factory(reference_content=reference_text())
+    runbook = root / "references" / "console-plugin.md"
+    # Append an unmarked destructive replace so the forbid check must fire.
+    runbook.write_text(
+        runbook.read_text(encoding="utf-8")
+        + "\n\noc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n',
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "unmarked destructive" in issue and "odf-console" in issue for issue in issues
+    )
+
+
+def test_distant_do_not_prose_does_not_mark_plugins_replace_forbidden(validator):
+    """Unrelated 'Do not' text must not exempt an unmarked destructive replace."""
+    text = (
+        "Do not run random commands against production.\n\n"
+        "```bash\n"
+        "oc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n'
+        "```\n"
+    )
+    assert validator.unmarked_destructive_plugins_replaces(text)
+
+
+def test_preceding_never_comment_marks_plugins_replace_forbidden(validator):
+    """A # NEVER comment on the line immediately above the oc patch is enough."""
+    text = (
+        "```bash\n"
+        "# NEVER replaces spec.plugins with only odf-console\n"
+        "oc patch console.operator cluster --type json "
+        '-p \'[{"op": "add", "path": "/spec/plugins", "value": ["odf-console"]}]\'\n'
+        "```\n"
+    )
+    assert not validator.unmarked_destructive_plugins_replaces(text)
 
 
 def test_missing_validated_sno_evidence_fails(validator, package_factory, reference_text):

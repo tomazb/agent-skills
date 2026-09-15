@@ -2,16 +2,23 @@
 """Render the deterministic ODF 4.20/4.22 SNO post-install remediation commands.
 
 This is a GENERATOR: it prints a reviewable bash script and never executes
-`oc` or `ceph`. It emits only the fixed, kube-API-level patches that are safe
-to apply once the CephCluster is Ready. Pool sizing (the live `ceph osd pool
-ls` loop and the CephFilesystem/CephObjectStore size patches), the health mute
-and client recovery are intentionally NOT emitted as executable commands;
-follow the runbooks referenced in the banner for those stateful steps.
+`oc` or `ceph`. It emits fixed kube-API-level patches that are safe to apply
+once the CephCluster is Ready — including CephFilesystem / CephObjectStore
+CR-spec pool patches (failureDomain=host, remove replicasPerFailureDomain,
+size=1). Live `ceph osd pool set` sizing, the POOL_NO_REDUNDANCY mute, and
+StorageClient onboarding recovery are intentionally NOT emitted; follow the
+runbooks referenced in the banner for those stateful steps.
 
-The remediation differs per ODF release, so `--release` is mandatory: the
-CephBlockPool failure-domain fix applies to 4.20 only, while the object/file
-`replicasPerFailureDomain` removal and the resource-request floor apply to
-4.22 only. Emitting both against one cluster would fail under `set -e`.
+`--release` is mandatory because the block sets differ:
+
+* **4.20** — CephBlockPool failure-domain fix + object/file CR-spec fixes
+  (shared with 4.22) + CSI replicas + mute note.
+* **4.22** — object/file CR-spec fixes + resource-request floor + CSI replicas
+  + mute note (no CephBlockPool failure-domain rewrite).
+
+Emitting the wrong release against a cluster fails under `set -e` on the first
+inapplicable patch; the rendered preflight aborts before any mutation when the
+installed CSV does not match.
 """
 from __future__ import annotations
 
@@ -34,11 +41,16 @@ BANNER = """\
 #
 # Prerequisite: the CephCluster is Ready (mons up, OSD up/in).
 #
-# This script applies ONLY the deterministic, kube-API patches validated for
-# ODF {release}. It does NOT perform pool sizing, the POOL_NO_REDUNDANCY mute
-# or StorageClient onboarding recovery, which are stateful:
-#   * Pool sizing (size=1 loop, CephFilesystem/CephObjectStore pool patches):
-#     follow references/validated-odf-sno.md "Regression 2".
+# This script applies the deterministic kube-API patches validated for this
+# ODF release ({release}), including CephFilesystem / CephObjectStore CR-spec
+# pool patches (failureDomain=host, remove replicasPerFailureDomain, size=1).
+# Do not re-run those same JSON removes from the runbook afterward — the fields
+# are already gone and `set -e` would stop the script.
+#
+# It does NOT perform live `ceph osd pool set` sizing, the POOL_NO_REDUNDANCY
+# mute, or StorageClient onboarding recovery (stateful / cluster-specific):
+#   * Live pool sizing / mute: follow references/validated-odf-sno.md
+#     "Regression 2" (the ceph CLI steps only).
 #   * StorageClient onboarding recovery:
 #     follow references/validation-hardening.md troubleshooting.
 set -euo pipefail
@@ -141,13 +153,17 @@ _MUTE = """\
 #      oc -n {ns} exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
 """
 
-# ODF 4.22 only (Ceph 20.2 "tentacle").
+# Both 4.20 and 4.22: CephObjectStore / CephFilesystem reject size=1 while
+# replicasPerFailureDomain=1 ("size must be greater"). Observed on ODF 4.20.18
+# (Ceph 19.2) and ODF 4.22.1 (Ceph 20.2). A merge patch that only sets size
+# leaves the field in place — use JSON remove. Also switch failureDomain to
+# host so Rook accepts size=1 the same way as the block-pool fix.
 _OBJECT_FILE_FD = """\
-# {n}. ODF 4.22 (Ceph 20.2 tentacle): the CephObjectStore and CephFilesystem
-#    metadata/data pools reject size=1 while replicasPerFailureDomain=1
-#    ("size must be greater"). CephBlockPool tolerates it, but the object and
-#    file controllers do not — RGW and MDS never start. Drop the field (keep
-#    size=1) so both reconcile.
+# {n}. CephObjectStore and CephFilesystem metadata/data pools reject size=1
+#    while replicasPerFailureDomain=1 ("size must be greater"). Drop the field,
+#    set failureDomain=host, and persist size=1. A `--type merge` size-only
+#    patch does NOT remove replicasPerFailureDomain and leaves RGW/MDS stuck
+#    Progressing / Failure.
 # Precondition: exactly one CephFilesystem data pool. The patch below targets
 # /spec/dataPools/0; with more pools the others would keep the rejected field,
 # so stop and patch each index by hand instead.
@@ -159,12 +175,24 @@ if [ "${{#DATA_POOLS}}" -ne 1 ]; then
   exit 1
 fi
 oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type json -p '[
+  {{"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
-  {{"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}}
+  {{"op":"replace","path":"/spec/metadataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false}},
+  {{"op":"replace","path":"/spec/dataPool/failureDomain","value":"host"}},
+  {{"op":"remove","path":"/spec/dataPool/replicated/replicasPerFailureDomain"}},
+  {{"op":"replace","path":"/spec/dataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/dataPool/replicated/requireSafeReplicaSize","value":false}}
 ]'
 oc -n {ns} patch cephfilesystem {name}-cephfilesystem --type json -p '[
+  {{"op":"replace","path":"/spec/metadataPool/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/metadataPool/replicated/replicasPerFailureDomain"}},
-  {{"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}}
+  {{"op":"replace","path":"/spec/metadataPool/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/metadataPool/replicated/requireSafeReplicaSize","value":false}},
+  {{"op":"replace","path":"/spec/dataPools/0/failureDomain","value":"host"}},
+  {{"op":"remove","path":"/spec/dataPools/0/replicated/replicasPerFailureDomain"}},
+  {{"op":"replace","path":"/spec/dataPools/0/replicated/size","value":1}},
+  {{"op":"add","path":"/spec/dataPools/0/replicated/requireSafeReplicaSize","value":false}}
 ]'
 """
 
@@ -205,6 +233,7 @@ _BLOCKS = {
         _RECONCILE_IGNORE,
         _TOPOLOGYKEY,
         _BLOCKPOOL_FD,
+        _OBJECT_FILE_FD,
         _CSI_REPLICAS,
         _MUTE,
     ),
@@ -221,10 +250,13 @@ _BLOCKS = {
 
 
 def _validate_name(label: str, value: str) -> str:
-    # 63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
-    # fine here but every emitted `oc` command would be rejected by the API.
-    # fullmatch, not match: `$` also matches before a trailing newline, so
-    # "my-ns\n" would pass and then split every emitted `oc` command in two.
+    """Reject names that would break rendered `oc` argv or Kubernetes DNS labels.
+
+    63 is the RFC 1123 label limit Kubernetes enforces; a longer value renders
+    fine here but every emitted `oc` command would be rejected by the API.
+    fullmatch, not match: `$` also matches before a trailing newline, so
+    "my-ns\\n" would pass and then split every emitted `oc` command in two.
+    """
     if _RFC1123.fullmatch(value) is None or len(value) > 63:
         raise ValueError(
             f"{label} {value!r} is not a valid RFC 1123 name "
@@ -240,6 +272,11 @@ def render_sno_remediation(
     namespace: str = "openshift-storage",
     output: str | None = None,
 ) -> str:
+    """Return (and optionally write) the reviewable remediation bash script.
+
+    Selects the release-specific `_BLOCKS` templates, numbers steps contiguously,
+    and prefixes the BANNER that documents what is and is not emitted.
+    """
     if release not in _BLOCKS:
         raise ValueError(
             f"release {release!r} is not a validated ODF SNO release; "
@@ -262,6 +299,7 @@ def render_sno_remediation(
 
 
 def main() -> int:
+    """CLI entry: parse `--release` / name / namespace / output and print or write."""
     parser = argparse.ArgumentParser(
         description="Render deterministic ODF SNO remediation commands (review before running)."
     )

@@ -21,6 +21,7 @@ EXPECTED_REFERENCES = [
     "references/maintenance-uninstall.md",
     "references/validation-hardening.md",
     "references/validated-odf-sno.md",
+    "references/console-plugin.md",
 ]
 
 REQUIRED_FILES = [
@@ -33,6 +34,7 @@ REQUIRED_FILES = [
     "scripts/render_storagecluster.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/render_console_plugin_patch.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]
@@ -315,6 +317,52 @@ def check_phrase_group(text: str, phrases: list[str], label: str) -> list[str]:
     return []
 
 
+_DESTRUCTIVE_PLUGINS_REPLACE = re.compile(
+    r'oc\s+patch[\s\S]{0,500}?/spec/plugins(?!/-)[\s\S]{0,200}?'
+    r'\[\s*["\']odf-console["\']\s*\]',
+    re.IGNORECASE,
+)
+_PLUGINS_REPLACE_FORBID_MARKER = re.compile(
+    r"\b(never|not|do not|don't|replaces)\b",
+    re.IGNORECASE,
+)
+
+
+def _line_at(text: str, pos: int) -> tuple[int, int, str]:
+    """Return (start, end, content) for the line containing pos (end exclusive of newline)."""
+    line_start = text.rfind("\n", 0, pos) + 1
+    line_end = text.find("\n", pos)
+    if line_end == -1:
+        line_end = len(text)
+    return line_start, line_end, text[line_start:line_end]
+
+
+def plugins_replace_marked_forbidden(text: str, match: re.Match[str]) -> bool:
+    """True when the oc-patch command line or its preceding line forbids the op.
+
+    Distant prose ("Do not run:") must not exempt an unmarked replace. A `# NEVER`
+    comment on the line immediately above the command (or on the command line)
+    does mark it forbidden.
+    """
+    _line_start, _line_end, command_line = _line_at(text, match.start())
+    if _line_start == 0:
+        preceding = ""
+    else:
+        _ps, _pe, preceding = _line_at(text, _line_start - 1)
+    return bool(
+        _PLUGINS_REPLACE_FORBID_MARKER.search(command_line)
+        or _PLUGINS_REPLACE_FORBID_MARKER.search(preceding)
+    )
+
+
+def unmarked_destructive_plugins_replaces(text: str) -> bool:
+    """True if text contains a destructive /spec/plugins replace lacking a local forbid marker."""
+    return any(
+        not plugins_replace_marked_forbidden(text, match)
+        for match in _DESTRUCTIVE_PLUGINS_REPLACE.finditer(text)
+    )
+
+
 def check_content_regressions(root: Path) -> list[str]:
     """Scan markdown for forbidden patterns and required substrings."""
     issues: list[str] = []
@@ -496,6 +544,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "cluster-cleanup-job",
             "ceph-volume raw list",
             "/sys/bus/rbd/devices",
+            "StorageClient",
+            "status-reporter",
+            "CronJob",
+            "sgdisk",
+            "lvs",
+            "D-state",
+            "reboot loop",
+            "rook-ceph-osd-prepare",
         ],
     )
     require(
@@ -532,6 +588,29 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "HEALTH_OK",
         ],
     )
+    require(
+        "references/console-plugin.md",
+        "ODF console plugin enablement",
+        [
+            "oc get consoleplugin",
+            "console.operator.openshift.io",
+            "{.spec.plugins}",
+            "/spec/plugins/-",
+            "odf-console",
+            "odf-client-console",
+            "python3 scripts/render_console_plugin_patch.py",
+            "Data Foundation",
+        ],
+    )
+    # Reject unmarked destructive replace-all of /spec/plugins with only
+    # odf-console. Forbid markers must sit on the oc-patch command line or the
+    # immediately preceding line — not in distant "Do not run:" prose.
+    console_plugin_text = read_reference("references/console-plugin.md")
+    if unmarked_destructive_plugins_replaces(console_plugin_text):
+        issues.append(
+            "references/console-plugin.md: unmarked destructive "
+            "spec.plugins replace with only odf-console"
+        )
     # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
     # cannot pass on incidental prose elsewhere in the file.
     sno_text = read_reference("references/validated-odf-sno.md")
@@ -648,6 +727,8 @@ def check_skill_file(root: Path) -> list[str]:
     issues.extend(check_versions_handoff(skill_text))
     if "references/validated-odf-sno.md" not in skill_text:
         issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
+    if "references/console-plugin.md" not in skill_text:
+        issues.append("SKILL.md: missing console plugin routing guidance.")
     return issues
 
 

@@ -1,5 +1,62 @@
 # Changelog
 
+## 1.17.2
+
+- PR review: bind console-plugin forbid markers to the `oc patch` line and its
+  immediately preceding comment (not a 120-char prose window), with fixtures for
+  distant "Do not" vs `# NEVER` above the command; tighten the 4.20 docstring
+  contract to require object/file on the same line as `4.20`.
+
+## 1.17.1
+
+- Sync SNO remediation docs with `_BLOCKS`: module docstring and
+  `validated-odf-sno.md` now state that **4.20** emits CephBlockPool + object/file
+  CR-spec fixes, **4.22** emits object/file CR-spec fixes + resource-request floor,
+  and live `ceph osd pool set` / mute / StorageClient recovery stay manual.
+
+## 1.17.0
+
+- PR review hardening for console-plugin enablement and uninstall teardown:
+  - `render_console_plugin_patch.py` accepts oc/kubectl jsonpath array forms (`[a b]`), defaults `--add` to `odf-console` only, and the runbook adds `odf-client-console` only when that ConsolePlugin CR exists.
+  - SNO remediation BANNER no longer implies CephFilesystem/CephObjectStore CR-spec pool patches are out of scope (those patches are in the script; only live `ceph osd pool set` / mute / StorageClient recovery stay manual).
+  - Package validator + contract tests reject unmarked `spec.plugins` replace-with-only-`odf-console` (including multiline forms).
+  - Uninstall scopes cluster-scoped `StorageClient` delete to `TARGET_STORAGECLIENT` (default `ocs-storagecluster`); frozen-dependents validator now also requires `CronJob` / `sgdisk` / `lvs`.
+
+## 1.16.0
+
+- Validated full ODF 4.20.18 SNO uninstall → clean slate → fresh redeploy on prod1 after a D-state hang and reboot:
+  - CSI ctrlplugin **RollingUpdate surge** on SNO still deadlocks after `replicas: 1`; document one-shot `strategy: Recreate` + scale non-ready RS to 0 (operator may revert strategy).
+  - Post-teardown D-state (`lvs`/`sgdisk`/`umount`/`jbd2/rbd*`) cleared by reboot; prefer hard reset over soft reboot when hung tasks spam the console.
+
+## 1.15.0
+
+- Uninstall gaps from the final prod1 round-trip (reinstall aborted after a SNO **reboot loop**; node destroyed):
+  - **`StorageClient` status-reporter CrashLoop** after Ceph is gone — delete the CronJob plus StorageClient/StorageConsumer (namespaced and cluster-scoped) so teardown is not blocked by reporter noise.
+  - **D-state disk holders** (`sgdisk`/`lvs`) after a hung cleanup job — delete stuck `rook-ceph-osd-prepare` before reboot; soft reboot on SNO can loop (API flaps then stays down). Prefer out-of-band power cycle / console; rebuild if unstable.
+
+## 1.14.0
+
+- Live ODF 4.20.18 SNO reinstall on prod1 after uninstall:
+  - **BlueStore labels** live at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB**, not midpoint/end. Head/tail wipes left foreign-cluster labels; `ceph-volume raw list` is the authoritative clean check. Updated `local-storage-disks.md` and uninstall Disk Cleanup.
+  - **CephObjectStore / CephFilesystem** on 4.20 also reject `size=1` + `replicasPerFailureDomain=1` (previously documented as 4.22-only). `render_sno_remediation.py --release 4.20` now emits the JSON remove + `failureDomain=host` patches; removed the merge-only size footgun from the 4.20 runbook.
+
+## 1.13.0
+
+- Hardened uninstall from a live ODF 4.20 SNO round-trip on prod1:
+  - **Pre-namespace-delete finalizer sweep** — `csiaddonsnodes` and ConfigMap `ocs-client-operator-config` hang `openshift-storage` in `Terminating` even when the namespace is being deleted (not only the kept-namespace step 4b path).
+  - **Cleanup-job is not a clean disk** — verify and remove empty `/var/lib/rook`, and wipe leftover **XFS** (LSO filesystem path) before calling uninstall done.
+  - **CRD sweep** now includes `csiaddons.openshift.io` and `objectbucket.io`; post-uninstall audit checks both.
+  - Fixed invalid `oc get cephblockpool cephfilesystem cephobjectstore` (space-separated) to comma-separated kinds.
+  - Documented optional full LSO removal when LSO was ODF-only and a fresh-cluster expectation applies.
+
+## 1.12.0
+
+- Added `references/console-plugin.md` for enabling `odf-console` / `odf-client-console` after a CLI OLM install. The runbook separates ConsolePlugin CR discovery from `console.operator.openshift.io/cluster` `spec.plugins`, forbids replacing that array with only `odf-console` (the ODF 4.20 troubleshooting footgun that disables monitoring/networking plugins), and keeps the Console resource cluster-scoped.
+- Added `scripts/render_console_plugin_patch.py` to merge or remove ODF plugin names against the live enabled-plugin list before patching (`--add` / `--remove`).
+- Routed console-plugin / Data Foundation UI work from `SKILL.md`, and cross-linked from install validation and the Dashboard And Monitoring section.
+- Uninstall step **4a** now always prunes `odf-console` / `odf-client-console` from `console.operator` `spec.plugins` and deletes the ConsolePlugin CRs — both are cluster-scoped and survive namespace deletion. Post-uninstall audit checks for stale enabled names.
+- Extended the package validator and added contract tests in `tests/test_odf_console_plugin_runbook_contracts.py` plus helper unit tests and an uninstall prune contract.
+
 ## 1.11.0
 - Addressed PR review feedback: made preflight/uninstall commands runnable (no shell-invalid placeholders, non-repeatable `--api-group` split, `/dev/rbd[0-9]*` glob, per-path stale-dir checks), discover ceph-csi version pre-install from the operator image-set, read `dataDirHostPath` instead of hardcoding `/var/lib/rook`, use `--wait=false` and a converging reconciler-stop loop in ODF teardown, gate destructive zeroing on confirmed abandonment, route 4.20.17 health checks off the toolbox, and bind the 4.20.17 validator check to its section.
 - Hardened the uninstall and preflight runbooks with findings from a live Rook→ODF→Rook round-trip on SNO:

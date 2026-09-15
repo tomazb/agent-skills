@@ -61,7 +61,7 @@ def test_release_is_required_and_validated():
             render_sno_remediation(bad)
 
 
-def test_420_emits_blockpool_fix_and_no_422_only_blocks():
+def test_420_emits_blockpool_fix_and_object_file_pool_fix():
     out = render_sno_remediation("4.20")
     # 4.20-only: CephBlockPool failure-domain fix, with size persisted in the CR
     assert "cephblockpool ocs-storagecluster-cephblockpool" in out
@@ -69,9 +69,11 @@ def test_420_emits_blockpool_fix_and_no_422_only_blocks():
     assert '"path":"/spec/replicated/replicasPerFailureDomain"' in out
     assert '"path":"/spec/replicated/size","value":1' in out
     assert '"path":"/spec/replicated/requireSafeReplicaSize","value":false' in out
-    # 4.22-only blocks must not leak into the 4.20 script: the `remove` ops would
-    # abort the run under `set -e` on a cluster that never had the field.
-    assert "/spec/dataPools/0/replicated/replicasPerFailureDomain" not in out
+    # Also required on 4.20.18: object/file pools reject size=1 + replicasPerFailureDomain=1
+    assert "/spec/dataPools/0/replicated/replicasPerFailureDomain" in out
+    assert "/spec/metadataPool/replicated/replicasPerFailureDomain" in out
+    assert "/spec/dataPool/replicated/replicasPerFailureDomain" in out
+    # 4.22-only resource floor must not leak into the 4.20 script
     assert "noobaa-endpoint" not in out
 
 
@@ -217,6 +219,7 @@ def test_step_labels_form_the_expected_sequence_per_release():
         "4",
         "5",
         "6",
+        "7",
     ]
     assert _step_labels(render_sno_remediation("4.22")) == [
         "1",
@@ -227,6 +230,28 @@ def test_step_labels_form_the_expected_sequence_per_release():
         "6",
         "7",
     ]
+
+
+def test_module_docstring_matches_release_block_scope():
+    """Keep the generator docstring aligned with `_BLOCKS` (not the old 4.22-only claim)."""
+    import render_sno_remediation as mod
+
+    doc = mod.__doc__ or ""
+    assert "CephBlockPool" in doc
+    assert "resource-request" in doc.lower() or "resource request" in doc.lower()
+    # 4.20 must document object/file (or CephObjectStore/CephFilesystem) on the
+    # same line as the release — not via a DOTALL match to a later paragraph.
+    assert re.search(
+        r"^.*\b4\.20\b.*(object/file|CephObjectStore|CephFilesystem).*$",
+        doc,
+        re.IGNORECASE | re.MULTILINE,
+    ), "4.20 block scope must mention object/file CR-spec fixes on the same line"
+    assert re.search(
+        r"^.*\b4\.20\b.*CephBlockPool.*$",
+        doc,
+        re.IGNORECASE | re.MULTILINE,
+    ), "4.20 block scope must mention the CephBlockPool failure-domain fix"
+    assert "4.22 only" not in doc
 
 
 @pytest.mark.parametrize("release", RELEASES)

@@ -1,6 +1,6 @@
 ---
 name: openshift-odf
-description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Red Hat OpenShift Data Foundation (ODF) on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, internal mode with Local Storage Operator disks, StorageCluster sizing, ceph-rbd block, cephfs shared filesystem, Multicloud Object Gateway (MCG/NooBaa) and RGW object storage, OLM operator lifecycle, and default StorageClass safety.
+description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Red Hat OpenShift Data Foundation (ODF) on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, internal mode with Local Storage Operator disks, StorageCluster sizing, ceph-rbd block, cephfs shared filesystem, Multicloud Object Gateway (MCG/NooBaa) and RGW object storage, OLM operator lifecycle, default StorageClass safety, and the ODF console plugin / Data Foundation UI.
 ---
 
 # OpenShift Data Foundation Lifecycle
@@ -35,6 +35,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
 - **Observed SNO configurations or ODF 4.16, 4.20, and 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.
 
 ## Core Safety Rules
@@ -65,7 +66,7 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Deployment mode: internal (ODF-managed OSDs on local/attached disks), internal-attached with the Local Storage Operator, or external (connecting to an existing Ceph cluster).
 - Current ODF state: absent, operator installed, `StorageCluster` exists, installed ODF/Ceph versions, mon/mgr/osd counts, pool health, StorageClasses, and any existing MCG/RGW object stores.
 - Target storage services: ceph-rbd block, cephfs shared filesystem, MCG/RGW object, or a combination.
-- Target lifecycle action: install, disk prep, block pool, filesystem, object store, capacity expand, upgrade, backup/restore, maintenance, OSD replace, uninstall, cluster removal, validation, hardening, or troubleshooting.
+- Target lifecycle action: install, disk prep, block pool, filesystem, object store, console plugin, capacity expand, upgrade, backup/restore, maintenance, OSD replace, uninstall, cluster removal, validation, hardening, or troubleshooting.
 - Target disk inventory by node, preferably `/dev/disk/by-id/*`, plus whether each disk may be destroyed and whether it is raw (unpartitioned, no signatures) or already has data.
 - Replica policy, device set count/replica, failure-domain rules, default StorageClass intent, backup/restore requirements, and maintenance window constraints.
 

@@ -1,7 +1,7 @@
 {
   "name": "openshift-odf",
-  "version": "1.11.0",
-  "description": "Red Hat OpenShift Data Foundation (ODF) lifecycle skill for OpenShift/OKD covering discovery, OLM install, Local Storage Operator disk prep, ceph-rbd block, cephfs filesystem, MCG/RGW object storage, capacity expansion, upgrade, backup/restore/DR, maintenance, uninstall, validation, hardening, and troubleshooting.",
+  "version": "1.17.2",
+  "description": "Red Hat OpenShift Data Foundation (ODF) lifecycle skill for OpenShift/OKD covering discovery, OLM install, Local Storage Operator disk prep, ceph-rbd block, cephfs filesystem, MCG/RGW object storage, ODF console plugin enablement, capacity expansion, upgrade, backup/restore/DR, maintenance, uninstall, validation, hardening, and troubleshooting.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",
     "test": "pytest -q"
@@ -24,6 +24,8 @@
     "s3",
     "osd",
     "local-storage-operator",
-    "lifecycle"
+    "lifecycle",
+    "console-plugin",
+    "odf-console"
   ]
 }
