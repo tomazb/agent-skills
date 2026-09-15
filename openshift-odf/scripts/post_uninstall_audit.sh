@@ -221,6 +221,8 @@ check_api_group ceph.rook.io
 check_api_group noobaa.io
 check_api_group postgresql.cnpg.noobaa.io
 check_api_group csi.ceph.io
+check_api_group csiaddons.openshift.io
+check_api_group objectbucket.io
 if lso_retained; then
   ok "local.storage.openshift.io CRDs retained: LSO still installed"
 else

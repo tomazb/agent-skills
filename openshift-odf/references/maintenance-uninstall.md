@@ -86,7 +86,8 @@ CephCluster "openshift-storage/ocs-storagecluster-cephcluster" will not be delet
 and the `StorageCluster` stays in `Deleting` past any timeout. Resolution: delete the frozen CRs directly — rook allows it while the destructive cleanup policy is active. Delete **all three kinds**, not only the block pools:
 
 ```bash
-oc -n openshift-storage get cephblockpool cephfilesystem cephobjectstore
+# Comma-separated resource types — space-separated names are invalid oc syntax.
+oc -n openshift-storage get cephblockpool,cephfilesystem,cephobjectstore
 oc -n openshift-storage delete cephblockpool <leftover-pools> --wait=false
 oc -n openshift-storage delete cephfilesystem --all --wait=false
 oc -n openshift-storage delete cephobjectstore --all --wait=false
@@ -172,6 +173,30 @@ done
 oc debug node/<node> -- chroot /host lsblk -f <osd-disk>   # expect no ceph_bluestore signature; then wipe manually
 ```
 
+**Cleanup-job success is not a clean disk.** On a live ODF 4.20 SNO uninstall with LSO `LocalVolume` (filesystem/XFS path) and `cleanup-policy=delete`, the job completed and removed BlueStore metadata, but left:
+
+1. An **empty** `/var/lib/rook` directory (harmless until a later leftover check treats the path as residue).
+2. An **XFS** signature on the OSD disk (LSO formatted the device; rook's sanitize does not always clear a non-BlueStore filesystem). A reinstall that expects a raw disk then fails discovery or fights the old FS UUID.
+
+After the job (or after a manual zap), verify and finish host cleanup before calling the uninstall done:
+
+```bash
+oc debug node/<node> -- chroot /host bash -c '
+set -e
+DISK=/dev/disk/by-id/<stable-disk-id>
+# Empty dir left after DataDirHostPath cleanup:
+if [ -d /var/lib/rook ] && [ -z "$(ls -A /var/lib/rook)" ]; then
+  rmdir /var/lib/rook
+fi
+ls -la /var/lib/rook 2>/dev/null || echo "no /var/lib/rook"
+# Any FSTYPE (xfs, ceph_bluestore, ...) means wipe before a fresh install:
+lsblk -f "$DISK"
+wipefs -n "$DISK" || echo "no signatures (clean)"
+'
+```
+
+If `lsblk -f` still shows a filesystem or `wipefs -n` prints a signature, run **Disk Cleanup** below (with destructive confirmation for that exact by-id path) before reinstalling. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
+
 Also confirm no **stale krbd device** was leaked (deleting a NooBaa DB / ceph-rbd PVC before it was unmapped wedges a `/dev/rbdN` that later hangs a reinstall's `ceph-volume raw list`). See the Rook cleanup runbook's "Stale krbd Devices" section:
 
 ```bash
@@ -196,7 +221,33 @@ for pkg in $ODF_PKGS; do
 done
 ```
 
-Delete the namespace only when the step-0 inventory showed ODF as the sole tenant:
+Delete the namespace only when the step-0 inventory showed ODF as the sole tenant.
+
+**Before deleting the namespace, clear finalizer-bearing residue that step 4b
+documents for the kept-namespace case.** Those objects also block *namespace*
+deletion: on a live ODF 4.20 SNO uninstall, `openshift-storage` stayed
+`Terminating` on `csiaddonsnodes.csiaddons.openshift.io` (per-node CRs with
+operator finalizers) and ConfigMap `ocs-client-operator-config` (finalizer
+`ocs-client-operator.ocs.openshift.io/storageused`). Step 4b is not optional
+when the namespace is going away — run this sweep first, then delete the ns:
+
+```bash
+# Finalizer residue that hangs namespace deletion (operators already gone):
+if oc -n openshift-storage get cm ocs-client-operator-config >/dev/null 2>&1; then
+  oc -n openshift-storage patch cm ocs-client-operator-config --type merge \
+    -p '{"metadata":{"finalizers":[]}}'
+  oc -n openshift-storage delete cm ocs-client-operator-config --wait=false
+fi
+
+if oc api-resources --api-group=csiaddons.openshift.io -o name 2>/dev/null \
+  | grep -qx csiaddonsnodes.csiaddons.openshift.io; then
+  for name in $(oc -n openshift-storage get csiaddonsnodes.csiaddons.openshift.io \
+    -o name --ignore-not-found); do
+    oc -n openshift-storage patch "$name" --type merge -p '{"metadata":{"finalizers":[]}}'
+    oc -n openshift-storage delete "$name" --wait=false --ignore-not-found
+  done
+fi
+```
 
 ```bash
 # Guarded, and it fails closed: the namespace is deleted only when the subscription
@@ -220,6 +271,9 @@ else
 fi
 ```
 
+If the namespace still hangs in `Terminating` after that sweep, use **Stuck
+Namespace / Orphaned CRs** below. Do not skip the pre-delete patch and rely on
+`/finalize` alone — that leaves orphaned CRs the API can no longer PATCH.
 Remove the storage node labels after confirming the node no longer hosts another storage system:
 
 ```bash
@@ -234,6 +288,8 @@ oc -n <owner-namespace> get localvolumeset,localvolume,localvolumediscovery -o w
 ```
 
 Delete only named `LocalVolumeSet` and `LocalVolumeDiscovery` objects that were dedicated to ODF. Never use `--all`, and do not delete LSO resources when `LocalVolume`, Longhorn, LVMS, or another storage system shares the node or namespace. Deleting a `LocalVolumeSet` cascades to its PVs and StorageClass; do it promptly after the `StorageCluster` teardown, or the LSO provisioner re-creates an `Available` PV on the freshly wiped disk. Then remove the symlink directory on the node (`rm -rf /mnt/local-storage/<storageclass>` — symlinks only; the disk itself was already handled by the cleanup policy).
+
+**ODF-only LSO install (fresh-cluster expectation).** When LSO was installed solely to feed ODF (typical `openshift-local-storage` with no other consumers) and the goal is a cluster that looks like ODF was never present, also remove LSO after the ODF LocalVolume/LocalVolumeSet objects are gone: delete its Subscription/CSV, sweep `local.storage.openshift.io` CRDs, and delete `openshift-local-storage`. Skip this when LVMS, Longhorn, or another product still needs LSO.
 
 ### 4a. Disable ODF console plugins (cluster-scoped)
 
@@ -307,11 +363,12 @@ oc delete mutatingwebhookconfiguration csv.odf.openshift.io
 
 ### 5. CRD cleanup
 
-OLM removes most CRDs automatically when the operator is uninstalled, but they can linger — especially after forced or manual removal, and always when the namespace is kept. Sweep by API group rather than a fixed name list — the set changes per release (ODF 4.22 adds `storageautoscalers`/`storageclusterpeers`/`tlsprofiles` under `ocs.openshift.io` and the NooBaa embedded CloudNativePG group `postgresql.cnpg.noobaa.io`; `storagesystems.odf.openshift.io` is gone):
+OLM removes most CRDs automatically when the operator is uninstalled, but they can linger — especially after forced or manual removal, and always when the namespace is kept. Sweep by API group rather than a fixed name list — the set changes per release (ODF 4.22 adds `storageautoscalers`/`storageclusterpeers`/`tlsprofiles` under `ocs.openshift.io` and the NooBaa embedded CloudNativePG group `postgresql.cnpg.noobaa.io`; `storagesystems.odf.openshift.io` is gone). A live ODF 4.20 SNO uninstall also left **`csiaddons.openshift.io`** (from `odf-csi-addons-operator`) and **`objectbucket.io`** (OBC/OB) after the core ODF groups were gone — include them:
 
 ```bash
 for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
-             postgresql.cnpg.noobaa.io csi.ceph.io local.storage.openshift.io; do
+             postgresql.cnpg.noobaa.io csi.ceph.io \
+             csiaddons.openshift.io objectbucket.io local.storage.openshift.io; do
   echo "=== $group ==="; oc get crd 2>/dev/null | grep "$group" || echo "clean"
 done
 ```
@@ -321,7 +378,8 @@ Delete every CR instance in a group before its CRDs, then the CRDs themselves:
 ```bash
 # Skip local.storage.openshift.io when LSO stays installed (shared node/namespace).
 for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
-             postgresql.cnpg.noobaa.io csi.ceph.io; do
+             postgresql.cnpg.noobaa.io csi.ceph.io \
+             csiaddons.openshift.io objectbucket.io; do
   # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
   #    returns an empty list, which would silently skip instance deletion and
   #    then delete the CRDs anyway, with instances still live.
@@ -365,7 +423,8 @@ CRDs with the `customresourcecleanup.apiextensions.k8s.io` finalizer block until
 After uninstall, confirm:
 
 - `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating). When the namespace was kept for LVMS/LSO: it contains no rook/ceph/noobaa/ocs/odf secrets, configmaps, services, or workloads, and the LVMS/LSO pods are still Running.
-- The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io` — plus `local.storage.openshift.io` only if LSO was removed too.
+- The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io`, `csiaddons.openshift.io`, `objectbucket.io` — plus `local.storage.openshift.io` only if LSO was removed too.
+- OSD disks show no filesystem or BlueStore signature (`lsblk -f` / `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
 - No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
 - No StorageClass uses an ODF provisioner (`openshift-storage.rbd.csi.ceph.com`, `openshift-storage.cephfs.csi.ceph.com`, `openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`).
 - No PV/PVC uses an ODF StorageClass or is stuck Terminating.
@@ -385,7 +444,8 @@ oc get ns openshift-storage rook-ceph 2>/dev/null || echo "namespaces gone"
 
 # CRDs (all ODF groups; include local.storage.openshift.io only if LSO was removed)
 for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
-             postgresql.cnpg.noobaa.io csi.ceph.io; do
+             postgresql.cnpg.noobaa.io csi.ceph.io \
+             csiaddons.openshift.io objectbucket.io; do
   oc get crd 2>/dev/null | grep "$group" || true
 done
 

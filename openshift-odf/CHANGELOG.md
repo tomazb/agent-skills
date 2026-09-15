@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.13.0
+
+- Hardened uninstall from a live ODF 4.20 SNO round-trip on prod1:
+  - **Pre-namespace-delete finalizer sweep** — `csiaddonsnodes` and ConfigMap `ocs-client-operator-config` hang `openshift-storage` in `Terminating` even when the namespace is being deleted (not only the kept-namespace step 4b path).
+  - **Cleanup-job is not a clean disk** — verify and remove empty `/var/lib/rook`, and wipe leftover **XFS** (LSO filesystem path) before calling uninstall done.
+  - **CRD sweep** now includes `csiaddons.openshift.io` and `objectbucket.io`; post-uninstall audit checks both.
+  - Fixed invalid `oc get cephblockpool cephfilesystem cephobjectstore` (space-separated) to comma-separated kinds.
+  - Documented optional full LSO removal when LSO was ODF-only and a fresh-cluster expectation applies.
+
 ## 1.12.0
 
 - Added `references/console-plugin.md` for enabling `odf-console` / `odf-client-console` after a CLI OLM install. The runbook separates ConsolePlugin CR discovery from `console.operator.openshift.io/cluster` `spec.plugins`, forbids replacing that array with only `odf-console` (the ODF 4.20 troubleshooting footgun that disables monitoring/networking plugins), and keeps the Console resource cluster-scoped.

@@ -13,6 +13,10 @@ Guards the regressions found during a real `htz2` uninstall:
   (Driver CRs, console Service whose cert secret service-ca keeps recreating, a
   configmap pinned by an orphaned finalizer, SCCs, a mutating webhook, consoleplugins).
 - ODF 4.22 adds the `postgresql.cnpg.noobaa.io` CRD group (NooBaa embedded CNPG).
+- A live ODF 4.20 SNO round-trip also left `csiaddons.openshift.io` and
+  `objectbucket.io` after core groups were swept; namespace deletion hung on
+  `csiaddonsnodes` + `ocs-client-operator-config` finalizers; cleanup-job left
+  empty `/var/lib/rook` and an XFS signature from LSO.
 """
 
 from __future__ import annotations
@@ -208,6 +212,51 @@ def test_crd_sweep_covers_cnpg_group():
         "ODF 4.22 NooBaa ships embedded CloudNativePG CRDs under "
         "postgresql.cnpg.noobaa.io; the CRD sweep must include the group"
     )
+
+
+def test_crd_sweep_covers_csiaddons_and_objectbucket_groups():
+    text = _uninstall_text()
+    assert "csiaddons.openshift.io" in text, (
+        "odf-csi-addons-operator leaves csiaddons.openshift.io CRDs after "
+        "core ODF groups are gone; the CRD sweep must include the group"
+    )
+    assert "objectbucket.io" in text, (
+        "NooBaa/OBC leaves objectbucket.io CRDs; the CRD sweep must include them"
+    )
+
+
+def test_namespace_delete_clears_finalizer_residue_first():
+    """Deleting the namespace without clearing these finalizers hangs Terminating."""
+    text = _uninstall_text()
+    assert "csiaddonsnodes" in text
+    assert "ocs-client-operator-config" in text
+    assert re.search(
+        r"Before deleting the namespace|hangs namespace deletion|Terminating",
+        text,
+        re.IGNORECASE,
+    )
+
+
+def test_cleanup_job_success_requires_disk_and_rook_dir_verification():
+    text = _uninstall_text()
+    assert "/var/lib/rook" in text
+    assert "rmdir /var/lib/rook" in text
+    assert "XFS" in text
+    assert "wipefs -n" in text
+    assert "Cleanup-job success is not a clean disk" in text
+
+
+def test_frozen_dependents_get_uses_comma_separated_kinds():
+    """`oc get a b c` is invalid; resource types must be comma-separated."""
+    text = _uninstall_text()
+    bad = re.search(
+        r"oc\s+-n\s+openshift-storage\s+get\s+cephblockpool\s+cephfilesystem\s+cephobjectstore\b",
+        text,
+    )
+    assert bad is None, (
+        "space-separated kinds in oc get are invalid syntax; use commas: " + bad.group(0)
+    )
+    assert "cephblockpool,cephfilesystem,cephobjectstore" in text
 
 
 def test_validated_sno_notes_uninstall_implication():
