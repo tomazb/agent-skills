@@ -305,6 +305,26 @@ check_json_list \
   oc get consoleplugin
 
 echo
+# Cluster-scoped enable list survives ConsolePlugin CR deletion and namespace
+# removal. Stale odf-* names here are undeploy residue.
+if query_json \
+  "console.operator enabled plugins" \
+  '.spec.plugins // [] | .[]' \
+  oc get console.operator.openshift.io cluster; then
+  if [ "$QUERY_NOT_FOUND" -eq 1 ]; then
+    fail "console.operator.openshift.io/cluster could not be queried"
+  else
+    STALE=$(printf '%s\n' "$QUERY_RESULT" | grep -E '^(odf-console|odf-client-console)$' || true)
+    if [ -n "$STALE" ]; then
+      fail "stale ODF names still in console.operator spec.plugins:"
+      echo "$STALE"
+    else
+      ok "no ODF names in console.operator spec.plugins"
+    fi
+  fi
+fi
+
+echo
 if query_json \
   "default StorageClasses" \
   '.items[] | select((.metadata.annotations?["storageclass.kubernetes.io/is-default-class"] == "true") or (.metadata.annotations?["storageclass.beta.kubernetes.io/is-default-class"] == "true")) | .metadata.name' \

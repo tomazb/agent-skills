@@ -21,6 +21,7 @@ EXPECTED_REFERENCES = [
     "references/maintenance-uninstall.md",
     "references/validation-hardening.md",
     "references/validated-odf-sno.md",
+    "references/console-plugin.md",
 ]
 
 REQUIRED_FILES = [
@@ -33,6 +34,7 @@ REQUIRED_FILES = [
     "scripts/render_storagecluster.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/render_console_plugin_patch.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]
@@ -532,6 +534,20 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "HEALTH_OK",
         ],
     )
+    require(
+        "references/console-plugin.md",
+        "ODF console plugin enablement",
+        [
+            "oc get consoleplugin",
+            "console.operator.openshift.io",
+            "{.spec.plugins}",
+            "/spec/plugins/-",
+            "odf-console",
+            "odf-client-console",
+            "python3 scripts/render_console_plugin_patch.py",
+            "Data Foundation",
+        ],
+    )
     # Bind the 4.20.17 gotcha phrases to their dedicated section so the check
     # cannot pass on incidental prose elsewhere in the file.
     sno_text = read_reference("references/validated-odf-sno.md")
@@ -648,6 +664,8 @@ def check_skill_file(root: Path) -> list[str]:
     issues.extend(check_versions_handoff(skill_text))
     if "references/validated-odf-sno.md" not in skill_text:
         issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
+    if "references/console-plugin.md" not in skill_text:
+        issues.append("SKILL.md: missing console plugin routing guidance.")
     return issues
 
 

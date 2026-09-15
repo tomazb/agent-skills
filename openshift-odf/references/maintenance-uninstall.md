@@ -235,9 +235,47 @@ oc -n <owner-namespace> get localvolumeset,localvolume,localvolumediscovery -o w
 
 Delete only named `LocalVolumeSet` and `LocalVolumeDiscovery` objects that were dedicated to ODF. Never use `--all`, and do not delete LSO resources when `LocalVolume`, Longhorn, LVMS, or another storage system shares the node or namespace. Deleting a `LocalVolumeSet` cascades to its PVs and StorageClass; do it promptly after the `StorageCluster` teardown, or the LSO provisioner re-creates an `Available` PV on the freshly wiped disk. Then remove the symlink directory on the node (`rm -rf /mnt/local-storage/<storageclass>` — symlinks only; the disk itself was already handled by the cleanup policy).
 
+### 4a. Disable ODF console plugins (cluster-scoped)
+
+`console.operator.openshift.io/cluster` and the `ConsolePlugin` CRs are
+**cluster-scoped**. Namespace deletion does not clear `spec.plugins`, and it
+does not garbage-collect `odf-console` / `odf-client-console`. After a CLI
+enable (see `references/console-plugin.md`), stale enabled names keep pointing
+at plugins that no longer exist. Always prune here — whether the namespace is
+kept or deleted.
+
+```bash
+CURRENT=$(oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}')
+[ -n "$CURRENT" ] || CURRENT='[]'
+
+python3 scripts/render_console_plugin_patch.py \
+  --current-plugins "$CURRENT" \
+  --remove odf-console odf-client-console \
+  --output /tmp/odf-console-plugins-remove.patch.json
+
+# Review: non-ODF plugins (monitoring, networking, ...) MUST remain.
+cat /tmp/odf-console-plugins-remove.patch.json
+oc patch console.operator.openshift.io cluster --type merge \
+  --patch-file /tmp/odf-console-plugins-remove.patch.json
+
+# Then delete the ConsolePlugin CRs themselves.
+oc delete consoleplugin odf-console odf-client-console --ignore-not-found
+
+oc get console.operator.openshift.io cluster -o jsonpath='{.spec.plugins}{"\n"}'
+oc get consoleplugin 2>/dev/null | grep -E 'odf-console|odf-client-console' || echo "no ODF consoleplugins"
+```
+
+Never replace `spec.plugins` with `[]` unless discovery showed that only ODF
+plugins were enabled — that would disable monitoring and networking on a
+typical cluster.
+
 ### 4b. Residue sweep when the namespace is kept
 
-Namespace deletion normally garbage-collects everything below; keeping the namespace (shared with LVMS/LSO) means each item must be removed explicitly. All of these were observed to survive operator removal on a live 4.22.1 uninstall:
+Namespace deletion normally garbage-collects most namespaced residue below;
+keeping the namespace (shared with LVMS/LSO) means each item must be removed
+explicitly. Console plugins are handled in step 4a because they are
+cluster-scoped and survive namespace deletion. All of these were observed to
+survive operator removal on a live 4.22.1 uninstall:
 
 ```bash
 # ceph-csi driver instances: deleting the Driver CRs cascades their deployments/daemonsets
@@ -247,10 +285,10 @@ oc delete csidriver openshift-storage.rbd.csi.ceph.com openshift-storage.cephfs.
 # Remaining operator-scoped CRs
 oc -n openshift-storage delete ocsinitializations.ocs.openshift.io,cephconnections.csi.ceph.io,operatorconfigs.csi.ceph.io --all
 
-# Console: the Service must go first — while it exists, service-ca keeps re-creating its cert secret
+# Console Service/cert residue (ConsolePlugin CRs were removed in step 4a).
+# The Service must go first — while it exists, service-ca keeps re-creating its cert secret.
 oc -n openshift-storage delete svc ocs-client-operator-console
 oc -n openshift-storage delete secret ocs-client-operator-console-serving-cert
-oc delete consoleplugin odf-console odf-client-console
 
 # Configmap pinned by an orphaned finalizer (its operator is gone; delete alone hangs)
 oc -n openshift-storage patch cm ocs-client-operator-config --type merge -p '{"metadata":{"finalizers":[]}}'
@@ -328,7 +366,7 @@ After uninstall, confirm:
 
 - `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating). When the namespace was kept for LVMS/LSO: it contains no rook/ceph/noobaa/ocs/odf secrets, configmaps, services, or workloads, and the LVMS/LSO pods are still Running.
 - The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io` — plus `local.storage.openshift.io` only if LSO was removed too.
-- No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins.
+- No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
 - No StorageClass uses an ODF provisioner (`openshift-storage.rbd.csi.ceph.com`, `openshift-storage.cephfs.csi.ceph.com`, `openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`).
 - No PV/PVC uses an ODF StorageClass or is stuck Terminating.
 - Exactly one intended default StorageClass remains.

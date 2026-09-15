@@ -98,6 +98,16 @@ rbd-smoke-writer and cephfs-smoke-writer.
 Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 `localblock`, and `HEALTH_OK`.
 
+## Console plugin
+`oc get consoleplugin`
+`console.operator.openshift.io`
+`{.spec.plugins}`
+`/spec/plugins/-`
+`odf-console` and `odf-client-console`
+`python3 scripts/render_console_plugin_patch.py`
+Data Foundation
+
+
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
@@ -135,6 +145,7 @@ Rook owns the cluster, hand off to `openshift-rook`.
 ## Routing
 
 Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
+Use `references/console-plugin.md` for ODF console plugin enablement.
 
 ## Core Safety Rules
 
@@ -209,6 +220,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "render_storagecluster.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")
         (root / "tools" / "validate_skill_package.sh").write_text("", encoding="utf-8")

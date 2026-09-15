@@ -133,6 +133,40 @@ def test_namespace_kept_residue_sweep_documented():
         )
 
 
+def test_uninstall_prunes_odf_names_from_console_operator_plugins():
+    """Deleting ConsolePlugin CRs is not enough after a CLI enable.
+
+    `console.operator.openshift.io/cluster` is cluster-scoped, so namespace
+    deletion does not clear `spec.plugins`. Leaving `odf-console` /
+    `odf-client-console` there keeps stale enabled entries after undeploy.
+    The prune must keep non-ODF plugins (monitoring, networking, ...).
+    """
+    text = _uninstall_text()
+    assert "console.operator.openshift.io" in text, (
+        "uninstall must touch the cluster Console operator, not only ConsolePlugin CRs"
+    )
+    assert "{.spec.plugins}" in text or "spec.plugins" in text
+    # Must remove both names the enable runbook can add.
+    assert "odf-console" in text and "odf-client-console" in text
+    # Must not teach the replace-with-empty or replace-with-only-odf patterns as the fix.
+    assert re.search(
+        r"python3 scripts/render_console_plugin_patch\.py.*--remove|"
+        r"--remove.*odf-console|"
+        r"remove.*odf-console.*odf-client-console",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ), (
+        "uninstall must prune ODF plugin names from the live enabled list "
+        "(prefer scripts/render_console_plugin_patch.py --remove)"
+    )
+    # Cluster-scoped: must run even when the namespace is deleted.
+    assert re.search(
+        r"cluster-scoped|namespace deletion does not|survive.*namespace",
+        text,
+        re.IGNORECASE,
+    )
+
+
 def test_crd_sweep_deletes_instances_before_crds():
     """A CRD whose instances still hold finalizers sticks in Terminating.
 

@@ -171,6 +171,7 @@ echo "no leftover ObjectBuckets"
 
 ## Dashboard And Monitoring
 
+- If **Storage → Data Foundation** is missing after a CLI OLM install, enable the console plugins with `references/console-plugin.md` before treating the dashboards as a validation failure.
 - ODF integrates Ceph metrics with OpenShift monitoring automatically; use the OpenShift console **Storage → Data Foundation** dashboards and the built-in cluster Prometheus. You do not need to stand up a separate Prometheus for ODF as you would on upstream Rook.
 - If a user relies on `ceph orch` or the Ceph mgr dashboard directly, that dashboard is managed by ODF; prefer the OpenShift console views and the toolbox for CLI checks.
 - Alert on degraded/faulted volumes, failed snapshots, capacity pressure, OSD failures, mon quorum loss, and MDS laggy using the ODF/OpenShift monitoring stack.

@@ -323,6 +323,7 @@ Before declaring success, verify:
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - The default ODF StorageClasses exist (`ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` if RGW is enabled).
 - Exactly one default StorageClass exists when defaulting is expected.
+- The ODF console plugin is enabled when the Data Foundation UI is required — CLI OLM install does not enable it automatically; see `references/console-plugin.md`.
 
 ## MachineConfig Discipline
 

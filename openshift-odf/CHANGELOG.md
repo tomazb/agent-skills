@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.12.0
+
+- Added `references/console-plugin.md` for enabling `odf-console` / `odf-client-console` after a CLI OLM install. The runbook separates ConsolePlugin CR discovery from `console.operator.openshift.io/cluster` `spec.plugins`, forbids replacing that array with only `odf-console` (the ODF 4.20 troubleshooting footgun that disables monitoring/networking plugins), and keeps the Console resource cluster-scoped.
+- Added `scripts/render_console_plugin_patch.py` to merge or remove ODF plugin names against the live enabled-plugin list before patching (`--add` / `--remove`).
+- Routed console-plugin / Data Foundation UI work from `SKILL.md`, and cross-linked from install validation and the Dashboard And Monitoring section.
+- Uninstall step **4a** now always prunes `odf-console` / `odf-client-console` from `console.operator` `spec.plugins` and deletes the ConsolePlugin CRs — both are cluster-scoped and survive namespace deletion. Post-uninstall audit checks for stale enabled names.
+- Extended the package validator and added contract tests in `tests/test_odf_console_plugin_runbook_contracts.py` plus helper unit tests and an uninstall prune contract.
+
 ## 1.11.0
 - Addressed PR review feedback: made preflight/uninstall commands runnable (no shell-invalid placeholders, non-repeatable `--api-group` split, `/dev/rbd[0-9]*` glob, per-path stale-dir checks), discover ceph-csi version pre-install from the operator image-set, read `dataDirHostPath` instead of hardcoding `/var/lib/rook`, use `--wait=false` and a converging reconciler-stop loop in ODF teardown, gate destructive zeroing on confirmed abandonment, route 4.20.17 health checks off the toolbox, and bind the 4.20.17 validator check to its section.
 - Hardened the uninstall and preflight runbooks with findings from a live Rook→ODF→Rook round-trip on SNO:

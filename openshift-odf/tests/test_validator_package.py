@@ -458,6 +458,37 @@ def test_missing_validation_dashboard_guidance_fails(validator, package_factory,
     )
 
 
+def test_missing_console_plugin_runbook_fails(validator, package_factory):
+    root = package_factory()
+    missing = root / "references" / "console-plugin.md"
+    missing.unlink()
+    issues = validator.validate_root(root)
+    assert any("console-plugin.md" in issue for issue in issues)
+
+
+def test_missing_console_plugin_routing_fails(validator, package_factory, make_skill_text):
+    root = package_factory(
+        skill_text=make_skill_text().replace("references/console-plugin.md", "console UI")
+    )
+    issues = validator.validate_root(root)
+    assert any("console plugin routing" in issue for issue in issues)
+
+
+def test_missing_console_plugin_append_guidance_fails(
+    validator, package_factory, reference_text
+):
+    root = package_factory(reference_content=reference_text())
+    runbook = root / "references" / "console-plugin.md"
+    runbook.write_text(
+        runbook.read_text(encoding="utf-8").replace("/spec/plugins/-", "/spec/plugins"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any(
+        "console-plugin.md" in issue and "/spec/plugins/-" in issue for issue in issues
+    )
+
+
 def test_missing_validated_sno_evidence_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     sno = root / "references" / "validated-odf-sno.md"
