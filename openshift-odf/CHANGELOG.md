@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.15.0
+
+- Uninstall gaps from the final prod1 round-trip (reinstall aborted after a SNO **reboot loop**; node destroyed):
+  - **`StorageClient` status-reporter CrashLoop** after Ceph is gone — delete the CronJob plus StorageClient/StorageConsumer (namespaced and cluster-scoped) so teardown is not blocked by reporter noise.
+  - **D-state disk holders** (`sgdisk`/`lvs`) after a hung cleanup job — delete stuck `rook-ceph-osd-prepare` before reboot; soft reboot on SNO can loop (API flaps then stays down). Prefer out-of-band power cycle / console; rebuild if unstable.
+
 ## 1.14.0
 
 - Live ODF 4.20.18 SNO reinstall on prod1 after uninstall:

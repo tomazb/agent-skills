@@ -145,6 +145,26 @@ remaining="$($OC -n openshift-storage get ${KINDS// /,} --no-headers -o name)" |
 
 Once the `CephCluster` is deleted, scale `rook-ceph-operator` back to its original replica count if you changed it, and re-enable the reconcilers you stopped after the namespace teardown completes.
 
+**`StorageClient` status-reporter CrashLoop during teardown.** After the `CephCluster` is gone, the cluster-scoped `StorageClient` (and its CronJob `storageclient-*-status-reporter`) keeps trying to report client state and CrashLoops with `failed to produce client state hash`. That is noise from a half-torn-down cluster, not a separate outage — but leaving the CRs around can also keep the `StorageCluster` finalizer from clearing. Delete them (and the CronJob) as soon as Ceph is gone:
+
+```bash
+oc -n openshift-storage delete cronjob -l app.kubernetes.io/name=ocs-client-operator --ignore-not-found
+# Name pattern if labels differ:
+oc -n openshift-storage get cronjob -o name | grep storageclient | xargs -r oc -n openshift-storage delete --wait=false
+
+for kind in storageclient storageconsumer; do
+  for name in $(oc -n openshift-storage get "$kind" -o name --ignore-not-found); do
+    oc -n openshift-storage patch "$name" --type merge -p '{"metadata":{"finalizers":[]}}'
+    oc -n openshift-storage delete "$name" --wait=false --ignore-not-found
+  done
+done
+# Cluster-scoped StorageClient (ocs.openshift.io) if present:
+for name in $(oc get storageclients.ocs.openshift.io -o name --ignore-not-found); do
+  oc patch "$name" --type merge -p '{"metadata":{"finalizers":[]}}'
+  oc delete "$name" --wait=false --ignore-not-found
+done
+```
+
 With `cleanup-policy="delete"`, rook runs a `cluster-cleanup-job-<node>` per node after the `CephCluster` is gone. That job removes `/var/lib/rook` and quick-sanitizes the OSD disks (metadata wipe, not full zeroing — see **Disk Cleanup** below if full erasure is required). **On raw-mode OSDs the cleanup job can hang on `ceph-volume lvm list`** (there is no LVM to enumerate): it finishes the `/var/lib/rook` cleanup but never completes. If it is stuck for minutes, delete the job, **wait for the Job and its pod to actually terminate**, then zap the disk manually (deleting with `--wait=false` returns before the pod is gone, and wiping a disk the cleanup pod still holds races it):
 
 ```bash
@@ -200,6 +220,10 @@ oc debug node/<node> --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
 ```
 
 If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md` (BlueStore labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB**, or full-disk zero) with destructive confirmation for that exact by-id path. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
+
+**If the cleanup pod left host processes in D-state (`sgdisk`, `lvs`) on the OSD disk**, `kill -9` will not free the device and a later OSD prepare hangs forever inside `ceph-volume raw prepare` / `lvs`. Confirm with `oc debug node/<node> -- chroot /host bash -c 'fuser -v /dev/disk/by-id/<id>; ps -eo pid,stat,comm | awk "\$2 ~ /D/"'`.
+
+Before rebooting: delete any stuck `rook-ceph-osd-prepare` Job/pod so prepare does not resume into the same blocked I/O on boot. On SNO, warn hard — a soft `systemctl reboot` after disk D-state can put the node into a **reboot loop** (brief Ready, then API/SSH refused for long stretches). Prefer an out-of-band hypervisor power cycle or console recovery; if the node does not stabilize, rebuild it rather than waiting indefinitely.
 
 Also confirm no **stale krbd device** was leaked (deleting a NooBaa DB / ceph-rbd PVC before it was unmapped wedges a `/dev/rbdN` that later hangs a reinstall's `ceph-volume raw list`). See the Rook cleanup runbook's "Stale krbd Devices" section:
 

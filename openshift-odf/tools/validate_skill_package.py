@@ -498,6 +498,11 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "cluster-cleanup-job",
             "ceph-volume raw list",
             "/sys/bus/rbd/devices",
+            "StorageClient",
+            "status-reporter",
+            "D-state",
+            "reboot loop",
+            "rook-ceph-osd-prepare",
         ],
     )
     require(
