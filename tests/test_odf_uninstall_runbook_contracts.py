@@ -13,6 +13,10 @@ Guards the regressions found during a real `htz2` uninstall:
   (Driver CRs, console Service whose cert secret service-ca keeps recreating, a
   configmap pinned by an orphaned finalizer, SCCs, a mutating webhook, consoleplugins).
 - ODF 4.22 adds the `postgresql.cnpg.noobaa.io` CRD group (NooBaa embedded CNPG).
+- A live ODF 4.20 SNO round-trip also left `csiaddons.openshift.io` and
+  `objectbucket.io` after core groups were swept; namespace deletion hung on
+  `csiaddonsnodes` + `ocs-client-operator-config` finalizers; cleanup-job left
+  empty `/var/lib/rook` and an XFS signature from LSO.
 """
 
 from __future__ import annotations
@@ -133,6 +137,40 @@ def test_namespace_kept_residue_sweep_documented():
         )
 
 
+def test_uninstall_prunes_odf_names_from_console_operator_plugins():
+    """Deleting ConsolePlugin CRs is not enough after a CLI enable.
+
+    `console.operator.openshift.io/cluster` is cluster-scoped, so namespace
+    deletion does not clear `spec.plugins`. Leaving `odf-console` /
+    `odf-client-console` there keeps stale enabled entries after undeploy.
+    The prune must keep non-ODF plugins (monitoring, networking, ...).
+    """
+    text = _uninstall_text()
+    assert "console.operator.openshift.io" in text, (
+        "uninstall must touch the cluster Console operator, not only ConsolePlugin CRs"
+    )
+    assert "{.spec.plugins}" in text or "spec.plugins" in text
+    # Must remove both names the enable runbook can add.
+    assert "odf-console" in text and "odf-client-console" in text
+    # Must not teach the replace-with-empty or replace-with-only-odf patterns as the fix.
+    assert re.search(
+        r"python3 scripts/render_console_plugin_patch\.py.*--remove|"
+        r"--remove.*odf-console|"
+        r"remove.*odf-console.*odf-client-console",
+        text,
+        re.IGNORECASE | re.DOTALL,
+    ), (
+        "uninstall must prune ODF plugin names from the live enabled list "
+        "(prefer scripts/render_console_plugin_patch.py --remove)"
+    )
+    # Cluster-scoped: must run even when the namespace is deleted.
+    assert re.search(
+        r"cluster-scoped|namespace deletion does not|survive.*namespace",
+        text,
+        re.IGNORECASE,
+    )
+
+
 def test_crd_sweep_deletes_instances_before_crds():
     """A CRD whose instances still hold finalizers sticks in Terminating.
 
@@ -174,6 +212,51 @@ def test_crd_sweep_covers_cnpg_group():
         "ODF 4.22 NooBaa ships embedded CloudNativePG CRDs under "
         "postgresql.cnpg.noobaa.io; the CRD sweep must include the group"
     )
+
+
+def test_crd_sweep_covers_csiaddons_and_objectbucket_groups():
+    text = _uninstall_text()
+    assert "csiaddons.openshift.io" in text, (
+        "odf-csi-addons-operator leaves csiaddons.openshift.io CRDs after "
+        "core ODF groups are gone; the CRD sweep must include the group"
+    )
+    assert "objectbucket.io" in text, (
+        "NooBaa/OBC leaves objectbucket.io CRDs; the CRD sweep must include them"
+    )
+
+
+def test_namespace_delete_clears_finalizer_residue_first():
+    """Deleting the namespace without clearing these finalizers hangs Terminating."""
+    text = _uninstall_text()
+    assert "csiaddonsnodes" in text
+    assert "ocs-client-operator-config" in text
+    assert re.search(
+        r"Before deleting the namespace|hangs namespace deletion|Terminating",
+        text,
+        re.IGNORECASE,
+    )
+
+
+def test_cleanup_job_success_requires_disk_and_rook_dir_verification():
+    text = _uninstall_text()
+    assert "/var/lib/rook" in text
+    assert "rmdir /var/lib/rook" in text
+    assert "ceph-volume raw list" in text
+    assert "10" in text and "GiB" in text  # BlueStore label offsets
+    assert "Cleanup-job success is not a clean disk" in text
+
+
+def test_frozen_dependents_get_uses_comma_separated_kinds():
+    """`oc get a b c` is invalid; resource types must be comma-separated."""
+    text = _uninstall_text()
+    bad = re.search(
+        r"oc\s+-n\s+openshift-storage\s+get\s+cephblockpool\s+cephfilesystem\s+cephobjectstore\b",
+        text,
+    )
+    assert bad is None, (
+        "space-separated kinds in oc get are invalid syntax; use commas: " + bad.group(0)
+    )
+    assert "cephblockpool,cephfilesystem,cephobjectstore" in text
 
 
 def test_validated_sno_notes_uninstall_implication():

@@ -221,6 +221,8 @@ check_api_group ceph.rook.io
 check_api_group noobaa.io
 check_api_group postgresql.cnpg.noobaa.io
 check_api_group csi.ceph.io
+check_api_group csiaddons.openshift.io
+check_api_group objectbucket.io
 if lso_retained; then
   ok "local.storage.openshift.io CRDs retained: LSO still installed"
 else
@@ -303,6 +305,26 @@ check_json_list \
   "no ODF console plugins found" \
   '.items[] | select(.metadata.name == "odf-console" or .metadata.name == "odf-client-console") | .metadata.name' \
   oc get consoleplugin
+
+echo
+# Cluster-scoped enable list survives ConsolePlugin CR deletion and namespace
+# removal. Stale odf-* names here are undeploy residue.
+if query_json \
+  "console.operator enabled plugins" \
+  '.spec.plugins // [] | .[]' \
+  oc get console.operator.openshift.io cluster; then
+  if [ "$QUERY_NOT_FOUND" -eq 1 ]; then
+    fail "console.operator.openshift.io/cluster could not be queried"
+  else
+    STALE=$(printf '%s\n' "$QUERY_RESULT" | grep -E '^(odf-console|odf-client-console)$' || true)
+    if [ -n "$STALE" ]; then
+      fail "stale ODF names still in console.operator spec.plugins:"
+      echo "$STALE"
+    else
+      ok "no ODF names in console.operator spec.plugins"
+    fi
+  fi
+fi
 
 echo
 if query_json \

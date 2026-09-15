@@ -98,13 +98,23 @@ rbd-smoke-writer and cephfs-smoke-writer.
 Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 `localblock`, and `HEALTH_OK`.
 
+## Console plugin
+`oc get consoleplugin`
+`console.operator.openshift.io`
+`{.spec.plugins}`
+`/spec/plugins/-`
+`odf-console` and `odf-client-console`
+`python3 scripts/render_console_plugin_patch.py`
+Data Foundation
+
+
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
 Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, `oc get csidriver`, and `/sys/bus/rbd/devices`.
 
-Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd.
+Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd. Also delete the CrashLooping `StorageClient` `status-reporter` CronJob; if host `sgdisk`/`lvs` are in `D-state`, delete stuck `rook-ceph-osd-prepare` before reboot — on SNO a soft reboot can enter a `reboot loop`.
 
 Teardown queries must fail closed: if `oc get` cannot list a dependent kind, stop with `failed to list $kind`, and if the final recheck fails, stop with `failed to recheck dependents`. Use `OC="oc --request-timeout=30s"` for bounded dependent sweeps. Before disk cleanup, delete with `delete job cluster-cleanup-job-<node> --wait=false --ignore-not-found`, use `--ignore-not-found -o name` for the cleanup Job query, require the pod query to succeed with `failed to query cleanup pods`, and exit with `cleanup job/pod did not terminate within 60s` if the Job or pod remains.
 
@@ -135,6 +145,7 @@ Rook owns the cluster, hand off to `openshift-rook`.
 ## Routing
 
 Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
+Use `references/console-plugin.md` for ODF console plugin enablement.
 
 ## Core Safety Rules
 
@@ -209,6 +220,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "render_storagecluster.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")
         (root / "tools" / "validate_skill_package.sh").write_text("", encoding="utf-8")

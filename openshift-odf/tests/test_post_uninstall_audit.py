@@ -320,6 +320,8 @@ def test_audit_passes_when_namespace_and_lso_are_retained_without_residue(tmp_pa
     assert "OK: local.storage.openshift.io CRDs retained: LSO still installed" in result.stdout
     assert "OK: no odf.openshift.io API resources found" in result.stdout
     assert "OK: no postgresql.cnpg.noobaa.io API resources found" in result.stdout
+    assert "OK: no csiaddons.openshift.io API resources found" in result.stdout
+    assert "OK: no objectbucket.io API resources found" in result.stdout
     assert "WARN:" not in result.stdout
     assert "FAIL:" not in result.stdout
 
