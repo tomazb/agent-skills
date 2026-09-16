@@ -417,6 +417,32 @@ def test_preflight_always_announces_the_target_cluster():
     assert "ODF_EXPECT_CONTEXT" in out
 
 
+def test_pinned_context_is_used_for_label_and_expectation_check():
+    """`oc config current-context` ignores the --context override.
+
+    Verified against a live cluster: with the kubeconfig on `prod1`,
+    `oc --context=htz2 config current-context` still prints `prod1`, while
+    `oc --context=htz2 whoami --show-server` correctly resolves htz2. Deriving
+    the label from `config current-context` therefore mislabels the target, and
+    comparing it against ODF_EXPECT_CONTEXT false-fatals on exactly the runs the
+    pin was added to protect.
+    """
+    out = render_sno_remediation("4.22", context="htz2")
+    assert "ODF_TARGET_CONTEXT=htz2" in out
+    # The label and the expectation check both go through TARGET_CONTEXT, which
+    # prefers the pin and only falls back to current-context when unpinned.
+    assert 'TARGET_CONTEXT="${ODF_TARGET_CONTEXT:-' in out
+    assert '[ "$TARGET_CONTEXT" != "$ODF_EXPECT_CONTEXT" ]' in out
+    # The pinned value must not be re-derived from current-context anywhere.
+    assert '[ "$(oc config current-context 2>/dev/null)" != "$ODF_EXPECT_CONTEXT" ]' not in out
+
+
+def test_unpinned_preflight_falls_back_to_current_context():
+    out = render_sno_remediation("4.22")
+    assert "ODF_TARGET_CONTEXT=" not in out
+    assert 'TARGET_CONTEXT="${ODF_TARGET_CONTEXT:-$(oc config current-context' in out
+
+
 @pytest.mark.parametrize(
     "bad",
     ["a; rm -rf /", "a b", "a$(id)", "a`id`", "a\nb", "a'b", 'a"b'],

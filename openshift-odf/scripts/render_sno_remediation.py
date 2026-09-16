@@ -67,6 +67,11 @@ _CONTEXT_PIN = """\
 
 # Pin every `oc` below to one context (rendered from --context).
 oc() {{ command oc --context={context} "$@"; }}
+# Record the pinned context for the preflight. `oc config current-context` keeps
+# printing the kubeconfig's own current-context even when --context overrides the
+# request target, so it must not be used to label the target or to compare
+# against ODF_EXPECT_CONTEXT.
+ODF_TARGET_CONTEXT={context}
 """
 
 # Must render before any mutating command: --release only selects templates, so
@@ -77,11 +82,15 @@ _RELEASE_PREFLIGHT = """\
 #     different ODF release. The release check answers "is this the right
 #     software?"; it cannot answer "is this the right cluster?", so print that
 #     too and set ODF_EXPECT_CONTEXT to make a mismatch fatal.
-echo "target cluster: $(oc config current-context 2>/dev/null || echo unknown)" \\
-  "($(oc whoami --show-server 2>/dev/null || echo unknown))" >&2
-if [ -n "${{ODF_EXPECT_CONTEXT:-}}" ] \\
-   && [ "$(oc config current-context 2>/dev/null)" != "$ODF_EXPECT_CONTEXT" ]; then
-  echo "current context does not match ODF_EXPECT_CONTEXT=$ODF_EXPECT_CONTEXT" >&2
+#     The server URL is authoritative. The context label comes from the --context
+#     pin when there is one, and only otherwise from `oc config current-context`,
+#     which reports the kubeconfig's current-context regardless of --context.
+TARGET_CONTEXT="${{ODF_TARGET_CONTEXT:-$(oc config current-context 2>/dev/null || echo unknown)}}"
+echo "target cluster: $(oc whoami --show-server 2>/dev/null || echo unknown)" \\
+  "(context: $TARGET_CONTEXT)" >&2
+if [ -n "${{ODF_EXPECT_CONTEXT:-}}" ] && [ "$TARGET_CONTEXT" != "$ODF_EXPECT_CONTEXT" ]; then
+  echo "target context '$TARGET_CONTEXT' does not match" \\
+    "ODF_EXPECT_CONTEXT=$ODF_EXPECT_CONTEXT" >&2
   exit 1
 fi
 #     Resolve to exactly one CSV first. A glob matches across newlines, so a
