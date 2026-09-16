@@ -69,8 +69,12 @@ Detect SNO first:
 oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}{"\n"}'
 ```
 
-When the result is `SingleReplica`, run this gate before declaring the cluster ready
-or before the smoke tests in the next section:
+When the result is **not** `SingleReplica` (for example `HighlyAvailable` on
+compact or multi-node), **skip this gate** and do not apply
+`references/validated-odf-sno.md` remediations, `render_sno_remediation.py`, or
+`health mute POOL_NO_REDUNDANCY` — those are SNO-only and are harmful on
+multi-node. When the result is `SingleReplica`, run this gate before declaring
+the cluster ready or before the smoke tests in the next section:
 
 ```bash
 oc -n openshift-storage get cephfilesystem,cephobjectstore -o wide

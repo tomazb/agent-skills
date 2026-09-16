@@ -6,7 +6,9 @@
   treat `StorageCluster: Ready` as full ODF readiness on Single Node OpenShift.
   Check `CephFilesystem` / `CephObjectStore` phase, MDS/RGW pods, `ceph fs ls`,
   and Regression 4 `topologyKey` symptoms before smoke tests; link to
-  `validated-odf-sno.md` and `render_sno_remediation.py`.
+  `validated-odf-sno.md` and `render_sno_remediation.py`. Explicitly skip the
+  gate and SNO remediations when `controlPlaneTopology` is not `SingleReplica`
+  (compact/multi-node) so agents do not apply size-1 / mute workarounds there.
 - Re-validated on prod1 (ODF 4.20.18 SNO, 2026-09-16): block healthy while
   CephFS/RGW stayed `Failure` until Regression 4; block/file/object smoke tests
   passed after fix; `POOL_NO_REDUNDANCY` muted.
