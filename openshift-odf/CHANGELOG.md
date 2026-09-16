@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.17.3
+
+- Added an **SNO readiness gate** to `references/validation-hardening.md`: do not
+  treat `StorageCluster: Ready` as full ODF readiness on Single Node OpenShift.
+  Check `CephFilesystem` / `CephObjectStore` phase, MDS/RGW pods, `ceph fs ls`,
+  and Regression 4 `topologyKey` symptoms before smoke tests; link to
+  `validated-odf-sno.md` and `render_sno_remediation.py`.
+- Re-validated on prod1 (ODF 4.20.18 SNO, 2026-09-16): block healthy while
+  CephFS/RGW stayed `Failure` until Regression 4; block/file/object smoke tests
+  passed after fix; `POOL_NO_REDUNDANCY` muted.
+
 ## 1.17.2
 
 - PR review: bind console-plugin forbid markers to the `oc patch` line and its

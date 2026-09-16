@@ -56,6 +56,62 @@ oc -n openshift-storage exec deploy/rook-ceph-tools -- ceph osd df
 
 Confirm exactly one default StorageClass when defaulting is expected, and that the ODF StorageClasses (`ocs-storagecluster-ceph-rbd`, `ocs-storagecluster-cephfs`, and `ocs-storagecluster-ceph-rgw` if object storage is enabled) exist.
 
+## SNO Readiness Gate (ODF 4.20 and 4.22)
+
+On Single Node OpenShift, **`StorageCluster: Ready` and `CephBlockPool: Ready` do not
+mean ODF is fully ready.** Block can be healthy while CephFS and RGW are still broken.
+Do not skip the checks below or treat a green StorageCluster as proof that file and
+object storage work.
+
+Detect SNO first:
+
+```bash
+oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}{"\n"}'
+```
+
+When the result is `SingleReplica`, run this gate before declaring the cluster ready
+or before the smoke tests in the next section:
+
+```bash
+oc -n openshift-storage get cephfilesystem,cephobjectstore -o wide
+oc -n openshift-storage get pods -l 'app in (rook-ceph-mds,rook-ceph-rgw)' -o wide
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" fs ls
+```
+
+**Fail the readiness check** when any of these are true:
+
+- `CephFilesystem` and/or `CephObjectStore` is `Failure` or `Progressing` for more
+  than a few minutes after `StorageCluster` reached `Ready`.
+- No `rook-ceph-mds-*` pods exist while `CephFilesystem` is expected.
+- No `rook-ceph-rgw-*` pods exist while `CephObjectStore` is expected.
+- `ceph fs ls` reports "No filesystems enabled" while CephFS is enabled.
+- MDS or RGW placement still shows `topologyKey: ""` with
+  `whenUnsatisfiable: DoNotSchedule` (the ODF 4.20/4.22 SNO Regression 4 symptom).
+
+**Remediation:** follow **`references/validated-odf-sno.md`** (Regression 4 for MDS/RGW
+`topologyKey`, plus the version-scoped pool and reconcile freeze steps). Review the
+full sequence with:
+
+```bash
+python3 scripts/render_sno_remediation.py --release 4.20 \
+  --name ocs-storagecluster --namespace openshift-storage
+```
+
+Substitute `--release 4.22` when that is the installed ODF stream. After CephFS pools
+exist, mute the expected SNO warning so Ceph reports `HEALTH_OK`:
+
+```bash
+oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
+```
+
+**Full readiness on SNO** requires all of: `CephFilesystem` and `CephObjectStore`
+`Ready`, MDS and RGW pods running, `ceph fs ls` listing the filesystem, and passing
+block, file, and object smoke tests below. Re-verified on prod1 (ODF 4.20.18 SNO,
+2026-09-16): block was healthy with `StorageCluster: Ready` while CephFS/RGW stayed
+in `Failure` until Regression 4 was applied; all three smoke modes passed afterward.
+
 ## Smoke Test
 
 Create a namespace, PVC, and writer pod using the intended StorageClass. Validate:
