@@ -61,7 +61,7 @@ Three properties make the exclusions trustworthy rather than merely short:
 ```bash
 git grep -nIoiE "https?://[a-z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443" -- . \
   | grep -viE ":https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.com|openshift\.io|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|cloudflare\.com|jsdelivr\.net|cdnjs\.com)$" \
-  | grep -viE ":(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid)|[a-z0-9-]+\.svc)$"
+  | grep -viE ":(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid)|[a-z0-9-]+\.svc)(:6443)?$"
 ```
 
 Expect a handful of hits from legitimate external citations; read them rather than assuming. Also check for routable IP literals:
@@ -77,7 +77,7 @@ Check the commit messages too — `git grep` only reads the tree, and a message 
 git log --format='%B' <base>..HEAD \
   | grep -oiE "https?://[a-z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443|([0-9]{1,3}\.){3}[0-9]{1,3}" \
   | grep -viE "^https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.com|openshift\.io|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io)$" \
-  | grep -viE "^(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid))$" \
+  | grep -viE "^(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid))(:6443)?$" \
   | grep -vE "^(127\.0\.0\.1|0\.0\.0\.0|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.0\.2\.[0-9]{1,3}|198\.51\.100\.[0-9]{1,3}|203\.0\.113\.[0-9]{1,3}|1\.1\.1\.1|8\.8\.8\.8)$" \
   | sort -u
 ```
