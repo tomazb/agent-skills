@@ -47,9 +47,11 @@ def _write_oc(bin_dir: Path, body: str) -> None:
     )
 
 
-def _run_audit(bin_dir: Path) -> subprocess.CompletedProcess[str]:
+def _run_audit(
+    bin_dir: Path, *args: str
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["/bin/bash", str(SCRIPT)],
+        ["/bin/bash", str(SCRIPT), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -418,3 +420,95 @@ def test_audit_flags_leftover_odf_statefulset_residue(tmp_path):
     assert result.returncode == 1
     assert "WARN: ODF residue objects in openshift-storage still exist:" in result.stdout
     assert "noobaa-db-pg" in result.stdout
+
+
+
+def test_audit_rejects_unknown_arguments(tmp_path):
+    """Regression: the script had no argument parsing at all.
+
+    `--context other-cluster` was silently ignored, so the audit ran against
+    whatever context happened to be current and reported those findings as if
+    they were the requested cluster's. Unknown arguments must now be fatal.
+    """
+    result = _run_audit(tmp_path, "--bogus")
+    assert result.returncode == 2
+    assert "unknown argument: --bogus" in result.stderr
+
+
+def test_audit_help_exits_zero(tmp_path):
+    result = _run_audit(tmp_path, "--help")
+    assert result.returncode == 0
+    assert "Usage: post_uninstall_audit.sh" in result.stdout
+
+
+@pytest.mark.parametrize("flag", ["--context", "--kubeconfig"])
+def test_audit_rejects_flag_without_value(tmp_path, flag):
+    result = _run_audit(tmp_path, flag)
+    assert result.returncode == 2
+    assert f"{flag} requires a value" in result.stderr
+
+
+def test_audit_forwards_context_to_oc(tmp_path):
+    """--context must reach every `oc` invocation, not just be accepted."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_jq_proxy(bin_dir)
+    argv_log = tmp_path / "argv.log"
+    _write_oc(
+        bin_dir,
+        f"""
+        with open({str(argv_log)!r}, "a") as fh:
+            fh.write(" ".join(sys.argv[1:]) + chr(10))
+        sys.exit(1)
+        """,
+    )
+    _run_audit(bin_dir, "--context", "htz2")
+    recorded = argv_log.read_text(encoding="utf-8").splitlines()
+    assert recorded, "no oc invocation was recorded"
+    assert all(line.startswith("--context=htz2 ") for line in recorded), recorded
+
+
+def test_audit_banner_names_the_requested_context(tmp_path):
+    """The banner must report the context that was asked for.
+
+    `oc config current-context` keeps printing the kubeconfig's own current
+    context even when --context overrides the request target, so reporting it
+    would name the wrong cluster on exactly the runs where it matters.
+    """
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_jq_proxy(bin_dir)
+    _write_oc(
+        bin_dir,
+        """
+        args = sys.argv[1:]
+        if "config" in args and "current-context" in args:
+            print("some-other-context")
+            sys.exit(0)
+        if "whoami" in args and "--show-server" in args:
+            print("https://api.cluster-under-test.example:6443")
+            sys.exit(0)
+        if "whoami" in args:
+            print("tester")
+            sys.exit(0)
+        sys.exit(1)
+        """,
+    )
+    result = _run_audit(bin_dir, "--context", "htz2")
+    assert "auditing https://api.cluster-under-test.example:6443 (context: htz2)" in result.stdout
+    assert "some-other-context" not in result.stdout
+
+
+
+@pytest.mark.parametrize("arg", ["--context=", "--kubeconfig="])
+def test_audit_rejects_empty_inline_option_values(tmp_path, arg):
+    """`--context=` matched the `--context=*` branch and skipped the value check.
+
+    oc treats an empty `--context=` as "no override" rather than an error, so the
+    audit would silently run against the current context after being told to use
+    a specific one - the same class of failure the argument parsing was added to
+    prevent.
+    """
+    result = _run_audit(tmp_path, arg)
+    assert result.returncode == 2
+    assert "requires a value" in result.stderr
