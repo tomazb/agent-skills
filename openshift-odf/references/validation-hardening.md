@@ -79,7 +79,15 @@ RBAC denial or a missing field must never silently skip this gate on a real SNO 
 TOPOLOGY=$(oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}' 2>/dev/null)
 echo "controlPlaneTopology=${TOPOLOGY:-<empty/unreadable>}"
 # Fall back to the node count whenever the field is empty or unreadable.
-[ -z "$TOPOLOGY" ] && oc get nodes --no-headers | wc -l
+# Fail closed: if `oc get nodes` itself fails (RBAC/API), do NOT treat that as
+# nodeCount=0 / multi-node — leave topology unknown and run the gate.
+if [ -z "$TOPOLOGY" ]; then
+  if ! NODES=$(oc get nodes --no-headers 2>/dev/null); then
+    echo "node count unavailable; topology is unknown — run the gate, do not skip" >&2
+  else
+    printf '%s\n' "$NODES" | awk 'NF {count++} END {print "nodeCount=" count+0}'
+  fi
+fi
 ```
 
 **Skip this gate only** when `controlPlaneTopology` is an explicit multi-node value —
@@ -148,11 +156,32 @@ on its own:
 ```bash
 ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
 CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
-for pool in $(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool ls); do
-  echo "$pool -> $(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get "$pool" size)"
-done
-# Every line must read "size: 1" before muting.
-oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
+MUTE_OK=1
+if ! pools=$(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool ls 2>/dev/null); then
+  echo "failed to list pools; skip mute" >&2
+  MUTE_OK=0
+elif [ -z "$pools" ]; then
+  echo "no pools listed; skip mute" >&2
+  MUTE_OK=0
+else
+  for pool in $pools; do
+    if ! size_line=$(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get "$pool" size 2>/dev/null); then
+      echo "failed to query size for pool $pool" >&2
+      MUTE_OK=0
+      continue
+    fi
+    echo "$pool -> $size_line"
+    pool_size=$(printf '%s\n' "$size_line" | awk '$1 == "size:" { print $2; exit }')
+    if [ "$pool_size" != "1" ]; then
+      MUTE_OK=0
+    fi
+  done
+fi
+if [ "$MUTE_OK" -eq 1 ]; then
+  oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
+else
+  echo "skip mute: every pool must report size: 1 and every query must succeed" >&2
+fi
 ```
 
 **Full readiness on SNO** requires all of: `CephFilesystem` `Ready`; `CephObjectStore`
