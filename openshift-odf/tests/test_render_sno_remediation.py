@@ -63,10 +63,12 @@ def test_release_is_required_and_validated():
 
 def test_420_emits_blockpool_fix_and_object_file_pool_fix():
     out = render_sno_remediation("4.20")
-    # 4.20-only: CephBlockPool failure-domain fix, with size persisted in the CR
+    # CephBlockPool failure-domain fix, with size persisted in the CR
     assert "cephblockpool ocs-storagecluster-cephblockpool" in out
     assert '"value":"host"' in out
-    assert '"path":"/spec/replicated/replicasPerFailureDomain"' in out
+    # Dropped via merge patch, not a JSON-patch "remove" - see
+    # test_422_emits_the_cephblockpool_fix for why.
+    assert '"replicasPerFailureDomain":null' in out
     assert '"path":"/spec/replicated/size","value":1' in out
     assert '"path":"/spec/replicated/requireSafeReplicaSize","value":false' in out
     # Also required on 4.20.18: object/file pools reject size=1 + replicasPerFailureDomain=1
@@ -77,13 +79,27 @@ def test_420_emits_blockpool_fix_and_object_file_pool_fix():
     assert "noobaa-endpoint" not in out
 
 
-def test_422_emits_pool_and_resource_blocks_and_no_420_only_blocks():
+def test_422_emits_pool_and_resource_blocks():
     out = render_sno_remediation("4.22")
     assert "/spec/metadataPool/replicated/replicasPerFailureDomain" in out
     assert "/spec/dataPool/replicated/replicasPerFailureDomain" in out
     assert "/spec/dataPools/0/replicated/replicasPerFailureDomain" in out
-    # 4.20-only CephBlockPool failure-domain rewrite must not appear
-    assert "cephblockpool" not in out
+
+
+def test_422_emits_the_cephblockpool_fix():
+    # Regression, observed on ODF 4.22.3 (htz2, 2026-09-16): the CephBlockPool CR
+    # ships failureDomain=osd with size=3 and replicasPerFailureDomain=1, so Rook
+    # reverts a live `ceph osd pool set ... size 1` and the cluster sits at
+    # "32 pgs inactive / undersized" forever. This block used to be 4.20-only.
+    out = render_sno_remediation("4.22")
+    assert "cephblockpool ocs-storagecluster-cephblockpool" in out
+    assert '"/spec/failureDomain","value":"host"' in out
+    # replicasPerFailureDomain is dropped with a merge patch, not a JSON-patch
+    # "remove": verified on a live OCP 4.22.12 apiserver that removing an absent
+    # member is rejected, which under `set -e` would abort the script after the
+    # reconcile freeze and topologyKey patches had already been applied.
+    assert '"replicasPerFailureDomain":null' in out
+    assert '"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"' not in out
 
 
 def test_422_guards_single_cephfilesystem_data_pool():
@@ -184,8 +200,14 @@ def test_emits_minimal_resource_requests_with_expected_values():
     assert resources["mon"]["requests"] == {"cpu": "100m", "memory": "1Gi"}
     assert resources["mgr"]["requests"] == {"cpu": "100m", "memory": "1Gi"}
     assert resources["noobaa-core"]["requests"] == {"cpu": "100m", "memory": "1Gi"}
-    assert resources["noobaa-db"]["requests"] == {"cpu": "100m", "memory": "512Mi"}
     assert resources["noobaa-endpoint"]["requests"] == {"cpu": "100m", "memory": "512Mi"}
+    # noobaa-db must NOT be constrained here. Lowering its request makes NooBaa
+    # recompute the CNPG postgres spec, and NooBaa refuses to apply a CNPG spec
+    # change while its own phase is Creating - which it can never leave, because
+    # that same reconcile errors. Observed as a permanent deadlock on ODF 4.22.3
+    # (htz2, 2026-09-16): CNPG Ready 2/2, zero noobaa-core pods, StorageCluster
+    # stuck Progressing, and a noobaa-operator restart did not clear it.
+    assert "noobaa-db" not in resources
 
     device_set = next(
         op
@@ -229,6 +251,7 @@ def test_step_labels_form_the_expected_sequence_per_release():
         "5",
         "6",
         "7",
+        "8",
     ]
 
 
@@ -375,3 +398,63 @@ def test_cli_rejects_unvalidated_release_and_invalid_names():
     injected = _run_cli("--release", "4.22", "--namespace", "my-ns; id")
     assert injected.returncode != 0
     assert "RFC 1123" in injected.stderr
+
+
+def test_context_pin_wraps_every_oc_call():
+    """--context must pin the whole script, not just document an intent.
+
+    The rendered script uses bare `oc`, so without a pin it mutates whatever
+    kubeconfig context happens to be current. A shell function is used because it
+    is inherited by the command substitutions the script relies on.
+    """
+    out = render_sno_remediation("4.22", context="htz2")
+    assert 'oc() { command oc --context=htz2 "$@"; }' in out
+
+
+def test_context_pin_absent_by_default():
+    assert "command oc --context=" not in render_sno_remediation("4.22")
+
+
+def test_preflight_always_announces_the_target_cluster():
+    # The release preflight answers "is this the right software?" but never
+    # "is this the right cluster?" - print it, and let ODF_EXPECT_CONTEXT make a
+    # mismatch fatal.
+    out = render_sno_remediation("4.22")
+    assert "target cluster:" in out
+    assert "ODF_EXPECT_CONTEXT" in out
+
+
+def test_pinned_context_is_used_for_label_and_expectation_check():
+    """`oc config current-context` ignores the --context override.
+
+    Verified against a live cluster: with the kubeconfig on `prod1`,
+    `oc --context=htz2 config current-context` still prints `prod1`, while
+    `oc --context=htz2 whoami --show-server` correctly resolves htz2. Deriving
+    the label from `config current-context` therefore mislabels the target, and
+    comparing it against ODF_EXPECT_CONTEXT false-fatals on exactly the runs the
+    pin was added to protect.
+    """
+    out = render_sno_remediation("4.22", context="htz2")
+    assert "ODF_TARGET_CONTEXT=htz2" in out
+    # The label and the expectation check both go through TARGET_CONTEXT, which
+    # prefers the pin and only falls back to current-context when unpinned.
+    assert 'TARGET_CONTEXT="${ODF_TARGET_CONTEXT:-' in out
+    assert '[ "$TARGET_CONTEXT" != "$ODF_EXPECT_CONTEXT" ]' in out
+    # The pinned value must not be re-derived from current-context anywhere.
+    assert '[ "$(oc config current-context 2>/dev/null)" != "$ODF_EXPECT_CONTEXT" ]' not in out
+
+
+def test_unpinned_preflight_falls_back_to_current_context():
+    out = render_sno_remediation("4.22")
+    assert "ODF_TARGET_CONTEXT=" not in out
+    assert 'TARGET_CONTEXT="${ODF_TARGET_CONTEXT:-$(oc config current-context' in out
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["a; rm -rf /", "a b", "a$(id)", "a`id`", "a\nb", "a'b", 'a"b'],
+)
+def test_context_rejects_shell_injection(bad):
+    """The context is interpolated into an unquoted shell word in the wrapper."""
+    with pytest.raises(ValueError):
+        render_sno_remediation("4.22", context=bad)

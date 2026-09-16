@@ -1,5 +1,44 @@
 # Changelog
 
+## 1.18.0
+
+Fixes from a full ODF 4.22.3 install/uninstall round-trip on an OCP 4.22.12 SNO
+cluster (htz2, 2026-09-16). Every item below was reproduced on that cluster.
+
+- **`render_sno_remediation.py` now emits the CephBlockPool fix for 4.22.** It was
+  4.20-only, on the assumption that 4.22 shipped a failure domain Rook accepts.
+  On ODF 4.22.3 the `CephBlockPool` CR ships `failureDomain: osd` with `size: 3`
+  and `replicasPerFailureDomain: 1`, so Rook re-applies the CR spec and reverts the
+  live `ceph osd pool set ... size 1`. The cluster then sits at "32 pgs inactive /
+  32 pgs undersized" and the 4.22 path as shipped could never reach `HEALTH_OK`.
+  `references/validated-odf-sno.md` also now uses the JSON patch form for that CR,
+  because a size-only merge patch leaves `replicasPerFailureDomain` in place.
+- **Dropped `noobaa-db` from the 4.22 resource-request floor** in both the renderer
+  and `references/validated-odf-sno.md`. Lowering that request makes NooBaa's PGTune
+  recompute the CNPG postgres spec; NooBaa refuses to apply a CNPG spec change while
+  its phase is `Creating` and can never leave `Creating`, because that same reconcile
+  errors. Observed as a permanent deadlock: CNPG `Ready=True` and healthy 2/2 for
+  10+ minutes with zero `noobaa-core` pods and the StorageCluster stuck
+  `Progressing`. Restarting `noobaa-operator` does not clear it; removing the key
+  does, in seconds. The runbook applies this floor right after StorageCluster
+  creation, which is exactly when NooBaa is still initializing.
+- **Both scripts can now name the cluster they act on.**
+  `post_uninstall_audit.sh` had no argument parsing at all: `--context other-cluster`
+  was silently ignored and the audit ran against whatever context was current,
+  reporting those findings as the requested cluster's. It now accepts
+  `--context`/`--kubeconfig`, rejects unknown arguments, and prints the server it
+  audited. `render_sno_remediation.py` gained `--context`, which pins every emitted
+  `oc` through a wrapper function; its preflight now prints the target cluster and
+  honors `ODF_EXPECT_CONTEXT`. The release preflight could only answer "is this the
+  right software?", never "is this the right cluster?".
+- **`render_storagecluster.py --replica 1` now emits `flexibleScaling: true` and the
+  mon/OSD/OSD-prepare topology spread constraints.** Without them, `--replica 1`
+  produced exactly the "generic SNO manifest" that `references/validated-odf-sno.md`
+  says never to use. `--replica 3` output is unchanged.
+- Recorded that every documented ODF 4.22 SNO regression still applies on 4.22.3
+  (`SINGLE_NODE` not auto-set, pools created at `size: 3`, MDS/RGW `topologyKey: ""`),
+  and that the remediation preflight correctly accepts a 4.22.3 CSV.
+
 ## 1.17.3
 
 - Added an **SNO readiness gate** to `references/validation-hardening.md`: do not

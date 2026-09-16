@@ -658,9 +658,22 @@ oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p 
 }'
 
 # Step 2: Patch ODF-managed CRs to size=1
+# The CephBlockPool CR patch is mandatory, not optional tidying: Rook keeps
+# re-applying this CR's spec, so a live `ceph osd pool set ... size 1` is undone
+# on the next reconcile and the pool returns to size 3. Observed on ODF 4.22.3
+# (htz2, 2026-09-16), where the CR shipped failureDomain=osd with size=3 and
+# replicasPerFailureDomain=1 and the cluster sat at "32 pgs inactive /
+# undersized" until the CR itself was corrected.
+# Use the JSON form below rather than a bare size-only merge patch: leaving
+# replicasPerFailureDomain=1 in place alongside size=1 is the same combination
+# Rook rejects on the object and filesystem pools ("size must be greater").
 oc -n openshift-storage patch cephblockpool ocs-storagecluster-cephblockpool \
-  --type merge \
-  -p '{"spec":{"replicated":{"size":1,"requireSafeReplicaSize":false}}}'
+  --type json -p '[
+    {"op":"replace","path":"/spec/failureDomain","value":"host"},
+    {"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"},
+    {"op":"replace","path":"/spec/replicated/size","value":1},
+    {"op":"add","path":"/spec/replicated/requireSafeReplicaSize","value":false}
+  ]'
 
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore \
   --type merge \
@@ -781,6 +794,34 @@ step exists; it deliberately does not repeat the patches.
 `ceph osd pool set .mgr size 1 --yes-i-really-mean-it` / `min_size 1` step after
 such restarts, then re-mute `POOL_NO_REDUNDANCY`.
 
+## ODF 4.22 Regressions Re-confirmed on 4.22.3
+
+Re-validated on htz2 (OCP 4.22.12 SNO, ODF 4.22.3-rhodf, 2026-09-16) with a full
+install and uninstall round-trip. Every 4.22 regression in this document still
+applies on the newer z-stream — treat the workarounds as current for 4.22.3, not
+just 4.22.0/4.22.1:
+
+- `SINGLE_NODE` is still not auto-set from `controlPlaneTopology: SingleReplica`;
+  the `ocs-operator` CSV patch is still required.
+- Pools are still created with `size: 3` under `SINGLE_NODE=true`
+  (`builtin-mgr` and `ocs-storagecluster-cephblockpool` both observed).
+- MDS and RGW placements still ship `topologyKey: ""` with
+  `whenUnsatisfiable: DoNotSchedule`; `ceph fs ls` reported "No filesystems
+  enabled" until they were patched.
+- The `CephBlockPool` CR shipped `failureDomain: osd` with `size: 3` and
+  `replicasPerFailureDomain: 1`. A live `ceph osd pool set ... size 1` alone is
+  **not** enough: Rook re-applies the CR spec, the pool returns to `size 3`, and
+  the cluster sits at "32 pgs inactive / 32 pgs undersized" and never reaches
+  `HEALTH_OK`. Patch the CR as well (see "Pool Sizes Not Reduced for SNO").
+- The CSI `Driver` replica fix applied cleanly on a fresh install with no stale
+  `ctrlplugin` pods to delete.
+- NooBaa brings up a two-instance CNPG postgres cluster
+  (`noobaa-db-pg-cluster-1` and `-2`); both scheduled on the single node without
+  an anti-affinity problem.
+
+`--release 4.22` accepts a 4.22.3 CSV: the rendered preflight globs
+`ocs-operator.v4.22.*`, so a newer z-stream is not falsely rejected.
+
 ## ODF 4.22 SNO: CPU-Request Starvation
 
 ODF's default "balanced" resource **requests** (mon `1050m`; mds/osd/rgw
@@ -797,7 +838,6 @@ oc -n openshift-storage patch storagecluster ocs-storagecluster --type merge -p 
     "mon":             {"requests": {"cpu": "100m", "memory": "1Gi"}},
     "mgr":             {"requests": {"cpu": "100m", "memory": "1Gi"}},
     "noobaa-core":     {"requests": {"cpu": "100m", "memory": "1Gi"}},
-    "noobaa-db":       {"requests": {"cpu": "100m", "memory": "512Mi"}},
     "noobaa-endpoint": {"requests": {"cpu": "100m", "memory": "512Mi"}}
   }}
 }'
@@ -809,6 +849,34 @@ oc -n openshift-storage patch cephfilesystem ocs-storagecluster-cephfilesystem -
 oc -n openshift-storage patch cephobjectstore ocs-storagecluster-cephobjectstore --type merge \
   -p '{"spec":{"gateway":{"resources":{"requests":{"cpu":"100m","memory":"1Gi"},"limits":{"cpu":"2","memory":"4Gi"}}}}}'
 ```
+
+**Do not add a `noobaa-db` entry to that patch.** Lowering the `noobaa-db` request
+makes NooBaa's PGTune recompute the CNPG postgres spec (`shared_buffers`,
+`effective_cache_size`, `maintenance_work_mem`, `wal_buffers`, `work_mem` and the
+pod requests). NooBaa refuses to apply a CNPG spec change while its own phase is
+`Creating`, and it can never leave `Creating` because that same reconcile is what
+errors — a permanent deadlock:
+
+```text
+cnpg:: cluster spec is changed, updating cluster. diff: [... shared_buffers: 1GB != 128MB ...]
+cnpg:: the cluster spec was changed but the cluster creation is still in progress, skipping update
+SetPhase: temporary error during phase "Creating"
+```
+
+Observed on ODF 4.22.3 (htz2, 2026-09-16) because this runbook applies the resource
+floor immediately after `StorageCluster` creation, which is exactly when NooBaa is
+still initializing: the CNPG cluster reported `Ready=True` and healthy 2/2 for over
+ten minutes while `noobaa` stayed `Creating` with zero `noobaa-core`/`noobaa-endpoint`
+pods, so the `StorageCluster` never left `Progressing`. Restarting `noobaa-operator`
+does **not** clear it. Removing the key does, within seconds:
+
+```bash
+oc -n openshift-storage patch storagecluster ocs-storagecluster --type json \
+  -p '[{"op":"remove","path":"/spec/resources/noobaa-db"}]'
+```
+
+If `noobaa-db` really must be constrained, apply that single key only after
+`noobaa` reports `Ready`.
 
 This dropped observed CPU requests from 99% to ~35% and let all components schedule.
 
@@ -854,8 +922,8 @@ oc -n openshift-storage patch drivers.csi.ceph.io openshift-storage.cephfs.csi.c
 ## Validation Notes (ODF 4.22 SNO)
 
 The deterministic 4.22 patches (reconcile freeze, MDS/RGW `topologyKey`, the
-object/file CR-spec pool fixes, CSI `Driver` replicas, and the resource-request
-floor) can be generated for review with:
+CephBlockPool and object/file CR-spec pool fixes, CSI `Driver` replicas, and the
+resource-request floor) can be generated for review with:
 
 ```bash
 python3 scripts/render_sno_remediation.py --release 4.22 \

@@ -7,6 +7,56 @@ set -euo pipefail
 FAILED=0
 QUERY_RESULT=""
 QUERY_NOT_FOUND=0
+OC_GLOBAL_ARGS=()
+# Reported in the banner. `oc config current-context` keeps printing the
+# kubeconfig's current context even when --context overrides the request target,
+# so it cannot be trusted to name the cluster actually being audited.
+OC_CONTEXT_LABEL=""
+
+# printf, not `cat <<EOF`: usage must still work when PATH holds nothing but oc
+# and jq, which is how this script is invoked in constrained environments.
+usage() {
+  printf '%s\n' \
+    'Usage: post_uninstall_audit.sh [--context NAME] [--kubeconfig PATH]' \
+    '' \
+    'Read-only audit for ODF residue after an uninstall.' \
+    '' \
+    '  --context NAME       kubeconfig context to audit (default: the current one)' \
+    '  --kubeconfig PATH    kubeconfig file to use' \
+    '  -h, --help           show this help' \
+    '' \
+    'Unknown arguments are rejected. This script previously ignored them' \
+    'silently, so a "--context other-cluster" that looked accepted actually' \
+    'audited whichever context was current, and reported the result as if it' \
+    'were the requested one.'
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --context)
+      [ "$#" -ge 2 ] || { echo "--context requires a value" >&2; exit 2; }
+      OC_GLOBAL_ARGS+=("--context=$2"); OC_CONTEXT_LABEL="$2"; shift 2 ;;
+    --context=*)
+      OC_CONTEXT_LABEL="${1#*=}"
+      # An empty suffix would otherwise reach oc as `--context=`, which silently
+      # means "no override" rather than failing the way a missing value does.
+      [ -n "$OC_CONTEXT_LABEL" ] || { echo "--context requires a value" >&2; exit 2; }
+      OC_GLOBAL_ARGS+=("--context=$OC_CONTEXT_LABEL"); shift ;;
+    --kubeconfig)
+      [ "$#" -ge 2 ] || { echo "--kubeconfig requires a value" >&2; exit 2; }
+      OC_GLOBAL_ARGS+=("--kubeconfig=$2"); shift 2 ;;
+    --kubeconfig=*)
+      kubeconfig_value="${1#*=}"
+      [ -n "$kubeconfig_value" ] || { echo "--kubeconfig requires a value" >&2; exit 2; }
+      OC_GLOBAL_ARGS+=("--kubeconfig=$kubeconfig_value"); shift ;;
+    -h|--help)
+      usage; exit 0 ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2 ;;
+  esac
+done
 
 fail() {
   echo "FAIL: $*"
@@ -202,10 +252,25 @@ echo "=== ODF Post-Uninstall Audit ==="
 require_command oc || exit 1
 require_command jq || exit 1
 
+# Route every `oc` below through the parsed global args. A function is used so
+# the 20-odd existing call sites (including those inside command substitutions,
+# which inherit it) need no changes. Defined after require_command so that check
+# still tests for the binary instead of finding this function.
+oc() { command oc "${OC_GLOBAL_ARGS[@]}" "$@"; }
+
 if ! OC_USER=$(oc whoami 2>&1); then
   fail "unable to contact the cluster with oc whoami: $OC_USER"
   exit 1
 fi
+
+# Name the cluster that was audited. Without this an audit of the wrong context
+# reads exactly like an audit of the right one. The server URL is authoritative;
+# the context label is only what was asked for.
+if [ -z "$OC_CONTEXT_LABEL" ]; then
+  OC_CONTEXT_LABEL=$(oc config current-context 2>/dev/null || echo unknown)
+fi
+echo "auditing $(oc whoami --show-server 2>/dev/null || echo unknown)" \
+  "(context: ${OC_CONTEXT_LABEL:-unknown})"
 
 check_storage_namespace
 
