@@ -486,7 +486,7 @@ def test_audit_banner_names_the_requested_context(tmp_path):
             print("some-other-context")
             sys.exit(0)
         if "whoami" in args and "--show-server" in args:
-            print("https://api.htz2.example:6443")
+            print("https://api.cluster-under-test.example:6443")
             sys.exit(0)
         if "whoami" in args:
             print("tester")
@@ -495,5 +495,5 @@ def test_audit_banner_names_the_requested_context(tmp_path):
         """,
     )
     result = _run_audit(bin_dir, "--context", "htz2")
-    assert "auditing https://api.htz2.example:6443 (context: htz2)" in result.stdout
+    assert "auditing https://api.cluster-under-test.example:6443 (context: htz2)" in result.stdout
     assert "some-other-context" not in result.stdout
