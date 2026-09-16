@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.1
+
+- Document that changing the default StorageClass after install must be done on
+  the `LVMCluster`, not the StorageClass. The operator reconciles
+  `storageclass.kubernetes.io/is-default-class` from
+  `spec.storage.deviceClasses[].default`, so `oc patch sc lvms-<name>` reports
+  success and is then silently reverted — which reads like the patch never took.
+- Note that `storageclass.kubevirt.io/is-default-virt-class` is **not** operator
+  managed and must be moved separately, or OpenShift Virtualization keeps
+  provisioning golden images and VM disks onto the old StorageClass. Observed on
+  an SNO cluster (2026-09-16): moving both annotations was enough for CDI to
+  relocate all KubeVirt golden images onto `lvms-vg1` by itself via the populator
+  path, with no manual clone or re-import.
+
 ## 1.1.0
 
 Fixes and evidence from a live LVMS 4.20.1 install on an OCP 4.20.32 SNO cluster that already ran ODF:

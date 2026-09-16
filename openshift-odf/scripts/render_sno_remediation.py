@@ -13,8 +13,8 @@ runbooks referenced in the banner for those stateful steps.
 
 * **4.20** — CephBlockPool failure-domain fix + object/file CR-spec fixes
   (shared with 4.22) + CSI replicas + mute note.
-* **4.22** — object/file CR-spec fixes + resource-request floor + CSI replicas
-  + mute note (no CephBlockPool failure-domain rewrite).
+* **4.22** — the same CephBlockPool and object/file CR-spec fixes + CSI replicas
+  + resource-request floor + mute note.
 
 Emitting the wrong release against a cluster fails under `set -e` on the first
 inapplicable patch; the rendered preflight aborts before any mutation when the
@@ -54,13 +54,34 @@ BANNER = """\
 #   * StorageClient onboarding recovery:
 #     follow references/validation-hardening.md troubleshooting.
 set -euo pipefail
+{context_pin}"""
+
+# Rendered only when --context is given. Every emitted `oc` goes through this
+# wrapper, including the ones inside command substitutions, because a shell
+# function is inherited by subshells. Without it the script uses bare `oc` and
+# mutates whatever context happens to be current - the easiest way to patch the
+# wrong cluster from a multi-cluster workstation.
+_CONTEXT_PIN = """\
+
+# Pin every `oc` below to one context (rendered from --context).
+oc() {{ command oc --context={context} "$@"; }}
 """
 
 # Must render before any mutating command: --release only selects templates, so
 # without this the wrong-release script mutates resources and only then fails on
 # an inapplicable patch. `set -e` stops the run, it does not undo those writes.
 _RELEASE_PREFLIGHT = """\
-# {n}. Preflight: refuse to run against a different ODF release.
+# {n}. Preflight: announce the target cluster, then refuse to run against a
+#     different ODF release. The release check answers "is this the right
+#     software?"; it cannot answer "is this the right cluster?", so print that
+#     too and set ODF_EXPECT_CONTEXT to make a mismatch fatal.
+echo "target cluster: $(oc config current-context 2>/dev/null || echo unknown)" \\
+  "($(oc whoami --show-server 2>/dev/null || echo unknown))" >&2
+if [ -n "${{ODF_EXPECT_CONTEXT:-}}" ] \\
+   && [ "$(oc config current-context 2>/dev/null)" != "$ODF_EXPECT_CONTEXT" ]; then
+  echo "current context does not match ODF_EXPECT_CONTEXT=$ODF_EXPECT_CONTEXT" >&2
+  exit 1
+fi
 #     Resolve to exactly one CSV first. A glob matches across newlines, so a
 #     newline-separated list whose first entry is the right release would
 #     otherwise satisfy the release check while the cluster state is ambiguous.
@@ -112,9 +133,14 @@ oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type json -p '[
 ]'
 """
 
-# ODF 4.20 only: 4.22 ships the CephBlockPool with a failure domain Rook accepts.
+# Both 4.20 and 4.22. This block used to be 4.20-only on the assumption that
+# 4.22 shipped a failure domain Rook accepts. Disproved on ODF 4.22.3 (htz2,
+# 2026-09-16): the CephBlockPool CR shipped failureDomain=osd with size=3 and
+# replicasPerFailureDomain=1, so Rook kept reverting the live `ceph osd pool set
+# ... size 1` back to 3 and the cluster sat at "32 pgs inactive / undersized"
+# and never reached HEALTH_OK.
 _BLOCKPOOL_FD = """\
-# {n}. CephBlockPool (4.20 only): Rook rejects size=1 while failureDomain=osd +
+# {n}. CephBlockPool: Rook rejects size=1 while failureDomain=osd +
 #    replicasPerFailureDomain=1 ("size must be greater than
 #    replicasPerFailureDomain"). Switch to host, drop replicasPerFailureDomain,
 #    and persist size=1 in the CR: the CR stays the desired state Rook applies
@@ -204,13 +230,21 @@ _RESOURCE_REQUESTS = """\
 #    set 'resourceProfile: lean' (it traps the StorageCluster in Progressing on
 #    4.22). Instead set minimal per-component requests. MDS/RGW are frozen CRs,
 #    so patch them directly.
+#    Deliberately NO 'noobaa-db' entry. Lowering the noobaa-db request makes
+#    NooBaa's PGTune recompute the CNPG postgres spec (shared_buffers,
+#    effective_cache_size, requests). NooBaa refuses to apply a CNPG spec change
+#    while its own phase is Creating, and it cannot leave Creating because that
+#    same reconcile errors out - a permanent deadlock. Observed on ODF 4.22.3
+#    (htz2, 2026-09-16): the CNPG cluster was Ready 2/2 for 10+ minutes with zero
+#    noobaa-core pods and the StorageCluster stuck Progressing. Restarting
+#    noobaa-operator does not clear it; removing the key does, immediately.
+#    If noobaa-db really must be constrained, apply it only after NooBaa is Ready.
 oc -n {ns} patch storagecluster {name} --type merge -p '{{
   "spec": {{
     "resources": {{
       "mon":             {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
       "mgr":             {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
       "noobaa-core":     {{"requests": {{"cpu": "100m", "memory": "1Gi"}}}},
-      "noobaa-db":       {{"requests": {{"cpu": "100m", "memory": "512Mi"}}}},
       "noobaa-endpoint": {{"requests": {{"cpu": "100m", "memory": "512Mi"}}}}
     }}
   }}
@@ -241,6 +275,7 @@ _BLOCKS = {
         _RELEASE_PREFLIGHT,
         _RECONCILE_IGNORE,
         _TOPOLOGYKEY,
+        _BLOCKPOOL_FD,
         _OBJECT_FILE_FD,
         _CSI_REPLICAS,
         _RESOURCE_REQUESTS,
@@ -266,11 +301,30 @@ def _validate_name(label: str, value: str) -> str:
     return value
 
 
+_CONTEXT_SAFE = re.compile(r"^[A-Za-z0-9._:@/-]+$")
+
+
+def _validate_context(value: str) -> str:
+    """Reject context names that would break out of the rendered `oc` argv.
+
+    The name is interpolated into an unquoted shell word inside the `oc()`
+    wrapper, so anything with whitespace, quotes or shell metacharacters could
+    inject a second command into every `oc` call the script makes.
+    """
+    if _CONTEXT_SAFE.fullmatch(value) is None:
+        raise ValueError(
+            f"context {value!r} contains characters that are unsafe to render "
+            "into a shell command; expected only letters, digits and ._:@/-"
+        )
+    return value
+
+
 def render_sno_remediation(
     release: str,
     name: str = "ocs-storagecluster",
     namespace: str = "openshift-storage",
     output: str | None = None,
+    context: str | None = None,
 ) -> str:
     """Return (and optionally write) the reviewable remediation bash script.
 
@@ -284,8 +338,12 @@ def render_sno_remediation(
         )
     _validate_name("name", name)
     _validate_name("namespace", namespace)
+    context_pin = ""
+    if context is not None:
+        _validate_context(context)
+        context_pin = _CONTEXT_PIN.format(context=context)
 
-    blocks = [BANNER.format(release=release)]
+    blocks = [BANNER.format(release=release, context_pin=context_pin)]
     for step, template in enumerate(_BLOCKS[release], start=1):
         blocks.append(
             template.format(n=step, name=name, ns=namespace, release=release)
@@ -312,10 +370,18 @@ def main() -> int:
     parser.add_argument("--name", default="ocs-storagecluster")
     parser.add_argument("--namespace", default="openshift-storage")
     parser.add_argument("--output", default=None)
+    parser.add_argument(
+        "--context",
+        default=None,
+        help=(
+            "kubeconfig context to pin every emitted `oc` to. Without it the "
+            "script targets whatever context is current when it runs."
+        ),
+    )
     args = parser.parse_args()
     try:
         text = render_sno_remediation(
-            args.release, args.name, args.namespace, args.output
+            args.release, args.name, args.namespace, args.output, args.context
         )
     except ValueError as exc:
         parser.error(str(exc))

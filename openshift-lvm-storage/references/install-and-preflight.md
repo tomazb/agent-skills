@@ -177,6 +177,36 @@ Two defaults is not merely untidy, and it is not random either: the `DefaultStor
 
 With `default: false` the operator prints a warning at apply time, and it means what it says: every PVC must then name the StorageClass explicitly.
 
+**Changing the default after install: patch the `LVMCluster`, not the StorageClass.**
+The operator owns the `storageclass.kubernetes.io/is-default-class` annotation on
+the StorageClass it generates and reconciles it back from
+`LVMCluster.spec.storage.deviceClasses[].default`. An `oc patch sc lvms-<name>`
+that sets the annotation reports `storageclass.storage.k8s.io/... patched` and is
+then silently reverted, which reads like the patch simply did not take:
+
+```bash
+# Wrong: accepted, then reverted by the operator.
+oc patch sc lvms-vg1 \
+  -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+
+# Right: change the source of truth.
+oc -n openshift-storage patch lvmcluster <name> --type json \
+  -p '[{"op":"replace","path":"/spec/storage/deviceClasses/0/default","value":true}]'
+```
+
+Index `0` is only correct for a single-`DeviceClass` cluster — check
+`spec.storage.deviceClasses` first and target the right element. Verify with
+`oc get sc` rather than assuming; the reconcile lands within seconds.
+
+Annotations the operator does **not** manage stay where you put them. Notably
+`storageclass.kubevirt.io/is-default-virt-class`, which OpenShift Virtualization
+uses to choose the StorageClass for golden images and new VM disks, must be moved
+separately — moving only the Kubernetes default leaves CDI still provisioning onto
+the old class. Observed on an SNO cluster (2026-09-16) migrating KubeVirt golden
+images off Ceph onto LVMS: moving both annotations was enough for CDI to relocate
+all of them onto `lvms-vg1` on its own, via the populator path, with no manual
+clone or re-import step.
+
 ```text
 Warning: no default deviceClass was specified, it will be mandatory to specify
 the generated storage class in any PVC explicitly or you will have to declare
