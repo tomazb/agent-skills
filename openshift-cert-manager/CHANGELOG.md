@@ -6,11 +6,11 @@
   and in `test_hostname_from_api_url` with RFC 2606 documentation names. The
   example still carries two labels, so the nested-zone point it illustrates is
   unchanged.
-- Move the IPv4 probe placeholder in the HTTP-01 tests from the routable
-  `1.2.3.4` to RFC 5737 `192.0.2.1`, matching the RFC 3849 `2001:db8::1` already
-  used beside it. The fixture's connector selected the A record by its leading
-  `1.` octet, which no longer distinguishes the two, so it now matches the
-  address explicitly.
+- Move the IPv4 probe placeholder in the HTTP-01 tests off a routable address
+  and onto RFC 5737 `192.0.2.1`, matching the RFC 3849 `2001:db8::1` already used
+  beside it. The fixture's connector selected the A record by its leading octet,
+  which no longer distinguishes the two, so it now matches the address
+  explicitly.
 
 ## 1.0.0
 

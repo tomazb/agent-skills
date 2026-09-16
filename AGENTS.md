@@ -48,26 +48,33 @@ These skills are written from real cluster work, so evidence is valuable and ide
 - **This applies to git and GitHub text too**, not just files: commit messages, PR titles and bodies, review replies, and issue comments. Those are the easiest to leak into and the most awkward to clean — a committed message needs `git commit --amend` plus a force-push, which needs the maintainer's explicit approval.
 - **Journals and evidence notes are the usual leak.** When recording that something was verified on a real cluster, name the product versions (`ODF 4.22.3`, `OCP 4.22.12`) and the topology (`SNO`), not the cluster.
 
-Scan before committing. Match URLs and `:6443` endpoints rather than bare dotted names — Kubernetes API groups (`cert-manager.io`, `rbd.csi.ceph.com`, `operators.coreos.com`) are dotted names too, and a scan that flags them produces enough noise that nobody runs it:
+Scan before committing. Match URLs and `:6443` endpoints rather than bare dotted names — Kubernetes API groups (`cert-manager.io`, `rbd.csi.ceph.com`, `operators.coreos.com`) are dotted names too, and a scan that flags them produces enough noise that nobody runs it.
+
+The allowlist anchors each approved domain at a dot boundary, so `evilgithub.com` is not waved through by containing `github.com`. The patterns avoid `\b`, which is a GNU extension rather than POSIX ERE and behaves differently on BSD/macOS `grep`.
 
 ```bash
-git grep -nIoE "https?://[a-zA-Z0-9._-]+|\b[a-z0-9-]+(\.[a-z0-9-]+){1,}:6443\b" -- . \
-  | grep -vE "example\.|\.example|\.test\b|\.invalid\b|github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|localhost|127\.0\.0\.1|cloudflare|jsdelivr|cdnjs|\.svc"
+git grep -nIoE "https?://[a-zA-Z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443" -- . \
+  | grep -vE "https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|cloudflare\.com|jsdelivr\.net|cdnjs\.com)(/|$)" \
+  | grep -vE "(^|[^a-z0-9-])(example\.(com|org|net)|localhost)|\.(example|test|invalid|svc)([^a-z0-9-]|$)|127\.0\.0\.1"
 ```
 
 Expect a handful of hits from legitimate external citations; read them rather than assuming. Also check for routable IP literals:
 
 ```bash
-git grep -nIoE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" -- . \
-  | grep -vE "127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.|1\.1\.1\.1|8\.8\.8\.8"
+git grep -nIoE "([0-9]{1,3}\.){3}[0-9]{1,3}" -- . \
+  | grep -vE "(127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.|1\.1\.1\.1|8\.8\.8\.8)"
 ```
 
-Check the commit messages too — `git grep` only reads the tree:
+Check the commit messages too — `git grep` only reads the tree, and a message is far more awkward to correct once pushed. Run both patterns over them:
 
 ```bash
 git log --format='%B' <base>..HEAD \
-  | grep -nE "https?://[a-zA-Z0-9._-]+|\b[a-z0-9-]+(\.[a-z0-9-]+){1,}:6443\b"
+  | grep -nE "https?://[a-zA-Z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443|([0-9]{1,3}\.){3}[0-9]{1,3}" \
+  | grep -vE "https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io)(/|$)" \
+  | grep -vE "(^|[^a-z0-9-])(example\.(com|org|net)|localhost)|\.(example|test|invalid)([^a-z0-9-]|$)|127\.0\.0\.1|192\.0\.2\.|198\.51\.100\.|203\.0\.113\."
 ```
+
+Re-run these **after** any late edit, including version bumps and changelog entries. A changelog that describes a redaction is an easy place to quote the very value that was removed.
 
 ## Verification
 - Run the relevant local tests for the skill you changed.
