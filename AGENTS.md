@@ -41,7 +41,7 @@ This repository stores reusable agent skills. Each skill should live in its own 
 ## Sensitive Data
 These skills are written from real cluster work, so evidence is valuable and identity is not. Record the behavior, the versions, and the symptom; never the address of the machine it happened on.
 
-- **Never commit** resolvable FQDNs or hostnames, cluster API URLs (`https://api.<cluster>:6443`), routes and ingress domains, public IP addresses, email addresses, DNS zone names, bucket names, kubeconfig contents, tokens, keys, or certificates.
+- **Never commit** resolvable FQDNs or hostnames, cluster API URLs (`https://<cluster-api-host>:6443`), routes and ingress domains, public IP addresses, email addresses, DNS zone names, bucket names, kubeconfig contents, tokens, keys, or certificates.
 - **Use reserved placeholders** so examples stay obviously fake: `example.com`, `example.org`, or the `.example` / `.test` / `.invalid` TLDs (RFC 2606) for names, and `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737) for addresses. Keep the structure that makes the example instructive — a nested-zone example still needs two labels (`ocp1.sno.example.com` vs `example.com`).
 - **Prefer a role over a name.** `the cluster API endpoint`, `the target cluster`, `<target-context>` all carry the meaning without the identity. A short internal nickname is acceptable where traceability genuinely helps; a resolvable FQDN never is.
 - **Redact pasted command output.** Live `oc whoami --show-server`, `oc config current-context`, `oc get route`, and node listings all print identifying values. Replace them with placeholders before pasting into a document, test fixture, journal, or commit message.
@@ -50,28 +50,36 @@ These skills are written from real cluster work, so evidence is valuable and ide
 
 Scan before committing. Match URLs and `:6443` endpoints rather than bare dotted names — Kubernetes API groups (`cert-manager.io`, `rbd.csi.ceph.com`, `operators.coreos.com`) are dotted names too, and a scan that flags them produces enough noise that nobody runs it.
 
-The allowlist anchors each approved domain at a dot boundary, so `evilgithub.com` is not waved through by containing `github.com`. The patterns avoid `\b`, which is a GNU extension rather than POSIX ERE and behaves differently on BSD/macOS `grep`.
+Three properties make the exclusions trustworthy rather than merely short:
+
+- **One match per line.** `-o` emits each match separately, so a line carrying both an approved URL and a real one cannot hide the second behind the first.
+- **Whole-value anchoring.** Each exclusion is pinned to the end of the match, so a reserved name such as `example.com` does not excuse a host that merely starts with it (`example.com` followed by `.attacker-domain`), and an RFC 1918 prefix such as `10.` does not excuse a routable address that merely contains it.
+- **Case-insensitive.** Hostnames are case-insensitive, so an uppercase `API.CLUSTER.EXAMPLE` on port 6443 must be caught as readily as the lowercase form.
+
+`\b` is deliberately absent: it is a GNU extension rather than POSIX ERE and behaves differently on BSD/macOS `grep`.
 
 ```bash
-git grep -nIoE "https?://[a-zA-Z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443" -- . \
-  | grep -vE "https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|cloudflare\.com|jsdelivr\.net|cdnjs\.com)(/|$)" \
-  | grep -vE "(^|[^a-z0-9-])(example\.(com|org|net)|localhost)|\.(example|test|invalid|svc)([^a-z0-9-]|$)|127\.0\.0\.1"
+git grep -nIoiE "https?://[a-z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443" -- . \
+  | grep -viE ":https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.com|openshift\.io|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|cloudflare\.com|jsdelivr\.net|cdnjs\.com)$" \
+  | grep -viE ":(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid)|[a-z0-9-]+\.svc)$"
 ```
 
 Expect a handful of hits from legitimate external citations; read them rather than assuming. Also check for routable IP literals:
 
 ```bash
 git grep -nIoE "([0-9]{1,3}\.){3}[0-9]{1,3}" -- . \
-  | grep -vE "(127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.|1\.1\.1\.1|8\.8\.8\.8)"
+  | grep -vE ":(127\.0\.0\.1|0\.0\.0\.0|255\.255\.255\.255|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.0\.2\.[0-9]{1,3}|198\.51\.100\.[0-9]{1,3}|203\.0\.113\.[0-9]{1,3}|1\.1\.1\.1|8\.8\.8\.8)$"
 ```
 
-Check the commit messages too — `git grep` only reads the tree, and a message is far more awkward to correct once pushed. Run both patterns over them:
+Check the commit messages too — `git grep` only reads the tree, and a message is far more awkward to correct once pushed. Same three properties apply, so match per-token with `-o` rather than filtering whole lines:
 
 ```bash
 git log --format='%B' <base>..HEAD \
-  | grep -nE "https?://[a-zA-Z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443|([0-9]{1,3}\.){3}[0-9]{1,3}" \
-  | grep -vE "https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io)(/|$)" \
-  | grep -vE "(^|[^a-z0-9-])(example\.(com|org|net)|localhost)|\.(example|test|invalid)([^a-z0-9-]|$)|127\.0\.0\.1|192\.0\.2\.|198\.51\.100\.|203\.0\.113\."
+  | grep -oiE "https?://[a-z0-9._-]+|[a-z0-9-]+(\.[a-z0-9-]+)+:6443|([0-9]{1,3}\.){3}[0-9]{1,3}" \
+  | grep -viE "^https?://([a-z0-9-]+\.)*(github\.com|githubusercontent\.com|redhat\.com|openshift\.com|openshift\.io|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io)$" \
+  | grep -viE "^(https?://)?([a-z0-9-]+\.)*(example\.(com|org|net)|localhost|[a-z0-9-]+\.(example|test|invalid))$" \
+  | grep -vE "^(127\.0\.0\.1|0\.0\.0\.0|10\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}|192\.168\.[0-9]{1,3}\.[0-9]{1,3}|172\.(1[6-9]|2[0-9]|3[01])\.[0-9]{1,3}\.[0-9]{1,3}|192\.0\.2\.[0-9]{1,3}|198\.51\.100\.[0-9]{1,3}|203\.0\.113\.[0-9]{1,3}|1\.1\.1\.1|8\.8\.8\.8)$" \
+  | sort -u
 ```
 
 Re-run these **after** any late edit, including version bumps and changelog entries. A changelog that describes a redaction is an easy place to quote the very value that was removed.
