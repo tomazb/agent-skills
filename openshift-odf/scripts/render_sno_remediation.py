@@ -49,8 +49,10 @@ BANNER = """\
 #
 # It does NOT perform live `ceph osd pool set` sizing, the POOL_NO_REDUNDANCY
 # mute, or StorageClient onboarding recovery (stateful / cluster-specific):
-#   * Live pool sizing / mute: follow references/validated-odf-sno.md
-#     "Regression 2" (the ceph CLI steps only).
+#   * Live pool sizing / mute: follow the pool-size section for this release in
+#     references/validated-odf-sno.md (the ceph CLI steps only). It is titled
+#     "Regression 2" on 4.20 and "Pool Sizes Not Reduced for SNO" on 4.22, so
+#     search for the topic rather than the number.
 #   * StorageClient onboarding recovery:
 #     follow references/validation-hardening.md troubleshooting.
 set -euo pipefail
@@ -172,7 +174,9 @@ oc -n {ns} patch drivers.csi.ceph.io/{ns}.cephfs.csi.ceph.com \\
 _MUTE = """\
 # {n}. Mute the expected single-replica warning — NOT EXECUTED HERE.
 #    POOL_NO_REDUNDANCY is only the expected steady state once pool sizing from
-#    references/validated-odf-sno.md "Regression 2" has been applied. Run these
+#    the pool-size section for this release in references/validated-odf-sno.md
+#    has been applied ("Regression 2" on 4.20, "Pool Sizes Not Reduced for SNO"
+#    on 4.22). Run these
 #    two commands by hand after that step, never before:
 #      ROOK_OP=$(oc -n {ns} get pods -l app=rook-ceph-operator -o name | head -1)
 #      CONF="/var/lib/rook/{ns}/{ns}.config"
