@@ -1,7 +1,7 @@
 # Journal: 2026-06-22 Longhorn Deprovision Lessons
 
-This note records observations from deprovisioning Longhorn v1.12.0 on the
-single-node OpenShift cluster `htz2.all-it.tech`. It is intentionally a journal
+This note records observations from deprovisioning Longhorn v1.12.0 on a
+single-node OpenShift cluster. It is intentionally a journal
 entry, not an authoritative runbook. Use it as input for a later skill update.
 
 ## Context
@@ -56,7 +56,7 @@ entry, not an authoritative runbook. Use it as input for a later skill update.
 ## Operational Friction
 
 - Several `oc` calls failed inside the sandbox with transient DNS lookup errors
-  for `api.ocp1.htz2.all-it.tech` or `raw.githubusercontent.com`.
+  for the cluster API endpoint or `raw.githubusercontent.com`.
 - The practical recovery was to rerun the same confirmed action outside the
   sandbox after the failure, with the same command and a narrow approval scope.
 

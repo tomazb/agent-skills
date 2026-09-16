@@ -1,6 +1,6 @@
 # OpenShift cert-manager Lifecycle
 
-Current version: **1.0.0**
+Current version: **1.0.1**
 
 Lifecycle skill for planning, installing, configuring, validating, and uninstalling the Red Hat cert-manager Operator on OpenShift/OKD, including Let's Encrypt ACME and optional replacement of the default `*.apps` ingress certificate and public API serving certificate.
 

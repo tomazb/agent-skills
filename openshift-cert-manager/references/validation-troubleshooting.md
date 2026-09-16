@@ -32,7 +32,7 @@ python3 scripts/check_http01_reachability.py --hostname "<challenge-hostname>"
 |---------|--------------|---------------|
 | TXT not visible | Token lacks Zone DNS Edit | Cloudflare token scope; Secret namespace |
 | Self-check timeout | In-cluster DNS cannot see public TXT | `CertManager` recursive nameservers override |
-| Wrong zone | Nested zone (`ocp1.htz2.all-it.tech` vs `all-it.tech`) | Which zone actually serves the FQDN |
+| Wrong zone | Nested zone (`ocp1.sno.example.com` vs `example.com`) | Which zone actually serves the FQDN |
 | Rate limited | Production ACME retries | Stop; wait; stay on staging until stable |
 
 ## CertificateRequest And Order

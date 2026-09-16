@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5
+
+- Remove the real cluster FQDN from the 2026-06-22 deprovision journal. The
+  observations are about Longhorn behavior and sandbox DNS failures, neither of
+  which needs the cluster's identity.
+
 ## 1.2.4
 
 - Added openshift-versions handoff and package-validator checks that preserve helper-script invocations in install/validation/uninstall runbooks.
