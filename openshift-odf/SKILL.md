@@ -34,7 +34,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **ODF operator or Ceph version upgrades**: use `references/upgrade.md`.
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`.
-- **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md` (on SNO, run the SNO readiness gate before declaring ODF fully ready).
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
 - **Observed SNO configurations or ODF 4.16, 4.20, and 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.
 
