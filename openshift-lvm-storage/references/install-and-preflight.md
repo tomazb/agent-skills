@@ -190,8 +190,11 @@ oc patch sc lvms-vg1 \
   -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 
 # Right: change the source of truth. Use "add", not "replace": `default` is an
-# optional field, so a valid LVMCluster can omit it entirely, and JSON Patch
-# "replace" fails when the target member is absent. "add" sets it either way.
+# optional field, so a valid LVMCluster can omit it entirely. RFC 6902 "replace"
+# requires the target member to exist, and "add" sets it whether or not it does.
+# (Kubernetes is laxer than the RFC here - measured on OCP 4.22.12, a "replace"
+# of an absent member succeeds - but that is an implementation detail of the
+# apiserver's JSON Patch library, not a guarantee. "add" is correct on both.)
 oc -n openshift-storage patch lvmcluster <name> --type json \
   -p '[{"op":"add","path":"/spec/storage/deviceClasses/0/default","value":true}]'
 ```

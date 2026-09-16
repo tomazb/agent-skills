@@ -165,9 +165,18 @@ _BLOCKPOOL_FD = """\
 #    Either way the fix is the same: switch to host, drop
 #    replicasPerFailureDomain, and persist size=1 in the CR so the desired state
 #    matches what the live pool should be.
+#    Drop replicasPerFailureDomain with a merge patch rather than a JSON-patch
+#    "remove". Verified against a live OCP 4.22.12 apiserver: a JSON-patch
+#    "remove" of an absent member is rejected ("the request is invalid"), which
+#    under `set -e` aborts this script AFTER the reconcile freeze and the
+#    topologyKey patches have already mutated the cluster. A merge patch with
+#    null deletes the key when present and is a no-op when it is not, so this
+#    step is safe to re-run and safe against a release that stops shipping the
+#    field.
+oc -n {ns} patch cephblockpool {name}-cephblockpool --type merge \
+  -p '{{"spec":{{"replicated":{{"replicasPerFailureDomain":null}}}}}}'
 oc -n {ns} patch cephblockpool {name}-cephblockpool --type json -p '[
   {{"op":"replace","path":"/spec/failureDomain","value":"host"}},
-  {{"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"}},
   {{"op":"replace","path":"/spec/replicated/size","value":1}},
   {{"op":"add","path":"/spec/replicated/requireSafeReplicaSize","value":false}}
 ]'

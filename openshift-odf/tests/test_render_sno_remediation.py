@@ -63,10 +63,12 @@ def test_release_is_required_and_validated():
 
 def test_420_emits_blockpool_fix_and_object_file_pool_fix():
     out = render_sno_remediation("4.20")
-    # 4.20-only: CephBlockPool failure-domain fix, with size persisted in the CR
+    # CephBlockPool failure-domain fix, with size persisted in the CR
     assert "cephblockpool ocs-storagecluster-cephblockpool" in out
     assert '"value":"host"' in out
-    assert '"path":"/spec/replicated/replicasPerFailureDomain"' in out
+    # Dropped via merge patch, not a JSON-patch "remove" - see
+    # test_422_emits_the_cephblockpool_fix for why.
+    assert '"replicasPerFailureDomain":null' in out
     assert '"path":"/spec/replicated/size","value":1' in out
     assert '"path":"/spec/replicated/requireSafeReplicaSize","value":false' in out
     # Also required on 4.20.18: object/file pools reject size=1 + replicasPerFailureDomain=1
@@ -92,7 +94,12 @@ def test_422_emits_the_cephblockpool_fix():
     out = render_sno_remediation("4.22")
     assert "cephblockpool ocs-storagecluster-cephblockpool" in out
     assert '"/spec/failureDomain","value":"host"' in out
-    assert '"remove","path":"/spec/replicated/replicasPerFailureDomain"' in out
+    # replicasPerFailureDomain is dropped with a merge patch, not a JSON-patch
+    # "remove": verified on a live OCP 4.22.12 apiserver that removing an absent
+    # member is rejected, which under `set -e` would abort the script after the
+    # reconcile freeze and topologyKey patches had already been applied.
+    assert '"replicasPerFailureDomain":null' in out
+    assert '"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"' not in out
 
 
 def test_422_guards_single_cephfilesystem_data_pool():
