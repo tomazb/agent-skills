@@ -497,3 +497,18 @@ def test_audit_banner_names_the_requested_context(tmp_path):
     result = _run_audit(bin_dir, "--context", "htz2")
     assert "auditing https://api.cluster-under-test.example:6443 (context: htz2)" in result.stdout
     assert "some-other-context" not in result.stdout
+
+
+
+@pytest.mark.parametrize("arg", ["--context=", "--kubeconfig="])
+def test_audit_rejects_empty_inline_option_values(tmp_path, arg):
+    """`--context=` matched the `--context=*` branch and skipped the value check.
+
+    oc treats an empty `--context=` as "no override" rather than an error, so the
+    audit would silently run against the current context after being told to use
+    a specific one - the same class of failure the argument parsing was added to
+    prevent.
+    """
+    result = _run_audit(tmp_path, arg)
+    assert result.returncode == 2
+    assert "requires a value" in result.stderr

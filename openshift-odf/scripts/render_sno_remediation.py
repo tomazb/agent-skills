@@ -151,12 +151,20 @@ oc -n {ns} patch cephobjectstore {name}-cephobjectstore --type json -p '[
 # ... size 1` back to 3 and the cluster sat at "32 pgs inactive / undersized"
 # and never reached HEALTH_OK.
 _BLOCKPOOL_FD = """\
-# {n}. CephBlockPool: Rook rejects size=1 while failureDomain=osd +
-#    replicasPerFailureDomain=1 ("size must be greater than
-#    replicasPerFailureDomain"). Switch to host, drop replicasPerFailureDomain,
-#    and persist size=1 in the CR: the CR stays the desired state Rook applies
-#    on its next reconcile of this pool, so a live-only `ceph osd pool set`
-#    is undone whenever that reconcile is next triggered.
+# {n}. CephBlockPool: normalize the CR to the SNO shape. The two validated
+#    releases fail differently here, and this one block covers both.
+#      4.20: Rook rejects size=1 while failureDomain=osd +
+#            replicasPerFailureDomain=1 ("size must be greater than
+#            replicasPerFailureDomain"), so the pool cannot be sized at all.
+#      4.22: the CR is accepted as shipped (failureDomain=osd, size=3,
+#            replicasPerFailureDomain=1) and reports Ready, so nothing looks
+#            wrong - but the CR is the desired state Rook re-applies, so a
+#            live `ceph osd pool set ... size 1` is silently reverted to 3 and
+#            the cluster stays at "pgs inactive / pgs undersized". Observed on
+#            ODF 4.22.3.
+#    Either way the fix is the same: switch to host, drop
+#    replicasPerFailureDomain, and persist size=1 in the CR so the desired state
+#    matches what the live pool should be.
 oc -n {ns} patch cephblockpool {name}-cephblockpool --type json -p '[
   {{"op":"replace","path":"/spec/failureDomain","value":"host"}},
   {{"op":"remove","path":"/spec/replicated/replicasPerFailureDomain"}},

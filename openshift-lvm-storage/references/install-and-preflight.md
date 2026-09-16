@@ -189,9 +189,11 @@ then silently reverted, which reads like the patch simply did not take:
 oc patch sc lvms-vg1 \
   -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
 
-# Right: change the source of truth.
+# Right: change the source of truth. Use "add", not "replace": `default` is an
+# optional field, so a valid LVMCluster can omit it entirely, and JSON Patch
+# "replace" fails when the target member is absent. "add" sets it either way.
 oc -n openshift-storage patch lvmcluster <name> --type json \
-  -p '[{"op":"replace","path":"/spec/storage/deviceClasses/0/default","value":true}]'
+  -p '[{"op":"add","path":"/spec/storage/deviceClasses/0/default","value":true}]'
 ```
 
 Index `0` is only correct for a single-`DeviceClass` cluster — check

@@ -38,12 +38,17 @@ while [ "$#" -gt 0 ]; do
       OC_GLOBAL_ARGS+=("--context=$2"); OC_CONTEXT_LABEL="$2"; shift 2 ;;
     --context=*)
       OC_CONTEXT_LABEL="${1#*=}"
+      # An empty suffix would otherwise reach oc as `--context=`, which silently
+      # means "no override" rather than failing the way a missing value does.
+      [ -n "$OC_CONTEXT_LABEL" ] || { echo "--context requires a value" >&2; exit 2; }
       OC_GLOBAL_ARGS+=("--context=$OC_CONTEXT_LABEL"); shift ;;
     --kubeconfig)
       [ "$#" -ge 2 ] || { echo "--kubeconfig requires a value" >&2; exit 2; }
       OC_GLOBAL_ARGS+=("--kubeconfig=$2"); shift 2 ;;
     --kubeconfig=*)
-      OC_GLOBAL_ARGS+=("--kubeconfig=${1#*=}"); shift ;;
+      kubeconfig_value="${1#*=}"
+      [ -n "$kubeconfig_value" ] || { echo "--kubeconfig requires a value" >&2; exit 2; }
+      OC_GLOBAL_ARGS+=("--kubeconfig=$kubeconfig_value"); shift ;;
     -h|--help)
       usage; exit 0 ;;
     *)
