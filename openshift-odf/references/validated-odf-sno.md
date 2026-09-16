@@ -571,15 +571,37 @@ profile default. MDS and RGW come from the frozen `CephFilesystem` and
 `spec.resources.rgw` on the `StorageCluster` would not reach them — patch those
 CRs directly, as the floor does.
 
-Projected on that same cluster: ODF CPU requests **~17.8 → ~4.8 cores** (node
-87% → 32%, schedulable CPU left ~3 → ~16 cores) and memory requests ~47 → ~25 GiB.
-The remaining ~4.8 cores are mostly outside the floor: noobaa-db (2 × 0.5), CSI
-plugins, operators, and the 50m log-collector sidecar on every Ceph daemon. This is
-a calculation from the pod specs, not a measurement.
+**Applied live on that same cluster (ODF 4.20.18 SNO, 2026-09-16),** step 7
+only, NooBaa and all 3 mons kept:
 
-**Status:** rendered from the 4.22-validated values and checked against the 4.20
-source; not yet applied on a live 4.20 cluster. Record the result here when it
-is.
+| | Before | After |
+|---|---|---|
+| ODF CPU requests | 17.83 cores | **4.84 cores** |
+| ODF memory requests | 47.0 GiB | 25.0 GiB |
+| Node CPU requested | 87% | **33%** |
+| Node memory requested | 66% | 43% |
+
+The result matched the projection computed from the pod specs beforehand. The
+remaining ~4.8 cores are outside the floor: noobaa-db (2 × 0.5), CSI plugins,
+operators, and the 50m log-collector sidecar on every Ceph daemon.
+
+Observed during and after the rollout:
+
+- mons rolled one at a time with quorum kept; the mgr restart did **not** revert
+  `.mgr` — all 12 pools stayed `size 1 min_size 1`, mute intact.
+- The OSD restart took the only OSD down briefly (`296 stale+active+clean`, MDS
+  standby restarting, `1 filesystem is degraded`). Applying the MDS and RGW patches
+  while the OSD was still restarting was harmless: everything converged to
+  `HEALTH_OK`, `296 active+clean`, MDS `active` + `standby-replay` within ~6 minutes
+  of the first patch.
+- `StorageCluster` stayed `Ready` with `ReconcileComplete=True`, `Degraded=False`;
+  NooBaa `Ready` (its CNPG database lives on RBD, so RBD I/O resumed);
+  CephFilesystem, CephObjectStore and both CephBlockPools `Ready`.
+- `spec.resources.mon` / `.mgr` with requests only **replaces** the profile default,
+  so mon and mgr now run with no CPU or memory limit (the log-collector sidecars
+  keep theirs). Acceptable for a lab; add limits to those keys if you want a cap.
+- Rook derives `mds_cache_memory_limit` from the MDS memory limit: 4Gi → 2 GiB.
+- Not verified: an RBD/CephFS smoke PVC write after the change.
 
 Caveats:
 
@@ -592,9 +614,13 @@ Caveats:
 - **The patch rolls mon, mgr, OSD, MDS, RGW, and NooBaa pods.** Expect a short I/O
   stall on a single-OSD cluster; schedule it.
 - **Recheck `.mgr` afterwards.** The mgr restart re-applied `.mgr` at `size=3` on
-  4.22, and the 4.20 `builtin-mgr` CR still carries `size: 3` (see Validation
-  Notes above). Run `ceph osd pool ls detail`, then re-apply the `.mgr`
-  size/min_size fix and the `POOL_NO_REDUNDANCY` mute if needed.
+  4.22. It did not on 4.20.18, but the 4.20 `builtin-mgr` CR still carries
+  `size: 3` (see Validation Notes above), so the revert stays latent. Run
+  `ceph osd pool ls detail`, then re-apply the `.mgr` size/min_size fix and the
+  `POOL_NO_REDUNDANCY` mute if needed.
+- **Apply one daemon class at a time where you can** (StorageCluster keys, then
+  the OSD device set, then MDS, then RGW) and wait for `HEALTH_OK` between them.
+  Overlapping them converged on 4.20.18, but a single-OSD cluster has no slack.
 - **Leave `noobaa-db` alone** unless NooBaa is already `Ready`; even then it saves
   only 0.5 cores per instance.
 - Do **not** set `resourceProfile: lean` (see above: traps `Progressing` on 4.20).

@@ -536,5 +536,8 @@ def test_docs_route_low_vcpu_clusters_to_the_lab_floor():
     section = validated[validated.index("## ODF 4.20 SNO: Optional CPU-Request Floor") :]
     section = section[: section.index("\n---\n")]
     assert "--release 4.20 --lab-resources" in section
-    assert "not yet applied on a live 4.20 cluster" in section
+    # Live evidence, not just a projection: the before/after must stay recorded.
+    assert "Applied live" in section and "4.84 cores" in section
+    # requests-only keys replace the profile default and drop the limit
+    assert "no CPU or memory limit" in section
     assert "Lab only" in section and ".mgr" in section

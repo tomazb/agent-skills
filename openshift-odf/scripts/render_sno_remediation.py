@@ -266,9 +266,11 @@ _RESOURCE_REQUESTS = """\
 #    requests (mon 1050m, mds/osd/rgw 2050m, noobaa-core/endpoint 999m) reserve
 #    most of a single node's schedulable CPU while real use is a few percent.
 #    On 4.22 this leaves noobaa-core and CSI pods Pending; on 4.20 it squeezes
-#    out workloads. This floor drops the requests to 100m and keeps burst
-#    limits. LAB USE ONLY: requests this low give Ceph no guaranteed CPU, so a
-#    busy workload can starve mon/OSD and stall I/O.
+#    out workloads. This floor drops the requests to 100m. OSD/MDS/RGW keep a
+#    2-core burst limit; mon/mgr keys set requests only, which replaces the
+#    profile default and leaves them with no limit. LAB USE ONLY: requests this
+#    low give Ceph no guaranteed CPU, so a busy workload can starve mon/OSD and
+#    stall I/O.
 #    Do NOT set 'resourceProfile: lean' - it traps the StorageCluster in
 #    Progressing on both 4.20 and 4.22. MDS/RGW are frozen CRs (step 2), so
 #    patch their resources directly.
