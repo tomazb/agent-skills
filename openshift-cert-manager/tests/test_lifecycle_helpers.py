@@ -81,8 +81,8 @@ def test_acme_server_classification():
 
 def test_hostname_from_api_url():
     assert (
-        discover.hostname_from_api_url("https://api.ocp1.htz2.all-it.tech:6443")
-        == "api.ocp1.htz2.all-it.tech"
+        discover.hostname_from_api_url("https://api.ocp1.sno.example.com:6443")
+        == "api.ocp1.sno.example.com"
     )
 
 
@@ -102,7 +102,7 @@ def test_http01_preflight_requires_addresses():
 
 def test_http01_preflight_fails_closed_address():
     probes = [
-        http01.AddressProbe("A", "1.2.3.4", 80, True),
+        http01.AddressProbe("A", "192.0.2.1", 80, True),
         http01.AddressProbe("AAAA", "2001:db8::1", 80, False, "timed out"),
     ]
     assert http01.preflight_ok(probes) is False
@@ -110,7 +110,7 @@ def test_http01_preflight_fails_closed_address():
 
 def test_http01_preflight_passes_when_all_open():
     probes = [
-        http01.AddressProbe("A", "1.2.3.4", 80, True),
+        http01.AddressProbe("A", "192.0.2.1", 80, True),
         http01.AddressProbe("AAAA", "2001:db8::1", 80, True),
     ]
     assert http01.preflight_ok(probes) is True
@@ -118,10 +118,11 @@ def test_http01_preflight_passes_when_all_open():
 
 def test_build_probes_uses_resolver_and_connector():
     def fake_resolver(_hostname):
-        return {"A": ["1.2.3.4"], "AAAA": ["2001:db8::1"]}
+        return {"A": ["192.0.2.1"], "AAAA": ["2001:db8::1"]}
 
     def fake_connector(address, port, timeout):
-        return address.startswith("1."), None
+        # Only the A record is reachable in this fixture; the AAAA one is not.
+        return address == "192.0.2.1", None
 
     probes = http01.build_probes(
         "example.com",
