@@ -12,9 +12,11 @@ runbooks referenced in the banner for those stateful steps.
 `--release` is mandatory because the block sets differ:
 
 * **4.20** — CephBlockPool failure-domain fix + object/file CR-spec fixes
-  (shared with 4.22) + CSI replicas + mute note.
+  (shared with 4.22) + CSI replicas + mute note. The resource-request floor is
+  opt-in with `--lab-resources`.
 * **4.22** — the same CephBlockPool and object/file CR-spec fixes + CSI replicas
-  + resource-request floor + mute note.
+  + resource-request floor + mute note. The floor is always emitted: without it
+  pods stay Pending, so `--lab-resources` changes nothing.
 
 Emitting the wrong release against a cluster fails under `set -e` on the first
 inapplicable patch; the rendered preflight aborts before any mutation when the
@@ -252,14 +254,30 @@ oc -n {ns} patch cephfilesystem {name}-cephfilesystem --type json -p '[
 ]'
 """
 
-# ODF 4.22 only: the 4.20 scenario does not hit CPU-request starvation.
+# Always on 4.22, where pods stay Pending without it. Opt-in on 4.20
+# (--lab-resources): there everything schedules, but the balanced requests
+# (17.8 cores observed on 4.20.18 SNO with block, file and object) leave only a
+# few cores of schedulable CPU for workloads on a lab-sized node. The keys are
+# honored on 4.20: ocs-operator release-4.20 reads spec.resources[mon|mgr|
+# noobaa-core|noobaa-endpoint] in getDaemonResources and merges
+# storageDeviceSets[].resources over the OSD profile default.
 _RESOURCE_REQUESTS = """\
-# {n}. SNO CPU-request starvation: ODF's default 'balanced' requests (mon 1050m,
-#    mds/osd/rgw 2050m, noobaa 999m) saturate the node's schedulable CPU even
-#    though real use is ~6%, leaving noobaa-core and CSI pods Pending. Do NOT
-#    set 'resourceProfile: lean' (it traps the StorageCluster in Progressing on
-#    4.22). Instead set minimal per-component requests. MDS/RGW are frozen CRs,
-#    so patch them directly.
+# {n}. SNO CPU-request floor (lab / low-vCPU nodes). ODF's default 'balanced'
+#    requests (mon 1050m, mds/osd/rgw 2050m, noobaa-core/endpoint 999m) reserve
+#    most of a single node's schedulable CPU while real use is a few percent.
+#    On 4.22 this leaves noobaa-core and CSI pods Pending; on 4.20 it squeezes
+#    out workloads. This floor drops the requests to 100m and keeps burst
+#    limits. LAB USE ONLY: requests this low give Ceph no guaranteed CPU, so a
+#    busy workload can starve mon/OSD and stall I/O.
+#    Do NOT set 'resourceProfile: lean' - it traps the StorageCluster in
+#    Progressing on both 4.20 and 4.22. MDS/RGW are frozen CRs (step 2), so
+#    patch their resources directly.
+#    The patch rolls mon, mgr, OSD, MDS, RGW and NooBaa pods: expect a short
+#    I/O stall on a single-OSD cluster.
+#    The mgr restart can re-apply the .mgr pool at size=3 (observed on 4.22;
+#    the 4.20 builtin-mgr CR also still carries size 3). Afterwards check
+#    `ceph osd pool ls detail` and re-run the .mgr size/min_size fix and the
+#    mute from references/validated-odf-sno.md if needed.
 #    Deliberately NO 'noobaa-db' entry. Lowering the noobaa-db request makes
 #    NooBaa's PGTune recompute the CNPG postgres spec (shared_buffers,
 #    effective_cache_size, requests). NooBaa refuses to apply a CNPG spec change
@@ -349,17 +367,29 @@ def _validate_context(value: str) -> str:
     return value
 
 
+def _blocks_for(release: str, lab_resources: bool) -> tuple[str, ...]:
+    """Return the ordered templates, adding the opt-in floor ahead of the mute."""
+    blocks = _BLOCKS[release]
+    if not lab_resources or _RESOURCE_REQUESTS in blocks:
+        return blocks
+    mute_at = blocks.index(_MUTE)
+    return blocks[:mute_at] + (_RESOURCE_REQUESTS,) + blocks[mute_at:]
+
+
 def render_sno_remediation(
     release: str,
     name: str = "ocs-storagecluster",
     namespace: str = "openshift-storage",
     output: str | None = None,
     context: str | None = None,
+    lab_resources: bool = False,
 ) -> str:
     """Return (and optionally write) the reviewable remediation bash script.
 
     Selects the release-specific `_BLOCKS` templates, numbers steps contiguously,
     and prefixes the BANNER that documents what is and is not emitted.
+    `lab_resources` adds the CPU-request floor on releases that do not already
+    emit it (4.20); 4.22 always emits it.
     """
     if release not in _BLOCKS:
         raise ValueError(
@@ -374,7 +404,7 @@ def render_sno_remediation(
         context_pin = _CONTEXT_PIN.format(context=context)
 
     blocks = [BANNER.format(release=release, context_pin=context_pin)]
-    for step, template in enumerate(_BLOCKS[release], start=1):
+    for step, template in enumerate(_blocks_for(release, lab_resources), start=1):
         blocks.append(
             template.format(n=step, name=name, ns=namespace, release=release)
         )
@@ -408,10 +438,23 @@ def main() -> int:
             "script targets whatever context is current when it runs."
         ),
     )
+    parser.add_argument(
+        "--lab-resources",
+        action="store_true",
+        help=(
+            "lab / low-vCPU SNO: also emit the 100m CPU-request floor on 4.20 "
+            "(4.22 always emits it). Gives Ceph no guaranteed CPU; not for production."
+        ),
+    )
     args = parser.parse_args()
     try:
         text = render_sno_remediation(
-            args.release, args.name, args.namespace, args.output, args.context
+            args.release,
+            args.name,
+            args.namespace,
+            args.output,
+            args.context,
+            lab_resources=args.lab_resources,
         )
     except ValueError as exc:
         parser.error(str(exc))

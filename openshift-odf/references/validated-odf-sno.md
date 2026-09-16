@@ -461,9 +461,10 @@ python3 scripts/render_sno_remediation.py --release 4.20 \
 
 `--release` is mandatory and the emitted blocks differ per release: `4.20`
 emits the CephBlockPool failure-domain fix plus the object/file CR-spec fixes
-(`failureDomain=host`, remove `replicasPerFailureDomain`, `size=1`); `4.22`
-emits the same object/file CR-spec fixes plus the resource-request floor (no
-CephBlockPool failure-domain rewrite). Live `ceph osd pool set` sizing, the
+(`failureDomain=host`, remove `replicasPerFailureDomain`, `size=1`), and adds
+the resource-request floor only with `--lab-resources` (see **ODF 4.20 SNO:
+Optional CPU-Request Floor** below); `4.22` emits the same CephBlockPool and
+object/file CR-spec fixes plus the resource-request floor unconditionally. Live `ceph osd pool set` sizing, the
 `POOL_NO_REDUNDANCY` mute, and StorageClient onboarding recovery remain manual
 runbook steps. The generated script opens with a preflight that reads the
 installed `ocs-operator` CSV and exits before any patch when it does not match
@@ -531,6 +532,72 @@ Observed on a fresh `stable-4.20` (`ocs-operator.v4.20.17-rhodf`) SNO install:
 - **`SINGLE_NODE=true` is best applied before creating the StorageCluster**, so ocs-operator reconciles pools with the single-node logic from the start.
 - **`ceph-volume raw ... prepare successful` may print `dmcrypt` even when encryption is not configured.** It is misleading wording, not proof of an encrypted OSD — confirm with `dmsetup ls` / `lsblk` (no crypt layer) rather than trusting the log line.
 - On this z-stream the `StorageCluster` reached `phase: Ready` with `ReconcileComplete=True` after all workarounds; the permanent `phase: Error` node-count noise documented above was not reproduced on every 4.20.17 install, so gate on conditions and `ceph -s`, not folklore about a fixed phase value.
+
+## ODF 4.20 SNO: Optional CPU-Request Floor (Lab / Low vCPU)
+
+On 4.20 nothing goes `Pending`, unlike 4.22, but the default `balanced` requests
+still reserve most of a lab-sized node. Observed on ODF 4.20.18 SNO (24 vCPU,
+23.5 allocatable, block + file + object, 2026-09-16):
+
+| Component | Pods | CPU request each | Total |
+|---|---|---|---|
+| OSD | 1 | 2 + 0.05 log-collector | 2.05 |
+| MDS (active + standby-replay) | 2 | 2.05 | 4.10 |
+| RGW | 1 | 2.05 | 2.05 |
+| mon | 3 | 1.05 | 3.15 |
+| mgr | 1 | 1.05 | 1.05 |
+| noobaa-core / noobaa-endpoint | 1 / 1 | 1.2 / 1.0 | 2.20 |
+| noobaa-db (CNPG) | 2 | 0.5 | 1.00 |
+| CSI plugins, operators, exporters | many | ≤ 0.36 | ~2.2 |
+| **openshift-storage total** | | | **~17.8** |
+
+Measured use at the same time was ~0.2 cores for ODF and ~2 cores for the whole
+node, yet the node showed 87% of CPU requested, leaving ~3 cores schedulable.
+
+For lab or other non-production SNO, render the same floor that 4.22 needs:
+
+```bash
+python3 scripts/render_sno_remediation.py --release 4.20 --lab-resources \
+  --context <target-context> --output odf-420-sno-remediation.sh
+```
+
+The patch values are identical to the 4.22 section (**ODF 4.22 SNO: CPU-Request
+Starvation**) — read that section for the full commands and the `noobaa-db`
+deadlock. The keys are honored on 4.20: in ocs-operator `release-4.20`,
+`getDaemonResources` reads `spec.resources` for `mon`, `mgr`, `noobaa-core`, and
+`noobaa-endpoint`, and `storageDeviceSets[].resources` is merged over the OSD
+profile default. MDS and RGW come from the frozen `CephFilesystem` and
+`CephObjectStore` CRs (`reconcileStrategy: ignore`), so `spec.resources.mds` and
+`spec.resources.rgw` on the `StorageCluster` would not reach them — patch those
+CRs directly, as the floor does.
+
+Projected on that same cluster: ODF CPU requests **~17.8 → ~4.8 cores** (node
+87% → 32%, schedulable CPU left ~3 → ~16 cores) and memory requests ~47 → ~25 GiB.
+The remaining ~4.8 cores are mostly outside the floor: noobaa-db (2 × 0.5), CSI
+plugins, operators, and the 50m log-collector sidecar on every Ceph daemon. This is
+a calculation from the pod specs, not a measurement.
+
+**Status:** rendered from the 4.22-validated values and checked against the 4.20
+source; not yet applied on a live 4.20 cluster. Record the result here when it
+is.
+
+Caveats:
+
+- **Lab only.** 100m requests give Ceph no guaranteed CPU. A busy workload can
+  starve mon or OSD threads and stall I/O. For production, size the node instead.
+- **On an already-remediated cluster, do not re-run the whole rendered script.**
+  The object/file CR-spec step uses JSON-patch `remove` on
+  `replicasPerFailureDomain`, which is already gone, so `set -e` aborts. Run only
+  the resource-floor step (step 7).
+- **The patch rolls mon, mgr, OSD, MDS, RGW, and NooBaa pods.** Expect a short I/O
+  stall on a single-OSD cluster; schedule it.
+- **Recheck `.mgr` afterwards.** The mgr restart re-applied `.mgr` at `size=3` on
+  4.22, and the 4.20 `builtin-mgr` CR still carries `size: 3` (see Validation
+  Notes above). Run `ceph osd pool ls detail`, then re-apply the `.mgr`
+  size/min_size fix and the `POOL_NO_REDUNDANCY` mute if needed.
+- **Leave `noobaa-db` alone** unless NooBaa is already `Ready`; even then it saves
+  only 0.5 cores per instance.
+- Do **not** set `resourceProfile: lean` (see above: traps `Progressing` on 4.20).
 
 ---
 
@@ -879,6 +946,9 @@ If `noobaa-db` really must be constrained, apply that single key only after
 `noobaa` reports `Ready`.
 
 This dropped observed CPU requests from 99% to ~35% and let all components schedule.
+The trade-off is the same as on 4.20: 100m requests give Ceph no guaranteed CPU,
+so this floor suits lab and other non-production SNO. On 4.20 the floor is
+optional (`--lab-resources`) — see **ODF 4.20 SNO: Optional CPU-Request Floor**.
 
 **After this resource patch:** the mgr restarts, which reverts the `.mgr` pool to
 `size=3`. Re-run the fix and re-mute before proceeding:

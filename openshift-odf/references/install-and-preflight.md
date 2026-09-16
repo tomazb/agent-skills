@@ -108,7 +108,21 @@ For ODF versions on SNO that are not listed in `validated-odf-sno.md`, continue 
 ## Sizing And Prerequisites
 
 - **Node count and failure domains.** Internal-mode production needs at least three OSD nodes spread across three failure domains (host, rack, or zone). Compact 3-node and SNO clusters are supported but are topology constraints, not high availability.
-- **Resources.** Each ODF/OSD node needs reserved CPU and memory for Ceph daemons. Verify the current ODF documentation for the CPU/memory requirements of the target release before committing node sizing.
+- **Resources.** Each ODF/OSD node needs reserved CPU and memory for Ceph daemons. Verify the current ODF documentation for the CPU/memory requirements of the target release before committing node sizing. See **CPU Request Budget** below before installing on SNO or any small lab node.
+- **CPU Request Budget.** The scheduler reserves CPU by **requests**, not by real use, and ODF's default `balanced` profile requests a lot. Observed on ODF 4.20.18 SNO with block, file, and object all enabled: **~17.8 cores requested** in `openshift-storage` (OSD, RGW, and each of 2 MDS at 2.05; 3 mons and 1 mgr at 1.05 each; noobaa-core 1.2, noobaa-endpoint 1.0, noobaa-db 2 × 0.5; ~2.2 for CSI and operators) while ODF actually used ~0.2 cores. On a 24-vCPU node that left ~3 cores schedulable for workloads. Measure the budget before and after install:
+
+  ```bash
+  # Node allocatable CPU and what is already requested
+  oc get node <node> -o jsonpath='{.status.allocatable.cpu}{"\n"}'
+  oc describe node <node> | sed -n '/Allocated resources/,/Events/p'
+  # CPU cores requested by ODF (Running and Pending pods)
+  oc -n openshift-storage get pods --field-selector=status.phase!=Succeeded,status.phase!=Failed -o json | jq -r '
+    [.items[].spec.containers[].resources.requests.cpu // "0"
+     | if endswith("m") then (rtrimstr("m") | tonumber / 1000) else tonumber end]
+    | add'
+  ```
+
+  If allocatable CPU minus the platform's existing requests leaves less than ~18 cores plus the planned workload requests, the default footprint does not fit. For **lab or non-production SNO** only, lower the requests with the CPU-request floor: `scripts/render_sno_remediation.py --release <4.20|4.22> --lab-resources` (always emitted on 4.22, where pods stay `Pending` without it). The floor drops requests to 100m and gives Ceph no guaranteed CPU, so do not use it for production — size the node instead. Do **not** use `resourceProfile: lean` as the shortcut: it traps the `StorageCluster` in `Progressing` on both 4.20 and 4.22 SNO. Details and caveats: the CPU-request sections in `references/validated-odf-sno.md`.
 - **Storage nodes.** Label the nodes that will run ODF so the operator schedules OSDs, mons, and mgrs on them:
 
 ```bash

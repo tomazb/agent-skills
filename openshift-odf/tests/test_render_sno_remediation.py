@@ -75,7 +75,8 @@ def test_420_emits_blockpool_fix_and_object_file_pool_fix():
     assert "/spec/dataPools/0/replicated/replicasPerFailureDomain" in out
     assert "/spec/metadataPool/replicated/replicasPerFailureDomain" in out
     assert "/spec/dataPool/replicated/replicasPerFailureDomain" in out
-    # 4.22-only resource floor must not leak into the 4.20 script
+    # The resource floor is opt-in on 4.20 (--lab-resources); by default it must
+    # not leak into the 4.20 script
     assert "noobaa-endpoint" not in out
 
 
@@ -188,8 +189,11 @@ def test_emitted_script_is_valid_bash(release):
     assert result.returncode == 0, result.stderr
 
 
-def test_emits_minimal_resource_requests_with_expected_values():
-    out = render_sno_remediation("4.22")
+@pytest.mark.parametrize(
+    "release,lab_resources", [("4.22", False), ("4.22", True), ("4.20", True)]
+)
+def test_emits_minimal_resource_requests_with_expected_values(release, lab_resources):
+    out = render_sno_remediation(release, lab_resources=lab_resources)
     runnable = _executable_lines(out)
     payloads = [json.loads(p) for p in _extract_patch_payloads(runnable)]
     merges = [p for p in payloads if isinstance(p, dict)]
@@ -253,6 +257,51 @@ def test_step_labels_form_the_expected_sequence_per_release():
         "7",
         "8",
     ]
+
+
+def test_lab_resources_adds_the_floor_to_420_before_the_mute():
+    # Low-vCPU lab SNO on 4.20: nothing is Pending, but ODF's balanced requests
+    # (~17.8 cores observed on 4.20.18 with block, file and object) leave little
+    # schedulable CPU for workloads. The floor is opt-in there.
+    out = render_sno_remediation("4.20", lab_resources=True)
+    assert _step_labels(out) == ["1", "2", "3", "4", "5", "6", "7", "8"]
+    runnable = _executable_lines(out)
+    assert '"noobaa-endpoint"' in runnable
+    assert "noobaa-db" not in runnable
+    floor_at = out.index("# 7.")
+    assert "resources" in out[floor_at : out.index("# 8.")]
+    assert "POOL_NO_REDUNDANCY" in out[out.index("# 8.") :]
+
+
+def test_lab_resources_does_not_change_422():
+    # 4.22 always needs the floor (pods are Pending without it), so the flag is a
+    # documented no-op there rather than a second code path.
+    assert render_sno_remediation("4.22", lab_resources=True) == render_sno_remediation(
+        "4.22"
+    )
+
+
+def test_resource_floor_warns_it_is_lab_only_and_about_mgr_pool_revert():
+    for release in RELEASES:
+        out = render_sno_remediation(release, lab_resources=True)
+        floor = out[out.index('"resources"') - 2500 : out.index('"resources"')]
+        # Requests this low give Ceph no guaranteed CPU under contention.
+        assert "lab" in floor.lower()
+        # The patch restarts mgr, which re-applies .mgr size=3 on both releases.
+        assert ".mgr" in floor
+
+
+@pytest.mark.parametrize("lab_resources", [False, True])
+@pytest.mark.parametrize("release", RELEASES)
+def test_emitted_script_with_lab_resources_is_valid(release, lab_resources):
+    out = render_sno_remediation(release, lab_resources=lab_resources)
+    for payload in _extract_patch_payloads(out):
+        json.loads(payload)
+    bash_path = shutil.which("bash")
+    if bash_path is None:
+        pytest.skip("bash not available")
+    result = subprocess.run([bash_path, "-n"], input=out, text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_module_docstring_matches_release_block_scope():
@@ -384,6 +433,14 @@ def test_cli_prints_to_stdout_without_output_flag():
     assert "cephblockpool ocs-storagecluster-cephblockpool" in result.stdout
 
 
+def test_cli_lab_resources_flag_emits_the_420_floor():
+    plain = _run_cli("--release", "4.20")
+    lab = _run_cli("--release", "4.20", "--lab-resources")
+    assert plain.returncode == 0 and lab.returncode == 0, lab.stderr
+    assert '"noobaa-endpoint"' not in plain.stdout
+    assert '"noobaa-endpoint"' in lab.stdout
+
+
 def test_cli_requires_release():
     result = _run_cli("--name", "ocs-storagecluster")
     assert result.returncode != 0
@@ -458,3 +515,26 @@ def test_context_rejects_shell_injection(bad):
     """The context is interpolated into an unquoted shell word in the wrapper."""
     with pytest.raises(ValueError):
         render_sno_remediation("4.22", context=bad)
+
+
+def test_docs_route_low_vcpu_clusters_to_the_lab_floor():
+    """The flag is only useful if a reader with too few vCPUs can find it."""
+    root = SCRIPTS_DIR.parent
+    skill = (root / "SKILL.md").read_text(encoding="utf-8")
+    preflight = (root / "references" / "install-and-preflight.md").read_text(encoding="utf-8")
+    validated = (root / "references" / "validated-odf-sno.md").read_text(encoding="utf-8")
+
+    assert "--lab-resources" in skill and "Insufficient cpu" in skill
+    # The exception that permits editing frozen Rook CRs must cover resources,
+    # or the floor would violate the skill's own safety rule.
+    assert "MDS/RGW resource requests" in skill
+
+    assert "CPU Request Budget" in preflight
+    assert "--lab-resources" in preflight
+    assert "lean" in preflight and "production" in preflight
+
+    section = validated[validated.index("## ODF 4.20 SNO: Optional CPU-Request Floor") :]
+    section = section[: section.index("\n---\n")]
+    assert "--release 4.20 --lab-resources" in section
+    assert "not yet applied on a live 4.20 cluster" in section
+    assert "Lab only" in section and ".mgr" in section
