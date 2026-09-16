@@ -38,6 +38,38 @@ This repository stores reusable agent skills. Each skill should live in its own 
 - Prefer Python 3.9+ compatible code.
 - Add focused unit tests for command-level behavior when changing helper scripts that call external CLIs.
 
+## Sensitive Data
+These skills are written from real cluster work, so evidence is valuable and identity is not. Record the behavior, the versions, and the symptom; never the address of the machine it happened on.
+
+- **Never commit** resolvable FQDNs or hostnames, cluster API URLs (`https://api.<cluster>:6443`), routes and ingress domains, public IP addresses, email addresses, DNS zone names, bucket names, kubeconfig contents, tokens, keys, or certificates.
+- **Use reserved placeholders** so examples stay obviously fake: `example.com`, `example.org`, or the `.example` / `.test` / `.invalid` TLDs (RFC 2606) for names, and `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24` (RFC 5737) for addresses. Keep the structure that makes the example instructive — a nested-zone example still needs two labels (`ocp1.sno.example.com` vs `example.com`).
+- **Prefer a role over a name.** `the cluster API endpoint`, `the target cluster`, `<target-context>` all carry the meaning without the identity. A short internal nickname is acceptable where traceability genuinely helps; a resolvable FQDN never is.
+- **Redact pasted command output.** Live `oc whoami --show-server`, `oc config current-context`, `oc get route`, and node listings all print identifying values. Replace them with placeholders before pasting into a document, test fixture, journal, or commit message.
+- **This applies to git and GitHub text too**, not just files: commit messages, PR titles and bodies, review replies, and issue comments. Those are the easiest to leak into and the most awkward to clean — a committed message needs `git commit --amend` plus a force-push, which needs the maintainer's explicit approval.
+- **Journals and evidence notes are the usual leak.** When recording that something was verified on a real cluster, name the product versions (`ODF 4.22.3`, `OCP 4.22.12`) and the topology (`SNO`), not the cluster.
+
+Scan before committing. Match URLs and `:6443` endpoints rather than bare dotted names — Kubernetes API groups (`cert-manager.io`, `rbd.csi.ceph.com`, `operators.coreos.com`) are dotted names too, and a scan that flags them produces enough noise that nobody runs it:
+
+```bash
+git grep -nIoE "https?://[a-zA-Z0-9._-]+|\b[a-z0-9-]+(\.[a-z0-9-]+){1,}:6443\b" -- . \
+  | grep -vE "example\.|\.example|\.test\b|\.invalid\b|github\.com|githubusercontent\.com|redhat\.com|openshift\.(com|io)|kubernetes\.io|k8s\.io|quay\.io|ceph\.io|rook\.io|letsencrypt\.org|longhorn\.io|localhost|127\.0\.0\.1|cloudflare|jsdelivr|cdnjs|\.svc"
+```
+
+Expect a handful of hits from legitimate external citations; read them rather than assuming. Also check for routable IP literals:
+
+```bash
+git grep -nIoE "\b([0-9]{1,3}\.){3}[0-9]{1,3}\b" -- . \
+  | grep -vE "127\.0\.0\.1|0\.0\.0\.0|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|192\.0\.2\.|198\.51\.100\.|203\.0\.113\.|255\.|1\.1\.1\.1|8\.8\.8\.8"
+```
+
+Check the commit messages too — `git grep` only reads the tree:
+
+```bash
+git log --format='%B' <base>..HEAD \
+  | grep -nE "https?://[a-zA-Z0-9._-]+|\b[a-z0-9-]+(\.[a-z0-9-]+){1,}:6443\b"
+```
+
 ## Verification
 - Run the relevant local tests for the skill you changed.
 - Use `python3 scripts/validate_skill_collection.py` for a broader repository validation pass when a change affects multiple skills or packaging.
+- Run the sensitive-data scan above over both the working tree and the commit messages before pushing or opening a PR.
