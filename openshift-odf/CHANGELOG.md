@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.19.0
+
+Opt-in CPU-request floor for lab and low-vCPU SNO clusters. On an ODF 4.20.18 SNO
+(24 vCPU, 2026-09-16) ODF requested ~17.8 cores while using ~0.2, leaving ~3 cores
+schedulable for workloads.
+
+- **`render_sno_remediation.py --lab-resources`** adds the resource-request floor
+  (mon, mgr, noobaa-core, noobaa-endpoint, OSD device set, MDS, RGW at 100m
+  requests; OSD/MDS/RGW keep a 2-core burst limit, mon/mgr end up with no limit) to
+  the 4.20 script, ahead of the mute note. 4.22 already emits the floor
+  unconditionally because pods stay `Pending` without it, so the flag changes
+  nothing there. The keys were checked against ocs-operator `release-4.20`
+  (`getDaemonResources`, device-set resource merge).
+- **Validated live on ODF 4.20.18 SNO (24 vCPU, 2026-09-16)** with NooBaa and 3 mons
+  kept: ODF CPU requests 17.83 → 4.84 cores, node 87% → 33% CPU requested, memory
+  requests 47 → 25 GiB. Ceph returned to `HEALTH_OK` / `296 active+clean` within
+  ~6 minutes, `.mgr` stayed `size 1`, StorageCluster and NooBaa stayed `Ready`, and the
+  RBD and CephFS smoke PVC writes passed afterwards.
+- The floor's rendered comment now says it is **lab only** (no guaranteed CPU for
+  Ceph), that it rolls the Ceph and NooBaa pods, that the mgr restart can put
+  `.mgr` back to `size=3`, and that `resourceProfile: lean` traps `Progressing` on
+  both 4.20 and 4.22.
+- **`references/install-and-preflight.md`** replaces "check the docs" with a
+  **CPU Request Budget** check: the observed 4.20.18 per-component footprint, a
+  `jq` snippet that sums ODF's CPU requests, and when to use the lab floor
+  instead of sizing the node.
+- **`references/validated-odf-sno.md`** adds **ODF 4.20 SNO: Optional CPU-Request
+  Floor**, with the footprint table and caveats, including "run only the floor
+  step on an already-remediated cluster" (the object/file JSON `remove` aborts
+  under `set -e` once the field is gone). Also corrects the renderer summary,
+  which still said 4.22 skips the CephBlockPool rewrite.
+- **`SKILL.md`** routes low-vCPU / `Insufficient cpu` questions to the budget
+  check and the floor, and widens the frozen-CR exception to cover MDS/RGW
+  resource requests. The 4.22 floor already patched those CRs, which the rule did
+  not permit.
+
 ## 1.18.0
 
 Fixes from a full ODF 4.22.3 install/uninstall round-trip on an OCP 4.22.12 SNO
