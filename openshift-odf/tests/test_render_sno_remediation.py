@@ -530,7 +530,10 @@ def test_docs_route_low_vcpu_clusters_to_the_lab_floor():
     assert "MDS/RGW resource requests" in skill
 
     assert "CPU Request Budget" in preflight
-    assert "--lab-resources" in preflight
+    # Copy-pasteable literals: "<4.20|4.22>" is shell redirection plus a pipe.
+    assert "--release 4.20 --lab-resources" in preflight
+    assert "--release 4.22" in preflight
+    assert "<4.20|4.22>" not in preflight
     assert "lean" in preflight and "production" in preflight
 
     section = validated[validated.index("## ODF 4.20 SNO: Optional CPU-Request Floor") :]

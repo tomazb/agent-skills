@@ -122,7 +122,16 @@ For ODF versions on SNO that are not listed in `validated-odf-sno.md`, continue 
     | add'
   ```
 
-  If allocatable CPU minus the platform's existing requests leaves less than ~18 cores plus the planned workload requests, the default footprint does not fit. For **lab or non-production SNO** only, lower the requests with the CPU-request floor: `scripts/render_sno_remediation.py --release <4.20|4.22> --lab-resources` (always emitted on 4.22, where pods stay `Pending` without it). The floor drops requests to 100m and gives Ceph no guaranteed CPU, so do not use it for production — size the node instead. Do **not** use `resourceProfile: lean` as the shortcut: it traps the `StorageCluster` in `Progressing` on both 4.20 and 4.22 SNO. Details and caveats: the CPU-request sections in `references/validated-odf-sno.md`.
+  If allocatable CPU minus the platform's existing requests leaves less than ~18 cores plus the planned workload requests, the default footprint does not fit. For **lab or non-production SNO** only, lower the requests with the CPU-request floor rendered by `scripts/render_sno_remediation.py`:
+
+  ```bash
+  # ODF 4.20: the floor is opt-in
+  python3 scripts/render_sno_remediation.py --release 4.20 --lab-resources
+  # ODF 4.22: the floor is always emitted, because pods stay Pending without it
+  python3 scripts/render_sno_remediation.py --release 4.22
+  ```
+
+  The floor drops requests to 100m and gives Ceph no guaranteed CPU, so do not use it for production — size the node instead. Do **not** use `resourceProfile: lean` as the shortcut: it traps the `StorageCluster` in `Progressing` on both 4.20 and 4.22 SNO. Details and caveats: the CPU-request sections in `references/validated-odf-sno.md`.
 - **Storage nodes.** Label the nodes that will run ODF so the operator schedules OSDs, mons, and mgrs on them:
 
 ```bash
