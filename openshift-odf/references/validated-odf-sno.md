@@ -601,7 +601,9 @@ Observed during and after the rollout:
   so mon and mgr now run with no CPU or memory limit (the log-collector sidecars
   keep theirs). Acceptable for a lab; add limits to those keys if you want a cap.
 - Rook derives `mds_cache_memory_limit` from the MDS memory limit: 4Gi → 2 GiB.
-- Not verified: an RBD/CephFS smoke PVC write after the change.
+- RBD (RWO) and CephFS (RWX) smoke PVCs from `scripts/render_smoke_manifest.py`
+  bound, their writer pods went `Ready`, and both probes read back after the
+  change.
 
 Caveats:
 

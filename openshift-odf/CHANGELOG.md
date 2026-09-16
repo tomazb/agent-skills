@@ -16,8 +16,8 @@ schedulable for workloads.
 - **Validated live on ODF 4.20.18 SNO (24 vCPU, 2026-09-16)** with NooBaa and 3 mons
   kept: ODF CPU requests 17.83 → 4.84 cores, node 87% → 33% CPU requested, memory
   requests 47 → 25 GiB. Ceph returned to `HEALTH_OK` / `296 active+clean` within
-  ~6 minutes, `.mgr` stayed `size 1`, StorageCluster and NooBaa stayed `Ready`. No
-  smoke PVC write was run after the change.
+  ~6 minutes, `.mgr` stayed `size 1`, StorageCluster and NooBaa stayed `Ready`, and the
+  RBD and CephFS smoke PVC writes passed afterwards.
 - The floor's rendered comment now says it is **lab only** (no guaranteed CPU for
   Ceph), that it rolls the Ceph and NooBaa pods, that the mgr restart can put
   `.mgr` back to `size=3`, and that `resourceProfile: lean` traps `Progressing` on
