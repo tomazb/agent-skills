@@ -12,6 +12,26 @@
 - Re-validated on prod1 (ODF 4.20.18 SNO, 2026-09-16): block healthy while
   CephFS/RGW stayed `Failure` until Regression 4; block/file/object smoke tests
   passed after fix; `POOL_NO_REDUNDANCY` muted.
+- PR review hardening of that gate, with a second live run on htz2 (ODF 4.22.3
+  SNO, 2026-09-16):
+  - The SNO detection now fails **closed**. An empty or unreadable
+    `controlPlaneTopology` is treated as unknown and falls back to a node count,
+    instead of being read as "not SingleReplica" and silently skipping the gate on
+    the very clusters it exists to protect. The gate is skipped only on explicit
+    `HighlyAvailable` / `DualReplica` / `HighlyAvailableArbiter`, and `External`
+    (hosted control plane) is called out as not a multi-node answer by itself.
+  - `CephObjectStore Ready` and the RGW pod check are now conditional on a
+    `CephObjectStore` existing, so MCG-only clusters can pass the gate.
+  - Added the `jsonpath` commands that actually show the MDS/RGW
+    `topologySpreadConstraints`; the empty-`topologyKey` fail criterion was
+    previously not checkable with any command the gate listed.
+  - Point at the `topologyKey` symptom in both streams by name — ODF 4.20
+    "Regression 4" and the differently titled ODF 4.22 section.
+  - The `POOL_NO_REDUNDANCY` mute now states its precondition (every pool at
+    `size 1`) and redefines `ROOK_OP`/`CONF` so the block is safe to run alone.
+  - Scoped the "block can be healthy while CephFS/RGW are broken" claim by
+    release: true on 4.20.18, **false on 4.22.3**, where the RBD and CephFS
+    StorageClasses did not exist at all until the `topologyKey` fix was applied.
 
 ## 1.17.2
 

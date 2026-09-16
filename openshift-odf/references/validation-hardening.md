@@ -59,26 +59,53 @@ Confirm exactly one default StorageClass when defaulting is expected, and that t
 ## SNO Readiness Gate (ODF 4.20 and 4.22)
 
 On Single Node OpenShift, **`StorageCluster: Ready` and `CephBlockPool: Ready` do not
-mean ODF is fully ready.** Block can be healthy while CephFS and RGW are still broken.
-Do not skip the checks below or treat a green StorageCluster as proof that file and
-object storage work.
+mean ODF is fully ready.** CephFS and RGW can still be broken. Do not skip the checks
+below or treat a green StorageCluster as proof that file and object storage work.
 
-Detect SNO first:
+How far block storage gets while CephFS/RGW are failing is **release-dependent** — do not
+assume block is usable just because the pool is `Ready`:
+
+- ODF 4.20.18 (prod1, 2026-09-16): block was healthy and consumable while
+  `CephFilesystem`/`CephObjectStore` stayed in `Failure`.
+- ODF 4.22.3 (htz2, 2026-09-16): `ocs-storagecluster-ceph-rbd` and
+  `ocs-storagecluster-cephfs` **did not exist at all** until the MDS/RGW `topologyKey`
+  fix was applied — only `ocs-storagecluster-ceph-rgw` was present, so no block PVC
+  could bind. This matches the StorageClient note in `references/validated-odf-sno.md`.
+
+Detect SNO first. Treat an empty or unreadable result as **unknown, not multi-node**: an
+RBAC denial or a missing field must never silently skip this gate on a real SNO cluster.
 
 ```bash
-oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}{"\n"}'
+TOPOLOGY=$(oc get infrastructure cluster -o jsonpath='{.status.controlPlaneTopology}' 2>/dev/null)
+echo "controlPlaneTopology=${TOPOLOGY:-<empty/unreadable>}"
+# Fall back to the node count whenever the field is empty or unreadable.
+[ -z "$TOPOLOGY" ] && oc get nodes --no-headers | wc -l
 ```
 
-When the result is **not** `SingleReplica` (for example `HighlyAvailable` on
-compact or multi-node), **skip this gate** and do not apply
+**Skip this gate only** when `controlPlaneTopology` is an explicit multi-node value —
+`HighlyAvailable`, `DualReplica`, or `HighlyAvailableArbiter`. On those, also do not apply
 `references/validated-odf-sno.md` remediations, `render_sno_remediation.py`, or
-`health mute POOL_NO_REDUNDANCY` — those are SNO-only and are harmful on
-multi-node. When the result is `SingleReplica`, run this gate before declaring
-the cluster ready or before the smoke tests in the next section:
+`health mute POOL_NO_REDUNDANCY`: they are SNO-only and are harmful on multi-node.
+
+**Run this gate** when `controlPlaneTopology` is `SingleReplica`, and also when the value
+is empty/unknown but the cluster has exactly one node. `External` (hosted control plane)
+is not by itself a multi-node answer — decide from the node count and
+`.status.infrastructureTopology`, because the SNO worker-side behavior still applies.
+
+Run the gate before declaring the cluster ready and before the smoke tests in the next
+section:
 
 ```bash
 oc -n openshift-storage get cephfilesystem,cephobjectstore -o wide
 oc -n openshift-storage get pods -l 'app in (rook-ceph-mds,rook-ceph-rgw)' -o wide
+
+# MDS and RGW placement: the empty-topologyKey symptom below is visible ONLY here,
+# not in the phase or pod listings above.
+oc -n openshift-storage get cephfilesystem ocs-storagecluster-cephfilesystem \
+  -o jsonpath='{.spec.metadataServer.placement.topologySpreadConstraints}{"\n"}'
+oc -n openshift-storage get cephobjectstore ocs-storagecluster-cephobjectstore \
+  -o jsonpath='{.spec.gateway.placement.topologySpreadConstraints}{"\n"}'
+
 ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
 CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
 oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" fs ls
@@ -88,33 +115,57 @@ oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" fs ls
 
 - `CephFilesystem` and/or `CephObjectStore` is `Failure` or `Progressing` for more
   than a few minutes after `StorageCluster` reached `Ready`.
-- No `rook-ceph-mds-*` pods exist while `CephFilesystem` is expected.
-- No `rook-ceph-rgw-*` pods exist while `CephObjectStore` is expected.
+- No `rook-ceph-mds-*` pods exist while a `CephFilesystem` exists.
+- No `rook-ceph-rgw-*` pods exist while a `CephObjectStore` exists. A cluster with
+  MCG/NooBaa but no `CephObjectStore` has no RGW pods by design — that is not a failure.
 - `ceph fs ls` reports "No filesystems enabled" while CephFS is enabled.
 - MDS or RGW placement still shows `topologyKey: ""` with
-  `whenUnsatisfiable: DoNotSchedule` (the ODF 4.20/4.22 SNO Regression 4 symptom).
+  `whenUnsatisfiable: DoNotSchedule`. Confirmed on both streams: ODF 4.20 as
+  **Regression 4** and ODF 4.22 as **"Empty `topologyKey` on MDS and RGW (CephFS +
+  Object)"** — the two sections are titled differently in
+  `references/validated-odf-sno.md`, so search for the symptom, not the number.
 
-**Remediation:** follow **`references/validated-odf-sno.md`** (Regression 4 for MDS/RGW
-`topologyKey`, plus the version-scoped pool and reconcile freeze steps). Review the
-full sequence with:
+**Remediation:** follow the section for the installed release in
+**`references/validated-odf-sno.md`** (the MDS/RGW `topologyKey` fix, plus that release's
+pool and reconcile-freeze steps). Review the deterministic patches with:
 
 ```bash
 python3 scripts/render_sno_remediation.py --release 4.20 \
   --name ocs-storagecluster --namespace openshift-storage
 ```
 
-Substitute `--release 4.22` when that is the installed ODF stream. After CephFS pools
-exist, mute the expected SNO warning so Ceph reports `HEALTH_OK`:
+Substitute `--release 4.22` when that is the installed ODF stream. The renderer is a
+review aid, not the whole procedure: live `ceph osd pool set` sizing, the
+`POOL_NO_REDUNDANCY` mute, and any CR-spec pool patches the release section lists must be
+applied from `references/validated-odf-sno.md` itself.
+
+Mute the expected SNO warning only **after every pool reports `size 1`**. The mute
+describes the steady state of deliberate single-replica SNO; muting a cluster that is
+still mid-remediation hides real pool problems, which is why the renderer refuses to emit
+it. Verify first, then mute — this block redefines `ROOK_OP`/`CONF` so it is safe to run
+on its own:
 
 ```bash
+ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1)
+CONF="/var/lib/rook/openshift-storage/openshift-storage.config"
+for pool in $(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool ls); do
+  echo "$pool -> $(oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" osd pool get "$pool" size)"
+done
+# Every line must read "size: 1" before muting.
 oc -n openshift-storage exec "$ROOK_OP" -- ceph -c "$CONF" health mute POOL_NO_REDUNDANCY
 ```
 
-**Full readiness on SNO** requires all of: `CephFilesystem` and `CephObjectStore`
-`Ready`, MDS and RGW pods running, `ceph fs ls` listing the filesystem, and passing
-block, file, and object smoke tests below. Re-verified on prod1 (ODF 4.20.18 SNO,
-2026-09-16): block was healthy with `StorageCluster: Ready` while CephFS/RGW stayed
-in `Failure` until Regression 4 was applied; all three smoke modes passed afterward.
+**Full readiness on SNO** requires all of: `CephFilesystem` `Ready`; `CephObjectStore`
+`Ready` **when object storage is enabled** (skip this one on MCG-only clusters); MDS
+running, and RGW running when a `CephObjectStore` exists; `ceph fs ls` listing the
+filesystem; and passing the block, file, and object smoke tests below.
+
+Verified on both streams (2026-09-16): prod1 (ODF 4.20.18 SNO) — block healthy with
+`StorageCluster: Ready` while CephFS/RGW stayed in `Failure` until the `topologyKey` fix;
+htz2 (ODF 4.22.3 SNO) — MDS and RGW both shipped `topologyKey: ""` +
+`whenUnsatisfiable: DoNotSchedule`, `ceph fs ls` reported "No filesystems enabled", and the
+RBD/CephFS StorageClasses were absent until the fix. All three smoke modes passed
+afterward on both.
 
 ## Smoke Test
 
