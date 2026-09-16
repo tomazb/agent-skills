@@ -29,6 +29,10 @@
     "Regression 4" and the differently titled ODF 4.22 section.
   - The `POOL_NO_REDUNDANCY` mute now states its precondition (every pool at
     `size 1`) and redefines `ROOK_OP`/`CONF` so the block is safe to run alone.
+    The shell block also enforces that precondition: mute runs only when every
+    pool query succeeds and every pool reports `size: 1`.
+  - Node-count fallback fails closed when `oc get nodes` fails (RBAC/API), so a
+    failed listing cannot look like `nodeCount=0` and skip the gate.
   - Scoped the "block can be healthy while CephFS/RGW are broken" claim by
     release: true on 4.20.18, **false on 4.22.3**, where the RBD and CephFS
     StorageClasses did not exist at all until the `topologyKey` fix was applied.
