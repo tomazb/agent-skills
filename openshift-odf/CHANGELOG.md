@@ -30,7 +30,8 @@
   - The `POOL_NO_REDUNDANCY` mute now states its precondition (every pool at
     `size 1`) and redefines `ROOK_OP`/`CONF` so the block is safe to run alone.
     The shell block also enforces that precondition: mute runs only when every
-    pool query succeeds and every pool reports `size: 1`.
+    pool query succeeds and every pool reports numeric `size: 1` (exact field
+    match, not a substring that would accept `size: 10`).
   - Node-count fallback fails closed when `oc get nodes` fails (RBAC/API), so a
     failed listing cannot look like `nodeCount=0` and skip the gate.
   - Scoped the "block can be healthy while CephFS/RGW are broken" claim by

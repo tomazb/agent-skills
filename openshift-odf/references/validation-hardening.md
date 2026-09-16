@@ -171,10 +171,10 @@ else
       continue
     fi
     echo "$pool -> $size_line"
-    case "$size_line" in
-      *"size: 1"*) ;;
-      *) MUTE_OK=0 ;;
-    esac
+    pool_size=$(printf '%s\n' "$size_line" | awk '$1 == "size:" { print $2; exit }')
+    if [ "$pool_size" != "1" ]; then
+      MUTE_OK=0
+    fi
   done
 fi
 if [ "$MUTE_OK" -eq 1 ]; then
