@@ -1,5 +1,70 @@
 # Changelog
 
+## 1.20.0
+
+Leftovers of an interrupted ODF uninstall, and an audit that no longer mistakes a
+co-installed upstream Rook cluster for ODF residue. Observed on an OCP 4.20.34 SNO
+cluster with ODF 4.20.17 leftovers (2026-10-06): ODF had run for about three days
+and was removed 47 days earlier with its operators and CSI driver gone before their
+workloads and volumes; LVMS shares `openshift-storage`, and an upstream (non-OLM)
+Rook v1.20.5 cluster now runs in `rook-ceph`. Everything below was seen there and
+verified read-only before anything was changed.
+
+- **`post_uninstall_audit.sh`: the "Terminating PVCs/PVs" checks could never fire.**
+  They tested `.status.phase == "Terminating"`, a phase that does not exist; a
+  deleting claim or volume keeps `Bound`/`Released` and has
+  `metadata.deletionTimestamp`. The stuck NooBaa DB PVC on that cluster had phase
+  `Bound`. Both checks now test `deletionTimestamp` and print phase and finalizers.
+- **The audit is upstream-Rook aware.** A `CephCluster` outside `openshift-storage`
+  with no `StorageCluster` owner marks its namespace as upstream Rook. Then that
+  namespace, the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and SCCs
+  whose users are all its service accounts are reported as retained instead of
+  failing the audit, while any instance of those groups in `openshift-storage`, any
+  `CephCluster` there or owned by a `StorageCluster`, and an SCC with users elsewhere
+  still `WARN`. Before this, all five items failed the audit on that cluster.
+- **Bucket claims and buckets are flagged only when their StorageClass is gone or
+  uses an ODF provisioner**, so claims served by the running Rook are not residue.
+- **New audit checks**: VolumeAttachments of the ODF drivers; ODF pods and any
+  deleting pod in `openshift-storage`; namespaces stuck `Terminating`; ConfigMaps and
+  Secrets held by `objectbucket.io/finalizer` without a live claim; the kept-namespace
+  sweep now covers service accounts, roles, role bindings, PodDisruptionBudgets, jobs,
+  cronjobs, and (when served) ServiceMonitors and PrometheusRules; the
+  `replication.storage.openshift.io` and `ramendr.openshift.io` CRD groups;
+  `groupsnapshot.storage.openshift.io` reported as residue only when its CRDs are
+  ODF-labelled, carry no release-payload annotation, have no instances, and the
+  `VolumeGroupSnapshot` feature gate is off; and ODF cluster RBAC classified by
+  liveness, so a binding whose ServiceAccount is gone `WARN`s while one still bound
+  to a live subject (or a User/Group) is reported as retained. The ODF package list
+  is now defined once and every package match derives from it.
+- **`references/maintenance-uninstall.md` adds "Orphans After An Interrupted
+  Uninstall"**: the proofs to collect before stripping any finalizer, the removal
+  order (Pod, VolumeAttachments, PVs, consumer-namespace finalizers, ObjectBuckets,
+  then RBAC and CRDs), and how to recognise and clear each orphan. A Pod the kubelet
+  holds because its CSI driver is gone is cleared by force-deleting it and
+  restarting the kubelet; a reboot did not clear it. The section warns not to delete
+  the Pod's volume directory under a running kubelet: tried first on that cluster, it
+  left the kubelet unable to build an unmounter and logging about 590 lines a
+  minute until the kubelet restarted.
+- **"Cluster RBAC left by ODF"** lists what stayed (labelled for removed ODF CSVs,
+  plus three unlabelled names), the liveness tests, and the objects that carried ODF
+  labels but were in use by the running Rook. A stale ODF label means ODF created the
+  object, not that nothing uses it.
+- **The step 5 CRD sweep is guarded.** It ran `oc delete <kind> --all -A` on
+  `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` with no ownership check and
+  would have deleted the running Rook cluster. It now re-runs the ownership
+  classification, fails closed on a lookup error, skips those groups when upstream
+  Rook runs (deleting only ODF's instances in `openshift-storage` and handing the Rook
+  cluster to `openshift-rook`), and adds the two DR groups.
+- **Corrected the `groupsnapshot.storage.openshift.io` rule.** "Shared snapshot
+  infrastructure — leave them in place" was wrong on that cluster: the CRDs were
+  ODF's, unused, and removed without effect. The runbook now states when to keep them
+  and when they are residue.
+- Step 4b lists the unowned namespaced residue (`rook-ceph-mon-pdb`,
+  `ocs-status-reporter`, ODF roles and role bindings, `ocs-prometheus-rules`,
+  `odf-info`) and warns that `rook-ceph`/`rook-ceph-csi` SCCs may belong to an
+  upstream Rook. MachineConfig Cleanup covers `99-odf-virtio-disk-udev`, which was
+  kept: removing it reboots the node, and a later storage system may rely on the rule.
+
 ## 1.19.0
 
 Opt-in CPU-request floor for lab and low-vCPU SNO clusters. On an ODF 4.20.18 SNO
