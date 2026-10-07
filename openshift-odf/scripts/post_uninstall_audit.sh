@@ -382,6 +382,9 @@ lso_retained() {
 detect_upstream_rook() {
   local clusters
   local deployments
+  local csi_drivers
+  local csidrivers
+  local pvs
   local kind
   local subject
   local detail
@@ -392,8 +395,15 @@ detect_upstream_rook() {
   query_json "rook-ceph-operator Deployments" '.' \
     oc get deployments -A --field-selector metadata.name=rook-ceph-operator || return 0
   deployments="${QUERY_RESULT:-"{\"items\":[]}"}"
+  # A Ceph CSI can outlive its operator and CephCluster while it still serves volumes.
+  query_json "Ceph CSI Drivers" '.' oc get drivers.csi.ceph.io -A || return 0
+  csi_drivers="${QUERY_RESULT:-"{\"items\":[]}"}"
+  query_json "CSIDrivers" '.' oc get csidrivers || return 0
+  csidrivers="${QUERY_RESULT:-"{\"items\":[]}"}"
+  query_json "PersistentVolumes" '.' oc get pv || return 0
+  pvs="${QUERY_RESULT:-"{\"items\":[]}"}"
 
-  run_split jq_slurp "$ODF_CEPH_OWNERSHIP_JQ" "$clusters" "$deployments"
+  run_split jq_slurp "$ODF_CEPH_OWNERSHIP_JQ" "$clusters" "$deployments" "$csi_drivers" "$csidrivers" "$pvs"
   if [ "$RUN_RC" -ne 0 ]; then
     fail "CephCluster ownership jq filter failed: $RUN_ERR"
     return 0

@@ -59,7 +59,7 @@ def test_runbook_defines_the_tested_functions():
     } <= set(FUNCTIONS)
 
 
-def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True):
+def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=()):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
     for name in ("classify_rook_ownership.sh", "odf_common.sh"):
@@ -76,7 +76,12 @@ def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_
     world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": GROUPS, "errors": errors or {}}
     write_cluster_oc(bin_dir, log=log, **world)
     script = "\n".join(
-        [". scripts/odf_common.sh" if source_common else "", *FUNCTIONS.values(), call, 'echo "rc=$?"']
+        [
+            ". scripts/odf_common.sh" if source_common else "",
+            *(body for name, body in FUNCTIONS.items() if name not in omit),
+            call,
+            'echo "rc=$?"',
+        ]
     )
     result = subprocess.run(
         [str(bin_dir / "bash"), "-c", script],
@@ -228,3 +233,100 @@ def test_labelled_object_search_finds_odf_labels_and_reports_unreadable_kinds(tm
     assert "other" not in result.stdout
     assert "could not check prometheusrules" in result.stderr
     assert "rc=1" in result.stdout
+
+
+STALE_ENV = {"ODF_OWNERSHIP_CLASSIFIED": "yes", "ROOK_NAMESPACES": ""}
+
+
+@pytest.mark.parametrize(
+    "call",
+    ["odf_crd_sweep", "odf_remove_rook_sccs", "odf_list_shared_instances", "odf_delete_odf_buckets"],
+)
+def test_gated_functions_refuse_when_odf_classify_is_undefined(tmp_path, call):
+    # A new shell that inherited the flag but never defined odf_classify.
+    objects = {
+        "objectbucketclaims.objectbucket.io": [
+            {"metadata": meta("odf-claim", "app"), "spec": {"storageClassName": "openshift-storage.noobaa.io"}}
+        ]
+    }
+
+    result, deletes = _run(tmp_path, call, objects=objects, env=STALE_ENV, omit=("odf_classify",))
+
+    assert "rc=1" in result.stdout
+    assert deletes == []
+    assert "odf-claim" not in result.stdout
+
+
+def test_bucket_cleanup_called_alone_lists_classless_claims_next_to_upstream_rook(tmp_path):
+    objects = dict(UPSTREAM)
+    objects["sc"] = [{"metadata": meta("odf-buckets"), "provisioner": "openshift-storage.noobaa.io/obc"}]
+    objects["objectbucketclaims.objectbucket.io"] = [
+        {"metadata": meta("odf-claim", "app"), "spec": {"storageClassName": "odf-buckets"}},
+        {"metadata": meta("classless-claim", "app"), "spec": {"storageClassName": "gone"}},
+    ]
+
+    result, deletes = _run(tmp_path, "odf_delete_odf_buckets", objects=objects)
+
+    assert "-n app delete objectbucketclaims.objectbucket.io odf-claim --wait=false" in deletes
+    assert not [d for d in deletes if "classless-claim" in d]
+    assert "keeping objectbucketclaims.objectbucket.io app/classless-claim: its StorageClass is gone" in result.stderr
+    # a kept claim means the objectbucket.io CRDs must stay; the status says so
+    assert "rc=1" in result.stdout
+
+
+def test_failed_classification_clears_an_inherited_flag(tmp_path):
+    result, _ = _run(
+        tmp_path,
+        'odf_classify; echo "flag=${ODF_OWNERSHIP_CLASSIFIED:-}"',
+        objects=UPSTREAM,
+        errors=UNKNOWN_ERRORS,
+        env=STALE_ENV,
+    )
+
+    assert "flag=\n" in result.stdout
+
+
+def test_bucket_cleanup_called_alone_refuses_when_classification_fails(tmp_path):
+    objects = {
+        "objectbucketclaims.objectbucket.io": [
+            {"metadata": meta("odf-claim", "app"), "spec": {"storageClassName": "openshift-storage.noobaa.io"}}
+        ]
+    }
+
+    result, deletes = _run(tmp_path, "odf_delete_odf_buckets", objects=objects, errors=UNKNOWN_ERRORS, env=STALE_ENV)
+
+    assert "rc=1" in result.stdout
+    assert deletes == []
+
+
+@pytest.mark.parametrize(
+    ("objects", "group", "crd"),
+    [
+        (
+            {
+                "objectbucketclaims.objectbucket.io": [
+                    {
+                        "metadata": meta("held-claim", "app", finalizers=["objectbucket.io/finalizer"]),
+                        "spec": {"storageClassName": "openshift-storage.noobaa.io"},
+                    }
+                ]
+            },
+            "objectbucket.io",
+            "crd/objectbucketclaims.objectbucket.io",
+        ),
+        (
+            {"storageclusters.ocs.openshift.io": [{"metadata": meta("ocs-storagecluster", "openshift-storage", finalizers=["x"])}]},
+            "ocs.openshift.io",
+            "crd/storageclusters.ocs.openshift.io",
+        ),
+    ],
+    ids=["bucket-claim", "storagecluster"],
+)
+def test_sweep_keeps_a_groups_crds_while_an_instance_remains(tmp_path, objects, group, crd):
+    # The fake never removes what it is asked to delete, like an object held by a
+    # finalizer whose controller is gone.
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=objects)
+
+    assert f"instances of {group} remain:" in result.stderr
+    assert "Orphans After An Interrupted Uninstall" in result.stderr
+    assert not [d for d in deletes if crd in d], deletes

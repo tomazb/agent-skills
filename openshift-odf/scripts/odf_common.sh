@@ -26,45 +26,61 @@ ODF_CSI_DRIVER_RE='^openshift-storage[.](rbd|cephfs)[.]csi[.]ceph[.]com$'
 ODF_BUCKET_PROVISIONER_RE='^openshift-storage[.](noobaa[.]io/obc|ceph[.]rook[.]io/bucket)$'
 ODF_PROVISIONER_RE='^openshift-storage[.]((rbd|cephfs)[.]csi[.]ceph[.]com|noobaa[.]io/obc|ceph[.]rook[.]io/bucket)$'
 
-# Who runs Ceph, by the same rule as the ownership gate in SKILL.md. Input: the
-# `oc get cephclusters.ceph.rook.io -A -o json` and `oc get deployments -A -o json`
-# documents, slurped in that order. Output, one tab-separated line each:
+# Who runs Ceph, by the same rule as the ownership gate in SKILL.md. Input, slurped
+# in this order: the `-o json` lists of cephclusters.ceph.rook.io (-A), the
+# rook-ceph-operator Deployments (-A), drivers.csi.ceph.io (-A), csidrivers, and
+# persistentvolumes. Output, one tab-separated line each:
 #   upstream <namespace> <live CephCluster names there, or "none">
 #   residue  <namespace>/<name> <reason>
-#   unknown  <namespace>/<name> <reason>
+#   unknown  <object> <reason>
 # Only rook-ceph-operator Deployments outside openshift-storage that are not being
 # deleted are considered. One that OLM did not install (no olm.owner label, no
 # operators.coreos.com/ label) is an upstream Rook operator; existence, not
 # readiness, is the test, because an operator scaled to zero for maintenance still
 # owns its cluster. One that OLM did install cannot be told apart from a community
 # Rook bundle here, so it is unknown.
-# A CephCluster is residue when it carries an ODF signal (in openshift-storage,
-# owned by a StorageCluster, named like ODF's) or is being deleted. Every other
-# CephCluster belongs to upstream Rook when a non-OLM operator exists anywhere
-# outside openshift-storage (Rook watches every namespace by default, so the
-# operator may live elsewhere), and is unknown otherwise (renamed, OLM-installed,
-# or absent operator). Any unknown line means the caller must not decide.
+# A CephCluster with an ODF signal (in openshift-storage, owned by a StorageCluster,
+# named like ODF's) is residue; so is one being deleted while an upstream operator
+# exists. Every other CephCluster belongs to upstream Rook when a non-OLM operator
+# exists anywhere outside openshift-storage (Rook watches every namespace by
+# default, so the operator may live elsewhere), and is unknown otherwise (renamed,
+# OLM-installed, or absent operator).
+# With no upstream operator, a non-ODF Ceph CSI that outlived its operator — a
+# drivers.csi.ceph.io object outside openshift-storage, a *.csi.ceph.com CSIDriver
+# without the openshift-storage. prefix, or a PV on such a driver — may still serve
+# mounted volumes, so it is unknown too. Any unknown line means the caller must
+# not decide.
 # Known limitation: an upstream Rook installed inside openshift-storage reads as ODF.
 # shellcheck disable=SC2016 # $clusters, $ops, $operators, $live are jq variables
 ODF_CEPH_OWNERSHIP_JQ='
 def olm_installed: (.metadata.labels // {}) | has("olm.owner") or any(keys[]; startswith("operators.coreos.com/"));
+def foreign_ceph_csi: test("[.]csi[.]ceph[.]com$") and (startswith("openshift-storage.") | not);
 def odf_signal:
   if .metadata.namespace == "openshift-storage" then "in openshift-storage"
   elif any(.metadata.ownerReferences[]?; .kind == "StorageCluster") then "owned by a StorageCluster"
   elif (.metadata.name | test("^ocs-(external-)?storagecluster-cephcluster$")) then "carries the ODF CephCluster name"
   else empty end;
-def residue_reason: [odf_signal, (if .metadata.deletionTimestamp != null then "being deleted" else empty end)] | .[0] // empty;
 (.[0].items // []) as $clusters
 | [(.[1].items // [])[]
    | select(.metadata.name == "rook-ceph-operator")
    | select(.metadata.namespace != "openshift-storage")
    | select(.metadata.deletionTimestamp == null)] as $ops
 | ([$ops[] | select(olm_installed | not) | .metadata.namespace] | unique) as $operators
-| [$clusters[] | select([residue_reason] | length == 0)] as $live
+| def residue_reason:
+    [odf_signal,
+     (if .metadata.deletionTimestamp != null and ($operators | length) > 0 then "being deleted" else empty end)]
+    | .[0] // empty;
+  [$clusters[] | select([residue_reason] | length == 0)] as $live
 | ($ops[] | select(olm_installed)
    | ["unknown", "\(.metadata.namespace)/rook-ceph-operator", "Deployment installed by OLM; cannot tell whether it is ODF or a Rook bundle"] | @tsv),
   (if ($operators | length) == 0 then
-     ($live[] | ["unknown", "\(.metadata.namespace)/\(.metadata.name)", "no non-OLM rook-ceph-operator Deployment outside openshift-storage (renamed, OLM-installed, or absent operator)"] | @tsv)
+     ($live[] | ["unknown", "\(.metadata.namespace)/\(.metadata.name)", "no non-OLM rook-ceph-operator Deployment outside openshift-storage (renamed, OLM-installed, or absent operator)"] | @tsv),
+     ((.[2].items // [])[] | select(.metadata.namespace != "openshift-storage")
+      | ["unknown", "csi.ceph.io Driver \(.metadata.namespace)/\(.metadata.name)", "non-ODF Ceph CSI without a Rook operator; it may still serve mounted volumes"] | @tsv),
+     ((.[3].items // [])[] | select(.metadata.name | foreign_ceph_csi)
+      | ["unknown", "CSIDriver \(.metadata.name)", "non-ODF Ceph CSI driver without a Rook operator; it may still serve mounted volumes"] | @tsv),
+     ((.[4].items // [])[] | select((.spec.csi.driver // "") | foreign_ceph_csi)
+      | ["unknown", "PV \(.metadata.name)", "volume of non-ODF Ceph CSI driver \(.spec.csi.driver) without a Rook operator"] | @tsv)
    else
      (($operators + [$live[].metadata.namespace]) | unique | .[]) as $ns
      | ["upstream", $ns, ([$live[] | select(.metadata.namespace == $ns) | .metadata.name] | if length > 0 then join(",") else "none" end)] | @tsv

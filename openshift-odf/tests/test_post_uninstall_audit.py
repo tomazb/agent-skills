@@ -1574,3 +1574,33 @@ def test_audit_flags_stale_odf_console_plugin_names(tmp_path):
     assert result.returncode == 1
     assert "FAIL: stale ODF names still in console.operator spec.plugins:\nodf-console\n" in result.stdout
     assert "monitoring-plugin" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        (
+            {"drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")}]},
+            "csi.ceph.io Driver rook-ceph/rook-ceph.rbd.csi.ceph.com (non-ODF Ceph CSI without a Rook operator",
+        ),
+        (
+            {"csidrivers": [{"metadata": meta("rook-ceph.rbd.csi.ceph.com")}]},
+            "CSIDriver rook-ceph.rbd.csi.ceph.com (non-ODF Ceph CSI driver without a Rook operator",
+        ),
+        (
+            {"pv": [{"metadata": meta("pvc-2"), "spec": {"csi": {"driver": "rook-ceph.cephfs.csi.ceph.com"}}}]},
+            "PV pvc-2 (volume of non-ODF Ceph CSI driver rook-ceph.cephfs.csi.ceph.com",
+        ),
+    ],
+    ids=["csi-driver-object", "csidriver", "pv"],
+)
+def test_audit_reports_a_ceph_csi_that_outlived_its_operator_as_unknown(tmp_path, extra, named):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, objects=extra, groups=ROOK_GROUPS)
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: Rook objects whose owner cannot be classified still exist:" in result.stdout
+    assert named in result.stdout
+    assert "retained for upstream Rook" not in result.stdout

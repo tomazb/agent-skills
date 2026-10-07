@@ -378,14 +378,18 @@ survive operator removal on a live 4.22.1 uninstall.
 `objectbucket.io` CRDs) are shared with upstream Rook. `scripts/classify_rook_ownership.sh`
 applies the rule from `SKILL.md`'s ownership gate:
 
-- a `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, named like
-  ODF's, or being deleted is residue;
+- a `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, or named
+  like ODF's is residue; so is one being deleted while an upstream operator runs;
 - every other `CephCluster` is upstream Rook when a `rook-ceph-operator` Deployment
   that OLM did not install exists outside `openshift-storage` (in any namespace:
   Rook watches all of them by default);
 - anything else — an OLM-installed `rook-ceph-operator` outside `openshift-storage`,
-  or a non-ODF `CephCluster` with no such operator (renamed, OLM-installed, or
-  absent) — is **unknown**, and the script refuses to answer.
+  a non-ODF `CephCluster` with no such operator (renamed, OLM-installed, or absent;
+  being deleted or not), or, with no such operator, a non-ODF Ceph CSI left behind
+  (a `drivers.csi.ceph.io` object outside `openshift-storage`, a `*.csi.ceph.com`
+  CSIDriver without the `openshift-storage.` prefix, or a PV on such a driver, which
+  may still serve mounted volumes) — is **unknown**, and the script refuses to
+  answer.
 
 It is read-only, names the cluster it classified, prints the Rook namespaces on
 stdout and its verdict on stderr, and exits nonzero whenever it cannot classify:
@@ -475,8 +479,7 @@ upstream Rook" verdict:
 
 ```bash
 odf_remove_rook_sccs() {
-  odf_classify
-  if [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
+  if ! odf_classify || [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
     echo "ownership not classified - keeping SCCs rook-ceph and rook-ceph-csi" >&2
     return 1
   fi
@@ -503,8 +506,7 @@ With upstream Rook present, the sweep leaves the three shared groups alone. This
 
 ```bash
 odf_list_shared_instances() {
-  odf_classify
-  if [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
+  if ! odf_classify || [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
     echo "ownership could not be classified - nothing listed" >&2
     return 1
   fi
@@ -525,7 +527,7 @@ odf_list_shared_instances
 # Review that list, then delete those objects by name: oc -n <namespace> delete <kind> <name>
 ```
 
-ODF's cluster-scoped `ObjectBucket`s and its bucket claims in consumer namespaces are decided by their StorageClass, not by group: a claim or bucket is ODF's when its class is missing or uses an ODF provisioner (`openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`) — the same rule as the audit. Claims of any other bucket provisioner (a running Rook, a standalone MCG) are listed and kept, and so are the `objectbucket.io` CRDs while any remain. Anything about a running Rook cluster itself — its health, its CRDs, its SCCs — is the `openshift-rook` skill's job; hand it off rather than changing it from this runbook.
+ODF's cluster-scoped `ObjectBucket`s and its bucket claims in consumer namespaces are decided by their StorageClass, not by group: a claim or bucket is ODF's when its class uses an ODF provisioner (`openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`), or when its class is missing and no upstream Rook runs — the same rule as the audit. With upstream Rook present a claim whose class is missing could be Rook's, so it is listed for you to decide, not deleted. Claims of any other bucket provisioner (a running Rook, a standalone MCG) are listed and kept, and so are the `objectbucket.io` CRDs while any remain. The function classifies itself, so it is safe to call on its own. Anything about a running Rook cluster itself — its health, its CRDs, its SCCs — is the `openshift-rook` skill's job; hand it off rather than changing it from this runbook.
 
 ```bash
 odf_delete_odf_buckets() {
@@ -533,19 +535,29 @@ odf_delete_odf_buckets() {
     echo "ODF patterns not loaded - source scripts/odf_common.sh from the skill directory" >&2
     return 1
   fi
+  if ! odf_classify || [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
+    echo "ownership could not be classified - no bucket deleted" >&2
+    return 1
+  fi
   local classes claims buckets plan owner kind ns name foreign=0
   classes=$(oc get sc -o json) || return 1
   claims=$(oc get objectbucketclaims.objectbucket.io -A -o json) || return 1
   buckets=$(oc get objectbuckets.objectbucket.io -o json) || return 1
-  plan=$(printf '%s\n' "$classes" "$claims" "$buckets" | jq -r -s --arg re "$ODF_BUCKET_PROVISIONER_RE" '
+  plan=$(printf '%s\n' "$classes" "$claims" "$buckets" | jq -r -s \
+      --arg re "$ODF_BUCKET_PROVISIONER_RE" --arg rook "$ROOK_NAMESPACES" '
     ([.[0].items[] | {key: .metadata.name, value: .provisioner}] | from_entries) as $classes
-    | def odf: ($classes[.spec.storageClassName // ""] // null) as $p | $p == null or ($p | test($re));
-    (.[1].items[] | [(if odf then "odf" else "other" end), "objectbucketclaims.objectbucket.io", .metadata.namespace, .metadata.name] | @tsv),
-    (.[2].items[] | [(if odf then "odf" else "other" end), "objectbuckets.objectbucket.io", "-", .metadata.name] | @tsv)') || return 1
+    | def owner: ($classes[.spec.storageClassName // ""] // null) as $p
+        | if $p == null then (if $rook == "" then "odf" else "unsure" end)
+          elif ($p | test($re)) then "odf" else "other" end;
+    (.[1].items[] | [owner, "objectbucketclaims.objectbucket.io", .metadata.namespace, .metadata.name] | @tsv),
+    (.[2].items[] | [owner, "objectbuckets.objectbucket.io", "-", .metadata.name] | @tsv)') || return 1
   while IFS=$'\t' read -r owner kind ns name; do
     [ -n "$owner" ] || continue
     if [ "$owner" = other ]; then
       echo "keeping $kind $ns/$name: its StorageClass is not ODF's" >&2
+      foreign=1
+    elif [ "$owner" = unsure ]; then
+      echo "keeping $kind $ns/$name: its StorageClass is gone and upstream Rook runs - decide by hand" >&2
       foreign=1
     elif [ "$ns" = "-" ]; then
       oc delete "$kind" "$name" --wait=false || return 1
@@ -571,12 +583,11 @@ for group in ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.
 done
 ```
 
-Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets`, and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
+Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets`; it leaves a group's CRDs in place while any instance of the group remains (an instance held by a finalizer whose controller is gone needs the **Orphans After An Interrupted Uninstall** steps first); and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
 
 ```bash
 odf_crd_sweep() {
-  odf_classify
-  if [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
+  if ! odf_classify || [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
     echo "ownership could not be classified - nothing deleted" >&2
     return 1
   fi
@@ -588,7 +599,7 @@ odf_crd_sweep() {
     echo "upstream Rook in: $ROOK_NAMESPACES - leaving ceph.rook.io, csi.ceph.io, objectbucket.io in place" >&2
   fi
 
-  local group kinds namespaced kind instances_deleted crds
+  local group kinds namespaced kind instances_deleted remaining left crds
   for group in $groups; do
     # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
     #    returns an empty list, which would silently skip instance deletion and
@@ -623,7 +634,22 @@ odf_crd_sweep() {
       continue
     fi
 
-    # 3. Only now the CRDs themselves.
+    # 3. No instance may remain: one held by a finalizer whose controller is gone
+    #    would leave the CRD Terminating. Clear those first (Orphans section).
+    remaining=""
+    for kind in $kinds; do
+      if ! left=$(oc get "$kind" -A -o name); then
+        remaining="$remaining could-not-list:$kind"
+      elif [ -n "$left" ]; then
+        remaining="$remaining ${left//$'\n'/ }"
+      fi
+    done
+    if [ -n "$remaining" ]; then
+      echo "instances of $group remain:$remaining - clear them (see Orphans After An Interrupted Uninstall); leaving its CRDs in place" >&2
+      continue
+    fi
+
+    # 4. Only now the CRDs themselves.
     crds=$(oc get crd -o name | grep "\.$group$" || true)
     [ -n "$crds" ] && oc delete $crds
   done
@@ -662,7 +688,7 @@ CRDs with the `customresourcecleanup.apiextensions.k8s.io` finalizer block until
 After uninstall, confirm:
 
 - `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating). When the namespace was kept for LVMS/LSO: it contains no rook/ceph/noobaa/ocs/odf secrets, configmaps, services, workloads, service accounts, roles, role bindings, PodDisruptionBudgets, jobs, cronjobs, ServiceMonitors, or PrometheusRules; no ODF pod and no pod with a `deletionTimestamp` remains there; and the LVMS/LSO pods are still Running.
-- When upstream Rook runs (the rule of `scripts/classify_rook_ownership.sh`: a non-OLM `rook-ceph-operator` Deployment outside `openshift-storage`), its namespaces — the operator's and those of the `CephCluster`s it runs, which may differ — the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and the SCCs whose users are all its service accounts are retained, not residue. Instances of those groups outside its namespaces still are (bucket claims excepted: their StorageClass decides), and so is every `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, named `ocs-storagecluster-cephcluster`, or being deleted. A `CephCluster` without any non-OLM operator, or an OLM-installed `rook-ceph-operator`, is reported as of unknown owner: decide it by hand before removing anything shared with Rook.
+- When upstream Rook runs (the rule of `scripts/classify_rook_ownership.sh`: a non-OLM `rook-ceph-operator` Deployment outside `openshift-storage`), its namespaces — the operator's and those of the `CephCluster`s it runs, which may differ — the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and the SCCs whose users are all its service accounts are retained, not residue. Instances of those groups outside its namespaces still are (bucket claims excepted: their StorageClass decides), and so is every `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, named `ocs-storagecluster-cephcluster`, or being deleted while an upstream operator runs. A non-ODF `CephCluster` without any non-OLM operator, an OLM-installed `rook-ceph-operator`, or — with no such operator — a non-ODF Ceph CSI left behind (`drivers.csi.ceph.io` object, `*.csi.ceph.com` CSIDriver, or a PV on one) is reported as of unknown owner: decide it by hand before removing anything shared with Rook.
 - The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io`, `csiaddons.openshift.io`, `objectbucket.io`, `replication.storage.openshift.io`, `ramendr.openshift.io` — plus `local.storage.openshift.io` only if LSO was removed too, and `groupsnapshot.storage.openshift.io` decided as in step 5.
 - OSD disks pass `ceph-volume raw list` → `{}` (not only a clean `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
 - No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.

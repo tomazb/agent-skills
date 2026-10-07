@@ -17,21 +17,26 @@ there and verified read-only before anything was changed.
   `Bound`. The checks now test `deletionTimestamp` and print phase and finalizers.
 - **One Ceph ownership rule, in `scripts/odf_common.sh`, used by the audit, the new
   classifier, and the runbook.** A `CephCluster` in `openshift-storage`, owned by a
-  `StorageCluster`, named like ODF's, or being deleted is residue. Every other
-  `CephCluster` is upstream Rook when a `rook-ceph-operator` Deployment that OLM did
-  not install exists outside `openshift-storage`, in any namespace (Rook watches all
-  of them by default); such an operator marks its own namespace as upstream Rook even
-  before a `CephCluster` exists. Anything else — an OLM-installed
-  `rook-ceph-operator` outside `openshift-storage`, or a non-ODF `CephCluster` with
-  no such operator (renamed, OLM-installed, or absent) — is of unknown owner. Known
-  limitation: upstream Rook installed inside `openshift-storage` reads as ODF.
+  `StorageCluster`, or named like ODF's is residue, and so is one being deleted while
+  an upstream operator runs. Every other `CephCluster` is upstream Rook when a
+  `rook-ceph-operator` Deployment that OLM did not install exists outside
+  `openshift-storage`, in any namespace (Rook watches all of them by default); such
+  an operator marks its own namespace as upstream Rook even before a `CephCluster`
+  exists. Anything else is of unknown owner: an OLM-installed `rook-ceph-operator`
+  outside `openshift-storage`, a non-ODF `CephCluster` with no such operator
+  (renamed, OLM-installed, or absent; being deleted or not), and, with no such
+  operator, a non-ODF Ceph CSI left behind — a `drivers.csi.ceph.io` object outside
+  `openshift-storage`, a `*.csi.ceph.com` CSIDriver without the `openshift-storage.`
+  prefix, or a PV on such a driver — because it may still serve mounted volumes.
+  Known limitation: upstream Rook installed inside `openshift-storage` reads as ODF.
 - **New `scripts/classify_rook_ownership.sh`** applies that rule read-only. It names
   the cluster it classified, prints the upstream Rook namespaces on stdout and its
   verdict on stderr, and exits 0 only for "upstream Rook present in: …" or "no
   upstream Rook". It exits 1 when it cannot classify: an unreachable cluster or
   unknown `--context` (checked with `oc whoami` first), any lookup error (only "the
-  server doesn't have a resource type" for `CephCluster` reads as none; the
-  Deployment lookup tolerates nothing), empty or unparseable output, a `jq`
+  server doesn't have a resource type" for the `CephCluster` and Ceph CSI `Driver`
+  CRDs reads as none; the Deployment, CSIDriver, and PV lookups tolerate nothing),
+  empty or unparseable output, a `jq`
   failure, `jq` missing, or any object of unknown owner.
 - **The audit is upstream-Rook aware.** The upstream Rook namespaces, the
   `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and SCCs whose users
@@ -41,7 +46,8 @@ there and verified read-only before anything was changed.
   Before this, all five Rook items failed the audit on that cluster.
 - **Bucket claims and buckets are ODF's only when their StorageClass is gone or uses
   an ODF provisioner**, in the audit and in the runbook, so claims of a running Rook
-  or another bucket provisioner are neither flagged nor deleted.
+  or another bucket provisioner are neither flagged nor deleted. With upstream Rook
+  present, the runbook lists a claim whose class is gone instead of deleting it.
 - **New audit checks**: VolumeAttachments of the ODF drivers; ODF pods in
   `openshift-storage`; pods, PVCs, PVs, and namespaces deleting for more than 10
   minutes (younger deletions are in progress and ignored); ConfigMaps and Secrets
@@ -83,9 +89,11 @@ there and verified read-only before anything was changed.
 - **Everything the runbook deletes that is shared with Rook goes through the
   classifier, freshly.** The pasteable steps are bash functions that use `return`,
   not `exit`. `odf_classify` sets `ODF_OWNERSHIP_CLASSIFIED=yes` only on success;
-  `odf_remove_rook_sccs` and `odf_crd_sweep` call it themselves immediately before
-  acting, so a verdict from an earlier login or context is never reused, and refuse
-  when it fails. With upstream Rook present the sweep leaves `ceph.rook.io`,
+  `odf_remove_rook_sccs`, `odf_list_shared_instances`, `odf_delete_odf_buckets`, and
+  `odf_crd_sweep` call it themselves immediately before acting, so a verdict from an
+  earlier login or context is never reused, and refuse when it fails or is not
+  defined. The sweep leaves a group's CRDs in place while any instance of the group
+  remains, pointing at the Orphans section. With upstream Rook present the sweep leaves `ceph.rook.io`,
   `csi.ceph.io`, and `objectbucket.io` alone, `odf_list_shared_instances` lists ODF's
   instances in those groups outside the Rook namespaces for the reader to delete by
   name, and the `rook-ceph`/`rook-ceph-csi` SCCs stay (they are not ODF's then).

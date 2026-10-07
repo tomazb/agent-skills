@@ -12,6 +12,7 @@ from cluster_fake import (  # noqa: E402
     OLD,
     SHOW_SERVER,
     ceph_cluster,
+    meta,
     rook_operator,
     run_script,
     write_cluster_oc,
@@ -27,11 +28,11 @@ def _classify(bin_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return run_script("classify_rook_ownership.sh", bin_dir, *args)
 
 
-def _cluster(tmp_path: Path, clusters: list, deployments: list, **kwargs) -> Path:
+def _cluster(tmp_path: Path, clusters: list, deployments: list, extra: dict | None = None, **kwargs) -> Path:
     write_jq_proxy(tmp_path)
     write_cluster_oc(
         tmp_path,
-        objects={"cephclusters.ceph.rook.io": clusters, "deployments": deployments},
+        objects={"cephclusters.ceph.rook.io": clusters, "deployments": deployments, **(extra or {})},
         **kwargs,
     )
     return tmp_path
@@ -100,18 +101,80 @@ def test_classify_reports_none_with_residue_for_odf_signalled_clusters_only(tmp_
             "ocs-elsewhere",
             ownerReferences=[{"kind": "StorageCluster", "name": "ocs-storagecluster"}],
         ),
-        ceph_cluster("old", "rook-ceph", deletionTimestamp=OLD),
+        ceph_cluster("ocs-storagecluster-cephcluster", "openshift-storage-old", deletionTimestamp=OLD),
     ]
     odf_operator = rook_operator("openshift-storage", {"olm.owner": "rook-ceph-operator.v4.20.17-rhodf"})
+    # ODF's own leftovers in openshift-storage are not a foreign Ceph CSI
+    odf_csi = {
+        "drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("openshift-storage.rbd.csi.ceph.com", "openshift-storage")}],
+        "csidrivers": [{"metadata": meta("openshift-storage.rbd.csi.ceph.com")}],
+        "pv": [{"metadata": meta("pvc-1"), "spec": {"csi": {"driver": "openshift-storage.rbd.csi.ceph.com"}}}],
+    }
 
-    result = _classify(_cluster(tmp_path, clusters, [odf_operator]))
+    result = _classify(_cluster(tmp_path, clusters, [odf_operator], extra=odf_csi))
 
     assert result.returncode == 0, result.stderr
     assert result.stdout == "\n"
     assert "residue CephCluster openshift-storage/ocs-storagecluster-cephcluster: in openshift-storage" in result.stderr
     assert "residue CephCluster ocs-elsewhere/ocs-storagecluster-cephcluster: owned by a StorageCluster" in result.stderr
-    assert "residue CephCluster rook-ceph/old: being deleted" in result.stderr
+    assert (
+        "residue CephCluster openshift-storage-old/ocs-storagecluster-cephcluster: carries the ODF CephCluster name"
+        in result.stderr
+    )
     assert "verdict: no upstream Rook" in result.stderr
+
+
+def test_classify_keeps_a_deleting_cluster_residue_while_its_operator_runs(tmp_path):
+    result = _classify(
+        _cluster(tmp_path, [ceph_cluster("old", "rook-ceph", deletionTimestamp=OLD)], [rook_operator()])
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "residue CephCluster rook-ceph/old: being deleted" in result.stderr
+
+
+def test_classify_refuses_a_deleting_non_odf_cluster_without_any_operator(tmp_path):
+    result = _classify(_cluster(tmp_path, [ceph_cluster("old", "rook-ceph", deletionTimestamp=OLD)], []))
+
+    _assert_unknown(result, "unknown owner of rook-ceph/old: no non-OLM rook-ceph-operator Deployment")
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        (
+            {"drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")}]},
+            "unknown owner of csi.ceph.io Driver rook-ceph/rook-ceph.rbd.csi.ceph.com",
+        ),
+        (
+            {"csidrivers": [{"metadata": meta("rook-ceph.rbd.csi.ceph.com")}]},
+            "unknown owner of CSIDriver rook-ceph.rbd.csi.ceph.com",
+        ),
+        (
+            {"pv": [{"metadata": meta("pvc-2"), "spec": {"csi": {"driver": "rook-ceph.cephfs.csi.ceph.com"}}}]},
+            "unknown owner of PV pvc-2: volume of non-ODF Ceph CSI driver rook-ceph.cephfs.csi.ceph.com",
+        ),
+    ],
+    ids=["csi-driver-object", "csidriver", "pv"],
+)
+def test_classify_refuses_a_ceph_csi_that_outlived_its_operator(tmp_path, extra, named):
+    # No operator, no CephCluster, but a Ceph CSI that may still serve mounted PVs:
+    # sweeping drivers.csi.ceph.io would take its deployments away.
+    result = _classify(_cluster(tmp_path, [], [], extra=extra))
+
+    _assert_unknown(result, named)
+
+
+def test_classify_accepts_a_ceph_csi_run_by_an_upstream_operator(tmp_path):
+    extra = {
+        "drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")}],
+        "csidrivers": [{"metadata": meta("rook-ceph.rbd.csi.ceph.com")}],
+    }
+
+    result = _classify(_cluster(tmp_path, [], [rook_operator()], extra=extra))
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "rook-ceph\n"
 
 
 @pytest.mark.parametrize(

@@ -11,8 +11,9 @@ set -euo pipefail
 #         CephCluster, and per object whose owner is unknown, then the verdict.
 # exit:   0 classified: "upstream Rook present in: ..." or "no upstream Rook".
 #         1 could not classify: an oc failure (only "no such resource type" for
-#           CephClusters reads as none), empty or unparseable output, a jq
-#           failure, or any CephCluster or operator whose owner is unknown.
+#           the CephCluster and Ceph CSI Driver CRDs reads as none), empty or
+#           unparseable output, a jq failure, or any CephCluster, operator, or
+#           leftover non-ODF Ceph CSI whose owner is unknown.
 #         2 bad arguments.
 # A caller that deletes Rook-shared objects must continue only on exit 0.
 
@@ -85,9 +86,16 @@ clusters="$LIST_JSON"
 fetch_list "rook-ceph-operator Deployment" strict \
   oc get deployments -A --field-selector metadata.name=rook-ceph-operator
 deployments="$LIST_JSON"
+# A Ceph CSI can outlive its operator and CephCluster while it still serves volumes.
+fetch_list "Ceph CSI Driver" missing-type-is-empty oc get drivers.csi.ceph.io -A
+csi_drivers="$LIST_JSON"
+fetch_list "CSIDriver" strict oc get csidrivers
+csidrivers="$LIST_JSON"
+fetch_list "PersistentVolume" strict oc get pv
+pvs="$LIST_JSON"
 
-run_split jq_slurp "$ODF_CEPH_OWNERSHIP_JQ" "$clusters" "$deployments"
-[ "$RUN_RC" -eq 0 ] || stop "could not parse the CephCluster or Deployment list: $RUN_ERR"
+run_split jq_slurp "$ODF_CEPH_OWNERSHIP_JQ" "$clusters" "$deployments" "$csi_drivers" "$csidrivers" "$pvs"
+[ "$RUN_RC" -eq 0 ] || stop "could not parse the Ceph ownership lists: $RUN_ERR"
 
 namespaces=""
 unknown=""
