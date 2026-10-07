@@ -2,59 +2,69 @@
 
 ## 1.20.0
 
-Leftovers of an interrupted ODF uninstall, and an audit that no longer mistakes a
-co-installed upstream Rook cluster for ODF residue. Observed on an OCP 4.20.34 SNO
-cluster with ODF 4.20.17 leftovers (2026-10-06): ODF had run for about three days
-and was removed 47 days earlier with its operators and CSI driver gone before their
-workloads and volumes; LVMS shares `openshift-storage`, and an upstream (non-OLM)
-Rook v1.20.5 cluster now runs in `rook-ceph`. Everything below was seen there and
-verified read-only before anything was changed.
+Leftovers of an interrupted ODF uninstall, and an audit and runbook that no longer
+mistake a co-installed upstream Rook cluster for ODF residue. Observed on an OCP
+4.20.34 SNO cluster with ODF 4.20.17 leftovers (2026-10-06): ODF had run for about
+three days and was removed 47 days earlier with its operators and CSI driver gone
+before their workloads and volumes; LVMS shares `openshift-storage`, and an upstream
+(non-OLM) Rook v1.20.5 cluster now runs in `rook-ceph`. Everything below was seen
+there and verified read-only before anything was changed.
 
 - **`post_uninstall_audit.sh`: the "Terminating PVCs/PVs" checks could never fire.**
   They tested `.status.phase == "Terminating"`, a phase that does not exist; a
   deleting claim or volume keeps `Bound`/`Released` and has
   `metadata.deletionTimestamp`. The stuck NooBaa DB PVC on that cluster had phase
-  `Bound`. Both checks now test `deletionTimestamp` and print phase and finalizers.
-- **The audit is upstream-Rook aware.** A namespace runs upstream Rook when it holds
-  a `rook-ceph-operator` Deployment that OLM did not install, that is not being
-  deleted, outside `openshift-storage` — with or without a `CephCluster` yet. Then
-  that namespace, the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and
-  SCCs whose users are all its service accounts are reported as retained instead of
-  failing the audit. Instances of those groups outside the Rook namespaces (bucket
-  claims excepted), an SCC with users elsewhere or with no users, and every
-  `CephCluster` that is not a live upstream Rook cluster (in `openshift-storage`,
-  owned by a `StorageCluster`, named `ocs-storagecluster-cephcluster`, being deleted,
-  or without its operator) still `WARN`. Before this, all five Rook items failed the
-  audit on that cluster.
-- **Bucket claims and buckets are flagged only when their StorageClass is gone or
-  uses an ODF provisioner**, so claims served by the running Rook are not residue.
+  `Bound`. The checks now test `deletionTimestamp` and print phase and finalizers.
+- **One Ceph ownership rule, in `scripts/odf_common.sh`, used by the audit, the new
+  classifier, and the runbook.** A `CephCluster` in `openshift-storage`, owned by a
+  `StorageCluster`, named like ODF's, or being deleted is residue. Every other
+  `CephCluster` is upstream Rook when a `rook-ceph-operator` Deployment that OLM did
+  not install exists outside `openshift-storage`, in any namespace (Rook watches all
+  of them by default); such an operator marks its own namespace as upstream Rook even
+  before a `CephCluster` exists. Anything else — an OLM-installed
+  `rook-ceph-operator` outside `openshift-storage`, or a non-ODF `CephCluster` with
+  no such operator (renamed, OLM-installed, or absent) — is of unknown owner. Known
+  limitation: upstream Rook installed inside `openshift-storage` reads as ODF.
+- **New `scripts/classify_rook_ownership.sh`** applies that rule read-only. It names
+  the cluster it classified, prints the upstream Rook namespaces on stdout and its
+  verdict on stderr, and exits 0 only for "upstream Rook present in: …" or "no
+  upstream Rook". It exits 1 when it cannot classify: an unreachable cluster or
+  unknown `--context` (checked with `oc whoami` first), any lookup error (only "the
+  server doesn't have a resource type" for `CephCluster` reads as none; the
+  Deployment lookup tolerates nothing), empty or unparseable output, a `jq`
+  failure, `jq` missing, or any object of unknown owner.
+- **The audit is upstream-Rook aware.** The upstream Rook namespaces, the
+  `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and SCCs whose users
+  are all Rook service accounts are reported as retained. Instances of those groups
+  outside the Rook namespaces (bucket claims excepted), an SCC with users elsewhere
+  or with no users, residue `CephCluster`s, and objects of unknown owner `WARN`.
+  Before this, all five Rook items failed the audit on that cluster.
+- **Bucket claims and buckets are ODF's only when their StorageClass is gone or uses
+  an ODF provisioner**, in the audit and in the runbook, so claims of a running Rook
+  or another bucket provisioner are neither flagged nor deleted.
 - **New audit checks**: VolumeAttachments of the ODF drivers; ODF pods in
   `openshift-storage`; pods, PVCs, PVs, and namespaces deleting for more than 10
-  minutes (younger deletions are in progress and ignored); ConfigMaps and Secrets held
-  by `objectbucket.io/finalizer` without a live claim, read only in
-  `openshift-storage` and Terminating namespaces and only as names and finalizers
-  (Secret data never reaches the script; a user who may not list Secrets gets a
-  `could not check` line naming the permission); the kept-namespace sweep now covers
-  service accounts, roles, role bindings, PodDisruptionBudgets, jobs, cronjobs, and
-  (when served) ServiceMonitors and PrometheusRules; the
-  `replication.storage.openshift.io` and `ramendr.openshift.io` CRD groups;
-  `groupsnapshot.storage.openshift.io` reported as residue only when its CRDs are
-  ODF-labelled, carry no release-payload annotation, have no instances, and the
-  `VolumeGroupSnapshot` feature gate is off; and ODF cluster RBAC classified by
-  liveness, so a binding whose ServiceAccount or ClusterRole is gone `WARN`s while one
-  still bound to a live subject (or a User/Group) is reported as retained.
-- **The audit reads `oc` output more carefully.** stderr is kept apart from the JSON
-  (bash builtins only, no temp file), so a client-side throttling or deprecation
-  line on a successful call no longer turns into `jq filter failed`. Kinds are
-  queried one at a time: a comma-joined `oc get` fails outright on one unknown kind,
-  and that error read as "not found", hiding every other kind's residue. A kind that
-  fails for another reason is a `FAIL`, the other kinds are still reported, and no
-  "none found" line is printed for it.
-- **Shared definitions in `scripts/odf_common.sh`**: the ODF package list (every
-  package, CSV, and label match derives from it), the driver and provisioner
-  patterns, the Ceph ownership rule, and the argument parsing. The runbook sources the
-  same file. Known limitation, stated in the scripts and the runbook: ODF is assumed
-  to run in the default `openshift-storage` namespace.
+  minutes (younger deletions are in progress and ignored); ConfigMaps and Secrets
+  held by `objectbucket.io/finalizer` without a live claim, read only in
+  `openshift-storage` and Terminating namespaces and only as names and finalizers (a
+  user who may not list Secrets gets a `could not check` line naming the
+  permission); the kept-namespace sweep now covers service accounts, roles, role
+  bindings, PodDisruptionBudgets, jobs, cronjobs, and (when served) ServiceMonitors
+  and PrometheusRules; the `replication.storage.openshift.io` and
+  `ramendr.openshift.io` CRD groups; `groupsnapshot.storage.openshift.io` reported as
+  residue only when its CRDs are ODF-labelled, carry no release-payload annotation,
+  have no instances, and the `VolumeGroupSnapshot` feature gate is off; and ODF
+  cluster RBAC classified by liveness (a binding whose ServiceAccounts or ClusterRole
+  are gone `WARN`s; one bound to a live subject, or a User/Group, is retained).
+- **The audit reads `oc` output carefully.** stderr is kept apart from the JSON with
+  bash builtins only, so a client-side throttling or deprecation line (or a NUL byte
+  in it) on a successful call does not break the filter. Only the server's NotFound
+  or "no such resource type" reads as "none"; a client error such as an unknown
+  context does not. Kinds are queried one at a time, so one unknown kind cannot hide
+  the residue of the others, and a kind that fails is a `FAIL` with no "none found"
+  line for it. The ODF package list, driver and provisioner patterns, and argument
+  parsing live in `odf_common.sh`. Known limitation: ODF is assumed to run in the
+  default `openshift-storage` namespace.
 - **`references/maintenance-uninstall.md` adds "Orphans After An Interrupted
   Uninstall"**: the proofs to collect before stripping any finalizer, the removal
   order (Pod, VolumeAttachments, PVs, consumer-namespace finalizers, ObjectBuckets,
@@ -66,35 +76,30 @@ verified read-only before anything was changed.
   kubelet unable to build an unmounter and logging about 590 lines a minute until the
   kubelet restarted.
 - **"Cluster RBAC left by ODF"** lists what stayed (labelled for removed ODF CSVs,
-  plus three unlabelled names), the liveness tests, and the objects that carried ODF
-  labels but were in use by the running Rook. A stale ODF label means ODF created the
-  object, not that nothing uses it.
-- **New `scripts/classify_rook_ownership.sh` gates every deletion shared with Rook.**
-  The step 5 CRD sweep ran `oc delete <kind> --all -A` on `ceph.rook.io`,
-  `csi.ceph.io`, and `objectbucket.io` with no ownership check and would have deleted
-  the running Rook cluster. The first fix pasted a classification snippet into the
-  runbook that still failed open: it merged stderr into the JSON and ignored the
-  `jq` status, so a throttling line produced an empty namespace list and the sweep
-  went ahead. The script now applies the same rule as the audit, keeps stderr apart,
-  checks every status, prints the Rook namespaces on stdout and a verdict on stderr,
-  and exits nonzero whenever it cannot classify (an `oc` error, empty or unparseable
-  output, a `jq` failure, `jq` missing). The runbook calls it through a function that
-  sets `ODF_OWNERSHIP_CLASSIFIED=yes` only on success; the CRD sweep and the
-  `rook-ceph`/`rook-ceph-csi` SCC deletion refuse to run without it, and the snippets
-  use `return`, not `exit`, so a paste cannot close the shell. With upstream Rook
-  present the sweep leaves the three shared groups alone, deletes only ODF's
-  instances in `openshift-storage`, and hands the Rook cluster to `openshift-rook`.
-  The two DR groups joined the sweep. `SKILL.md`'s ownership gate names the rule.
+  plus three unlabelled names), a label search over the relevant kinds that refuses
+  to run without the ODF patterns and reports kinds it could not read, the liveness
+  tests, and the objects that carried ODF labels but were in use by the running Rook.
+  A stale ODF label means ODF created the object, not that nothing uses it.
+- **Everything the runbook deletes that is shared with Rook goes through the
+  classifier, freshly.** The pasteable steps are bash functions that use `return`,
+  not `exit`. `odf_classify` sets `ODF_OWNERSHIP_CLASSIFIED=yes` only on success;
+  `odf_remove_rook_sccs` and `odf_crd_sweep` call it themselves immediately before
+  acting, so a verdict from an earlier login or context is never reused, and refuse
+  when it fails. With upstream Rook present the sweep leaves `ceph.rook.io`,
+  `csi.ceph.io`, and `objectbucket.io` alone, `odf_list_shared_instances` lists ODF's
+  instances in those groups outside the Rook namespaces for the reader to delete by
+  name, and the `rook-ceph`/`rook-ceph-csi` SCCs stay (they are not ODF's then).
+  Without upstream Rook the sweep deletes only ODF's bucket claims and buckets and
+  keeps the `objectbucket.io` CRDs while another provisioner's remain. The sweep
+  covers the two DR groups too, and `SKILL.md`'s ownership gate names the rule.
 - **Corrected the `groupsnapshot.storage.openshift.io` rule.** "Shared snapshot
   infrastructure — leave them in place" was wrong on that cluster: the CRDs were
   ODF's, unused, and removed without effect. The runbook now states when to keep them,
   when they are residue, and how to delete them then.
 - Step 4b lists the unowned namespaced residue (`rook-ceph-mon-pdb`,
   `ocs-status-reporter`, ODF roles and role bindings, `ocs-prometheus-rules`,
-  `odf-info`) and deletes the `rook-ceph`/`rook-ceph-csi` SCCs only when the
-  classification found no upstream Rook; with upstream Rook present they are not
-  ODF's. MachineConfig Cleanup covers `99-odf-virtio-disk-udev`, which was kept:
-  removing it reboots the node, and a later storage system may rely on the rule.
+  `odf-info`). MachineConfig Cleanup covers `99-odf-virtio-disk-udev`, which was
+  kept: removing it reboots the node, and a later storage system may rely on the rule.
 
 ## 1.19.0
 

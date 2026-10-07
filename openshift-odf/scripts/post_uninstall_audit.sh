@@ -255,10 +255,12 @@ check_docs_list() {
 }
 
 # Namespaces holding an upstream (non-OLM) Rook cluster, one per line, the same
-# list as a JSON array for jq filters, and the CephClusters that are residue.
+# list as a JSON array for jq filters, the CephClusters that are residue, and the
+# objects whose owner the rule cannot tell.
 ROOK_NAMESPACES=""
 ROOK_NAMESPACES_JSON="[]"
 CEPH_RESIDUE=""
+CEPH_UNKNOWN=""
 CEPH_CLASSIFIED=0
 
 # Resources the API serves, one per line, set by find_served_resources.
@@ -375,7 +377,8 @@ lso_retained() {
 
 # Who runs Ceph, by the rule in odf_common.sh (ODF_CEPH_OWNERSHIP_JQ). A failed
 # lookup leaves ROOK_NAMESPACES empty, so the shared groups then WARN rather than
-# being excused.
+# being excused. The whoami check at startup has already rejected an unusable
+# --context, so a NotFound here can only come from the server.
 detect_upstream_rook() {
   local clusters
   local deployments
@@ -400,6 +403,7 @@ detect_upstream_rook() {
     case "$kind" in
       upstream) ROOK_NAMESPACES="${ROOK_NAMESPACES:+$ROOK_NAMESPACES$'\n'}$subject" ;;
       residue) CEPH_RESIDUE="${CEPH_RESIDUE:+$CEPH_RESIDUE$'\n'}$subject ($detail)" ;;
+      unknown) CEPH_UNKNOWN="${CEPH_UNKNOWN:+$CEPH_UNKNOWN$'\n'}$subject ($detail)" ;;
     esac
   done <<<"$RUN_OUT"
   CEPH_CLASSIFIED=1
@@ -435,7 +439,7 @@ check_rook_namespaces() {
 
   while IFS= read -r ns; do
     if [ -n "$ns" ]; then
-      ok "namespace $ns retained: an upstream (non-OLM) rook-ceph-operator runs there"
+      ok "namespace $ns retained: part of an upstream (non-OLM) Rook cluster"
     fi
   done <<<"$ROOK_NAMESPACES"
 
@@ -447,15 +451,22 @@ check_rook_namespaces() {
   fi
 }
 
-# Every CephCluster that is not a live upstream Rook cluster: ODF's own (in
-# openshift-storage, owned by a StorageCluster, or carrying ODF's name) or one
-# being deleted or without its operator.
+# CephClusters ODF left behind (in openshift-storage, owned by a StorageCluster,
+# or carrying ODF's name) or that are being deleted; then everything whose owner
+# the rule cannot tell (an OLM-installed rook-ceph-operator, or a CephCluster with
+# no non-OLM operator anywhere), which needs a decision before anything shared
+# with Rook is removed. A CephCluster whose operator runs in another namespace is
+# upstream Rook, not residue.
 check_ceph_clusters() {
   [ "$CEPH_CLASSIFIED" -eq 1 ] || return 0
   report_list \
-    "CephClusters that are not a live upstream Rook cluster" \
-    "no ODF or orphaned CephClusters found" \
+    "CephClusters left by ODF or being deleted" \
+    "no CephClusters left by ODF or being deleted" \
     "$CEPH_RESIDUE"
+  report_list \
+    "Rook objects whose owner cannot be classified" \
+    "every CephCluster and rook-ceph-operator has a classified owner" \
+    "$CEPH_UNKNOWN"
 }
 
 # ceph.rook.io, csi.ceph.io and objectbucket.io are shared with upstream Rook. While

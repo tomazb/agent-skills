@@ -26,46 +26,66 @@ ODF_CSI_DRIVER_RE='^openshift-storage[.](rbd|cephfs)[.]csi[.]ceph[.]com$'
 ODF_BUCKET_PROVISIONER_RE='^openshift-storage[.](noobaa[.]io/obc|ceph[.]rook[.]io/bucket)$'
 ODF_PROVISIONER_RE='^openshift-storage[.]((rbd|cephfs)[.]csi[.]ceph[.]com|noobaa[.]io/obc|ceph[.]rook[.]io/bucket)$'
 
-# Who runs Ceph. Input: the `oc get cephclusters.ceph.rook.io -A -o json` and
-# `oc get deployments -A -o json` documents, slurped in that order. Output, one
-# tab-separated line each:
-#   upstream <namespace> <CephCluster names, or "none">
+# Who runs Ceph, by the same rule as the ownership gate in SKILL.md. Input: the
+# `oc get cephclusters.ceph.rook.io -A -o json` and `oc get deployments -A -o json`
+# documents, slurped in that order. Output, one tab-separated line each:
+#   upstream <namespace> <live CephCluster names there, or "none">
 #   residue  <namespace>/<name> <reason>
-# A namespace runs upstream Rook when it holds a rook-ceph-operator Deployment
-# that OLM did not install (no olm.owner label, no operators.coreos.com/ label),
-# that is not being deleted, outside openshift-storage. Existence, not readiness,
-# is the test: an operator scaled to zero for maintenance still owns its cluster.
-# A CephCluster is upstream Rook only in such a namespace, and only when it is not
-# being deleted, has no StorageCluster owner, and does not carry ODF's name; any
-# other CephCluster is residue. Known limitations: upstream Rook installed inside
-# openshift-storage, and a Rook operator installed through OLM, read as ODF residue.
-# shellcheck disable=SC2016 # $clusters, $operators, $ns are jq variables
+#   unknown  <namespace>/<name> <reason>
+# Only rook-ceph-operator Deployments outside openshift-storage that are not being
+# deleted are considered. One that OLM did not install (no olm.owner label, no
+# operators.coreos.com/ label) is an upstream Rook operator; existence, not
+# readiness, is the test, because an operator scaled to zero for maintenance still
+# owns its cluster. One that OLM did install cannot be told apart from a community
+# Rook bundle here, so it is unknown.
+# A CephCluster is residue when it carries an ODF signal (in openshift-storage,
+# owned by a StorageCluster, named like ODF's) or is being deleted. Every other
+# CephCluster belongs to upstream Rook when a non-OLM operator exists anywhere
+# outside openshift-storage (Rook watches every namespace by default, so the
+# operator may live elsewhere), and is unknown otherwise (renamed, OLM-installed,
+# or absent operator). Any unknown line means the caller must not decide.
+# Known limitation: an upstream Rook installed inside openshift-storage reads as ODF.
+# shellcheck disable=SC2016 # $clusters, $ops, $operators, $live are jq variables
 ODF_CEPH_OWNERSHIP_JQ='
 def olm_installed: (.metadata.labels // {}) | has("olm.owner") or any(keys[]; startswith("operators.coreos.com/"));
+def odf_signal:
+  if .metadata.namespace == "openshift-storage" then "in openshift-storage"
+  elif any(.metadata.ownerReferences[]?; .kind == "StorageCluster") then "owned by a StorageCluster"
+  elif (.metadata.name | test("^ocs-(external-)?storagecluster-cephcluster$")) then "carries the ODF CephCluster name"
+  else empty end;
+def residue_reason: [odf_signal, (if .metadata.deletionTimestamp != null then "being deleted" else empty end)] | .[0] // empty;
 (.[0].items // []) as $clusters
 | [(.[1].items // [])[]
    | select(.metadata.name == "rook-ceph-operator")
    | select(.metadata.namespace != "openshift-storage")
-   | select(.metadata.deletionTimestamp == null)
-   | select(olm_installed | not)
-   | .metadata.namespace] | unique as $operators
-| def residue_reason:
-    if .metadata.namespace == "openshift-storage" then "in openshift-storage"
-    elif any(.metadata.ownerReferences[]?; .kind == "StorageCluster") then "owned by a StorageCluster"
-    elif (.metadata.name | test("^ocs-(external-)?storagecluster-cephcluster$")) then "carries the ODF CephCluster name"
-    elif .metadata.deletionTimestamp != null then "being deleted"
-    elif (.metadata.namespace as $ns | $operators | index($ns)) == null then "no upstream rook-ceph-operator Deployment in its namespace"
-    else empty end;
-  ($operators[] as $ns
-   | [$clusters[] | select(.metadata.namespace == $ns) | select([residue_reason] | length == 0) | .metadata.name] as $names
-   | ["upstream", $ns, (if ($names | length) > 0 then $names | join(",") else "none" end)] | @tsv),
+   | select(.metadata.deletionTimestamp == null)] as $ops
+| ([$ops[] | select(olm_installed | not) | .metadata.namespace] | unique) as $operators
+| [$clusters[] | select([residue_reason] | length == 0)] as $live
+| ($ops[] | select(olm_installed)
+   | ["unknown", "\(.metadata.namespace)/rook-ceph-operator", "Deployment installed by OLM; cannot tell whether it is ODF or a Rook bundle"] | @tsv),
+  (if ($operators | length) == 0 then
+     ($live[] | ["unknown", "\(.metadata.namespace)/\(.metadata.name)", "no non-OLM rook-ceph-operator Deployment outside openshift-storage (renamed, OLM-installed, or absent operator)"] | @tsv)
+   else
+     (($operators + [$live[].metadata.namespace]) | unique | .[]) as $ns
+     | ["upstream", $ns, ([$live[] | select(.metadata.namespace == $ns) | .metadata.name] | if length > 0 then join(",") else "none" end)] | @tsv
+   end),
   ($clusters[] | [residue_reason] as $why | select(($why | length) > 0)
    | ["residue", "\(.metadata.namespace)/\(.metadata.name)", $why[0]] | @tsv)
 '
 
+# "No such resource": the server's NotFound, or no such resource type (the CRD is
+# not installed). Client-side errors such as an unknown --context are not matched.
 is_not_found() {
   case "$1" in
-    *NotFound*|*not\ found*|*the\ server\ doesn\'t\ have\ a\ resource\ type*) return 0 ;;
+    *NotFound*|*the\ server\ doesn\'t\ have\ a\ resource\ type*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# Only "the CRD is not installed"; nothing else means "there are none".
+is_missing_resource_type() {
+  case "$1" in
+    *the\ server\ doesn\'t\ have\ a\ resource\ type*) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -78,19 +98,24 @@ is_forbidden() {
 }
 
 # Run a command and keep its stdout, stderr, and exit status apart in RUN_OUT,
-# RUN_ERR, and RUN_RC. Bash builtins only (no mktemp, no temp file): stderr is
-# written first, then a NUL-separated record of stdout and the status follows on
-# the same stream. A warning on stderr (client throttling, API deprecation) must
-# not be read as part of the JSON on stdout.
+# RUN_ERR, and RUN_RC. Bash builtins only (no mktemp, no temp file). A warning on
+# stderr (client throttling, API deprecation) must not be read as part of the JSON
+# on stdout. stdout and the status go out first as NUL-terminated fields on fd 3;
+# stderr is captured into a variable, which drops any NUL byte in it, and sent last,
+# so a NUL in either stream cannot shift the fields.
 run_split() {
   RUN_OUT=""
   RUN_ERR=""
   RUN_RC=""
   {
-    IFS= read -r -d '' RUN_ERR || true
     IFS= read -r -d '' RUN_OUT || true
     IFS= read -r -d '' RUN_RC || true
-  } < <( (printf '\0%s\0%d\0' "$("$@")" "$?" 1>&2) 2>&1 )
+    IFS= read -r -d '' RUN_ERR || true
+  } < <(
+    exec 3>&1
+    { err=$( { out=$("$@"); rc=$?; printf '%s\0%d\0' "$out" "$rc" >&3; } 2>&1 ); } 2>/dev/null
+    printf '%s\0' "$err"
+  )
   RUN_RC="${RUN_RC:-1}"
 }
 

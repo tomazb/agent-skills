@@ -702,7 +702,7 @@ def test_audit_passes_on_a_clean_cluster_with_every_new_check(tmp_path):
         "OK: no replication.storage.openshift.io API resources found",
         "OK: no ramendr.openshift.io API resources found",
         "OK: no groupsnapshot.storage.openshift.io API resources found",
-        "OK: no ODF or orphaned CephClusters found",
+        "OK: no CephClusters left by ODF or being deleted",
         "OK: no dead ODF ClusterRoles or ClusterRoleBindings found",
     ):
         assert line in result.stdout
@@ -729,7 +729,7 @@ def test_audit_tolerates_absent_new_kinds(tmp_path):
 
     _assert_clean(result)
     assert "OK: no ODF VolumeAttachments found" in result.stdout
-    assert "OK: no ODF or orphaned CephClusters found" in result.stdout
+    assert "OK: no CephClusters left by ODF or being deleted" in result.stdout
     assert "OK: no ODF ObjectBucketClaims found" in result.stdout
     assert "OK: no dead ODF ClusterRoles or ClusterRoleBindings found" in result.stdout
 
@@ -751,7 +751,7 @@ def test_audit_treats_a_running_upstream_rook_cluster_as_retained(tmp_path, nois
 
     _assert_clean(result)
     for line in (
-        "OK: namespace rook-ceph retained: an upstream (non-OLM) rook-ceph-operator runs there",
+        "OK: namespace rook-ceph retained: part of an upstream (non-OLM) Rook cluster",
         "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph",
         "OK: csi.ceph.io API resources retained for upstream Rook in: rook-ceph",
         "OK: objectbucket.io API resources retained for upstream Rook in: rook-ceph",
@@ -765,7 +765,7 @@ def test_audit_treats_a_running_upstream_rook_cluster_as_retained(tmp_path, nois
         "OK: no ODF ObjectBucketClaims found",
         "OK: no ODF ObjectBuckets found",
         "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim",
-        "OK: no ODF or orphaned CephClusters found",
+        "OK: no CephClusters left by ODF or being deleted",
     ):
         assert line in result.stdout
 
@@ -786,16 +786,28 @@ def test_audit_counts_a_rook_operator_without_a_ceph_cluster_as_upstream_rook(tm
 
 
 @pytest.mark.parametrize(
-    "operator",
+    ("operator", "unknown"),
     [
-        rook_operator(labels={"olm.owner": "rook-ceph-operator.v1.20.5"}),
-        rook_operator(labels={"operators.coreos.com/rook-ceph.rook-ceph": ""}),
-        rook_operator(deletionTimestamp=OLD),
-        rook_operator(namespace="openshift-storage"),
+        (
+            rook_operator(labels={"olm.owner": "rook-ceph-operator.v1.20.5"}),
+            "rook-ceph/rook-ceph-operator (Deployment installed by OLM",
+        ),
+        (
+            rook_operator(labels={"operators.coreos.com/rook-ceph.rook-ceph": ""}),
+            "rook-ceph/rook-ceph-operator (Deployment installed by OLM",
+        ),
+        (
+            rook_operator(deletionTimestamp=OLD),
+            "rook-ceph/rook-ceph (no non-OLM rook-ceph-operator Deployment outside openshift-storage",
+        ),
+        (
+            rook_operator(namespace="openshift-storage"),
+            "rook-ceph/rook-ceph (no non-OLM rook-ceph-operator Deployment outside openshift-storage",
+        ),
     ],
     ids=["olm-owner", "olm-package-label", "deleting", "in-openshift-storage"],
 )
-def test_audit_does_not_excuse_shared_groups_for_an_olm_or_deleting_operator(tmp_path, operator):
+def test_audit_does_not_excuse_shared_groups_when_rook_ownership_is_unknown(tmp_path, operator, unknown):
     _write_jq_proxy(tmp_path)
     objects = _rook_objects()
     objects["deployments"] = [operator]
@@ -807,7 +819,8 @@ def test_audit_does_not_excuse_shared_groups_for_an_olm_or_deleting_operator(tmp
     assert "retained for upstream Rook" not in result.stdout
     assert "WARN: ceph.rook.io API resources still exist:" in result.stdout
     assert "WARN: rook-ceph namespace still exists" in result.stdout
-    assert "rook-ceph/rook-ceph (no upstream rook-ceph-operator Deployment in its namespace)" in result.stdout
+    assert "WARN: Rook objects whose owner cannot be classified still exist:" in result.stdout
+    assert unknown in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -826,11 +839,10 @@ def test_audit_does_not_excuse_shared_groups_for_an_olm_or_deleting_operator(tmp
         # StorageCluster ownerReference stripped by hand, in the Rook namespace
         (ceph_cluster("ocs-storagecluster-cephcluster", "rook-ceph"), "carries the ODF CephCluster name"),
         (ceph_cluster("second", "rook-ceph", deletionTimestamp=OLD), "being deleted"),
-        (ceph_cluster("stray", "other"), "no upstream rook-ceph-operator Deployment in its namespace"),
     ],
-    ids=["openshift-storage", "storagecluster-owned", "odf-name", "deleting", "no-operator"],
+    ids=["openshift-storage", "storagecluster-owned", "odf-name", "deleting"],
 )
-def test_audit_flags_ceph_clusters_that_are_not_live_upstream_rook(tmp_path, cluster, reason):
+def test_audit_flags_ceph_clusters_left_by_odf_or_being_deleted(tmp_path, cluster, reason):
     _write_jq_proxy(tmp_path)
     _write_cluster_oc(
         tmp_path,
@@ -843,14 +855,48 @@ def test_audit_flags_ceph_clusters_that_are_not_live_upstream_rook(tmp_path, clu
     name = f"{cluster['metadata']['namespace']}/{cluster['metadata']['name']}"
 
     assert result.returncode == 1
-    assert "WARN: CephClusters that are not a live upstream Rook cluster still exist:" in result.stdout
+    assert "WARN: CephClusters left by ODF or being deleted still exist:" in result.stdout
     assert f"{name} ({reason})" in result.stdout
+    assert "OK: every CephCluster and rook-ceph-operator has a classified owner" in result.stdout
     assert "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph\n" in result.stdout
     if cluster["metadata"]["namespace"] != "rook-ceph":
         assert (
             "WARN: ceph.rook.io objects outside upstream Rook namespaces still exist:" in result.stdout
         )
         assert f"CephCluster/{name}" in result.stdout
+
+
+def test_audit_treats_a_cluster_watched_from_another_namespace_as_upstream_rook(tmp_path):
+    # Rook's operator watches every namespace by default: an operator in rook-ceph
+    # and a CephCluster in storage-b are one upstream Rook installation.
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    objects["cephclusters.ceph.rook.io"] = [ceph_cluster("b", "storage-b")]
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: namespace rook-ceph retained: part of an upstream (non-OLM) Rook cluster" in result.stdout
+    assert "OK: namespace storage-b retained: part of an upstream (non-OLM) Rook cluster" in result.stdout
+    assert "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph storage-b" in result.stdout
+
+
+def test_audit_does_not_take_a_client_side_error_for_none(tmp_path):
+    # `oc --context nope` fails with "context was not found"; that is not "there
+    # are none" and must not produce an OK line.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        errors={"pv": "Error in configuration: * context was not found for specified context: nope"},
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: PVs Terminating for over 10 minutes (younger deletions ignored) query failed" in result.stdout
+    assert "OK: no PVs Terminating" not in result.stdout
+    assert "OK: no ODF PVs found" not in result.stdout
 
 
 def test_audit_flags_shared_group_objects_outside_rook_namespaces(tmp_path):

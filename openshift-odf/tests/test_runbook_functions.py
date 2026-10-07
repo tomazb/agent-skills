@@ -1,0 +1,230 @@
+"""Run the shell functions of references/maintenance-uninstall.md against the fake oc.
+
+The functions are taken verbatim from the runbook, so a change there is what the
+tests run.
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from cluster_fake import (  # noqa: E402
+    SCRIPTS,
+    ceph_cluster,
+    meta,
+    rook_operator,
+    write_cluster_oc,
+    write_jq_proxy,
+)
+
+RUNBOOK = Path(__file__).resolve().parents[1] / "references" / "maintenance-uninstall.md"
+FUNCTIONS = dict(
+    (m.group(1), m.group(0))
+    for m in re.finditer(r"^(odf_[a-z_]+)\(\) \{\n.*?^\}$", RUNBOOK.read_text(encoding="utf-8"), re.M | re.S)
+)
+
+GROUPS = {
+    "ocs.openshift.io": [["storageclusters.ocs.openshift.io", True]],
+    "ceph.rook.io": [["cephclusters.ceph.rook.io", True]],
+    "csi.ceph.io": [["drivers.csi.ceph.io", True]],
+    "objectbucket.io": [
+        ["objectbucketclaims.objectbucket.io", True],
+        ["objectbuckets.objectbucket.io", False],
+    ],
+    "local.storage.openshift.io": [["localvolumes.local.storage.openshift.io", True]],
+    "groupsnapshot.storage.openshift.io": [["volumegroupsnapshots.groupsnapshot.storage.openshift.io", True]],
+}
+CRDS = [{"metadata": meta(kind)} for kinds in GROUPS.values() for kind, _ in kinds]
+UPSTREAM = {"deployments": [rook_operator()], "cephclusters.ceph.rook.io": [ceph_cluster("rook-ceph", "rook-ceph")]}
+UNKNOWN_ERRORS = {"deployments": "Error from server (Forbidden): cannot list deployments"}
+SHARED = ("ceph.rook.io", "csi.ceph.io", "objectbucket.io")
+
+
+def test_runbook_defines_the_tested_functions():
+    assert {
+        "odf_classify",
+        "odf_remove_rook_sccs",
+        "odf_list_shared_instances",
+        "odf_delete_odf_buckets",
+        "odf_crd_sweep",
+        "odf_find_odf_labelled",
+    } <= set(FUNCTIONS)
+
+
+def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True):
+    skill = tmp_path / "skill"
+    (skill / "scripts").mkdir(parents=True)
+    for name in ("classify_rook_ownership.sh", "odf_common.sh"):
+        shutil.copy(SCRIPTS / name, skill / "scripts" / name)
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    write_jq_proxy(bin_dir)
+    for tool in ("bash", "grep"):
+        found = shutil.which(tool)
+        if found is None:
+            pytest.skip(f"{tool} is required for the runbook function tests")
+        (bin_dir / tool).symlink_to(found)
+    log = tmp_path / "argv.log"
+    world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": GROUPS, "errors": errors or {}}
+    write_cluster_oc(bin_dir, log=log, **world)
+    script = "\n".join(
+        [". scripts/odf_common.sh" if source_common else "", *FUNCTIONS.values(), call, 'echo "rc=$?"']
+    )
+    result = subprocess.run(
+        [str(bin_dir / "bash"), "-c", script],
+        cwd=skill,
+        env={"PATH": str(bin_dir), **(env or {})},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.exists() else []
+    deletes = [" ".join(c) for c in calls if "delete" in c]
+    return result, deletes
+
+
+def test_sweep_refuses_and_deletes_nothing_when_classification_fails(tmp_path):
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=UPSTREAM, errors=UNKNOWN_ERRORS)
+
+    assert "rc=1" in result.stdout
+    assert "nothing deleted" in result.stderr
+    assert deletes == []
+
+
+def test_sweep_refreshes_a_stale_classification_from_an_earlier_run(tmp_path):
+    # The shell still says "classified, no upstream Rook" from an earlier cluster or
+    # context; the classification for the current one fails.
+    result, deletes = _run(
+        tmp_path,
+        "odf_crd_sweep",
+        objects=UPSTREAM,
+        errors=UNKNOWN_ERRORS,
+        env={"ODF_OWNERSHIP_CLASSIFIED": "yes", "ROOK_NAMESPACES": ""},
+    )
+
+    assert "rc=1" in result.stdout
+    assert deletes == []
+
+
+def test_sweep_never_touches_the_shared_groups_next_to_upstream_rook(tmp_path):
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=UPSTREAM)
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert "delete storageclusters.ocs.openshift.io --all -A --ignore-not-found" in deletes
+    assert "delete crd/storageclusters.ocs.openshift.io" in deletes
+    for group in SHARED:
+        assert not [d for d in deletes if group in d], deletes
+
+
+def test_sweep_without_upstream_rook_deletes_odf_groups_only(tmp_path):
+    result, deletes = _run(tmp_path, "odf_crd_sweep")
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert "delete cephclusters.ceph.rook.io --all -A --ignore-not-found" in deletes
+    assert "delete crd/cephclusters.ceph.rook.io" in deletes
+    assert "delete crd/objectbucketclaims.objectbucket.io crd/objectbuckets.objectbucket.io" in deletes
+    assert not [d for d in deletes if "local.storage" in d or "groupsnapshot" in d], deletes
+
+
+def test_sweep_deletes_only_odf_bucket_claims_and_keeps_the_crds_for_others(tmp_path):
+    objects = {
+        "sc": [{"metadata": meta("standalone-buckets"), "provisioner": "noobaa.io/obc"}],
+        "objectbucketclaims.objectbucket.io": [
+            {"metadata": meta("odf-claim", "app"), "spec": {"storageClassName": "openshift-storage.noobaa.io"}},
+            {"metadata": meta("other-claim", "app"), "spec": {"storageClassName": "standalone-buckets"}},
+        ],
+        "objectbuckets.objectbucket.io": [
+            {"metadata": meta("obc-app-odf-claim"), "spec": {"storageClassName": "openshift-storage.noobaa.io"}},
+        ],
+    }
+
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=objects)
+
+    assert "-n app delete objectbucketclaims.objectbucket.io odf-claim --wait=false" in deletes
+    assert "delete objectbuckets.objectbucket.io obc-app-odf-claim --wait=false" in deletes
+    assert not [d for d in deletes if "other-claim" in d]
+    assert not [d for d in deletes if d.startswith("delete crd/objectbucket")], deletes
+    assert "keeping objectbucketclaims.objectbucket.io app/other-claim" in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("objects", "errors", "deleted", "rc"),
+    [(UPSTREAM, None, False, "rc=0"), ({}, None, True, "rc=0"), (UPSTREAM, UNKNOWN_ERRORS, False, "rc=1")],
+    ids=["upstream", "none", "unknown"],
+)
+def test_rook_sccs_are_removed_only_on_a_fresh_no_rook_verdict(tmp_path, objects, errors, deleted, rc):
+    result, deletes = _run(
+        tmp_path,
+        "odf_remove_rook_sccs",
+        objects=objects,
+        errors=errors,
+        env={"ODF_OWNERSHIP_CLASSIFIED": "yes", "ROOK_NAMESPACES": ""},
+    )
+
+    assert rc in result.stdout, result.stderr
+    assert (deletes == ["delete scc rook-ceph rook-ceph-csi --ignore-not-found"]) is deleted
+    if not deleted:
+        assert deletes == []
+
+
+def test_shared_instances_are_listed_in_every_namespace_outside_rook(tmp_path):
+    objects = dict(UPSTREAM)
+    objects["drivers.csi.ceph.io"] = [
+        {"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")},
+        {"kind": "Driver", "metadata": meta("openshift-storage.rbd.csi.ceph.com", "lvms")},
+    ]
+    objects["objectbucketclaims.objectbucket.io"] = [{"kind": "ObjectBucketClaim", "metadata": meta("claim", "app")}]
+
+    result, deletes = _run(tmp_path, "odf_list_shared_instances", objects=objects)
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert "Driver lvms/openshift-storage.rbd.csi.ceph.com" in result.stdout
+    assert "rook-ceph/rook-ceph.rbd.csi.ceph.com" not in result.stdout
+    assert "claim" not in result.stdout
+    assert deletes == []
+
+
+def test_labelled_object_search_refuses_without_the_odf_patterns(tmp_path):
+    objects = {"clusterroles": [{"kind": "ClusterRole", "metadata": meta("anything", labels={"olm.owner": "x.v1"})}]}
+
+    result, _ = _run(tmp_path, "odf_find_odf_labelled", objects=objects, source_common=False)
+
+    assert "rc=1" in result.stdout
+    assert "ODF patterns not loaded" in result.stderr
+    assert "anything" not in result.stdout
+
+
+def test_labelled_object_search_finds_odf_labels_and_reports_unreadable_kinds(tmp_path):
+    objects = {
+        "clusterroles": [
+            {"kind": "ClusterRole", "metadata": meta("odf-prometheus", labels={"olm.owner": "ocs-operator.v4.20.17-rhodf"})},
+            {"kind": "ClusterRole", "metadata": meta("other", labels={"olm.owner": "lvms-operator.v4.20.0"})},
+        ],
+        "crd": [
+            {
+                "kind": "CustomResourceDefinition",
+                "metadata": meta("recipes.ramendr.openshift.io", labels={"operators.coreos.com/recipe.elsewhere": ""}),
+            }
+        ],
+    }
+
+    result, _ = _run(
+        tmp_path,
+        "odf_find_odf_labelled",
+        objects=objects,
+        errors={"prometheusrules": 'error: the server doesn\'t have a resource type "prometheusrules"'},
+    )
+
+    assert "ClusterRole -/odf-prometheus" in result.stdout
+    assert "CustomResourceDefinition -/recipes.ramendr.openshift.io" in result.stdout
+    assert "other" not in result.stdout
+    assert "could not check prometheusrules" in result.stderr
+    assert "rc=1" in result.stdout

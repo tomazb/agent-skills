@@ -2,17 +2,19 @@
 set -euo pipefail
 
 # Read-only: classify whether an upstream (non-OLM) Rook cluster runs next to, or
-# after, ODF, before anything shared with Rook is deleted.
+# after, ODF, before anything shared with Rook is deleted. The rule is
+# ODF_CEPH_OWNERSHIP_JQ in odf_common.sh.
 #
 # stdout: the upstream Rook namespaces on one line, space-separated; empty when
 #         there is none. Nothing else goes to stdout, so `$(...)` captures it cleanly.
-# stderr: the verdict line, one line per upstream namespace, and one line per
-#         CephCluster that is residue, with the reason.
-# exit:   0 classified (either way), 1 could not classify, 2 bad arguments.
-#
-# Any failure to classify exits 1: an oc error other than "no such resource type",
-# a successful call with empty or unparseable output, or a jq failure. A caller that
-# deletes Rook-shared objects must continue only on exit 0.
+# stderr: the cluster classified, one line per upstream namespace, per residue
+#         CephCluster, and per object whose owner is unknown, then the verdict.
+# exit:   0 classified: "upstream Rook present in: ..." or "no upstream Rook".
+#         1 could not classify: an oc failure (only "no such resource type" for
+#           CephClusters reads as none), empty or unparseable output, a jq
+#           failure, or any CephCluster or operator whose owner is unknown.
+#         2 bad arguments.
+# A caller that deletes Rook-shared objects must continue only on exit 0.
 
 OC_GLOBAL_ARGS=()
 OC_CONTEXT_LABEL=""
@@ -51,15 +53,24 @@ done
 
 oc() { command oc "${OC_GLOBAL_ARGS[@]}" "$@"; }
 
-# Fetch a list as JSON into LIST_JSON. "No such resource type" is an empty list;
-# every other failure, and a success that printed nothing, stops the run.
+# Fail before any lookup if the cluster cannot be reached as requested (an unknown
+# --context, an expired login), and name the cluster the verdict is for.
+run_split oc whoami
+[ "$RUN_RC" -eq 0 ] || stop "cannot reach the cluster: $RUN_ERR"
+run_split oc whoami --show-server
+echo "classifying ${RUN_OUT:-unknown server}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" >&2
+
+# Fetch a list as JSON into LIST_JSON. With "missing-type-is-empty", only "the
+# server doesn't have a resource type" reads as an empty list; every other
+# failure, and a success that printed nothing, stops the run.
 fetch_list() {
   local label="$1"
-  shift
+  local tolerance="$2"
+  shift 2
 
   run_split "$@" -o json
   if [ "$RUN_RC" -ne 0 ]; then
-    if is_not_found "$RUN_ERR"; then
+    if [ "$tolerance" = "missing-type-is-empty" ] && is_missing_resource_type "$RUN_ERR"; then
       LIST_JSON='{"items":[]}'
       return 0
     fi
@@ -69,9 +80,9 @@ fetch_list() {
   LIST_JSON="$RUN_OUT"
 }
 
-fetch_list "CephCluster" oc get cephclusters.ceph.rook.io -A
+fetch_list "CephCluster" missing-type-is-empty oc get cephclusters.ceph.rook.io -A
 clusters="$LIST_JSON"
-fetch_list "rook-ceph-operator Deployment" \
+fetch_list "rook-ceph-operator Deployment" strict \
   oc get deployments -A --field-selector metadata.name=rook-ceph-operator
 deployments="$LIST_JSON"
 
@@ -79,15 +90,21 @@ run_split jq_slurp "$ODF_CEPH_OWNERSHIP_JQ" "$clusters" "$deployments"
 [ "$RUN_RC" -eq 0 ] || stop "could not parse the CephCluster or Deployment list: $RUN_ERR"
 
 namespaces=""
+unknown=""
 while IFS=$'\t' read -r kind subject detail; do
   case "$kind" in
     upstream)
       namespaces="${namespaces:+$namespaces }$subject"
-      echo "upstream Rook in $subject: non-OLM rook-ceph-operator Deployment, CephCluster: $detail" >&2 ;;
+      echo "upstream Rook in $subject: CephCluster: $detail" >&2 ;;
     residue)
       echo "residue CephCluster $subject: $detail" >&2 ;;
+    unknown)
+      unknown="${unknown:+$unknown, }$subject"
+      echo "unknown owner of $subject: $detail" >&2 ;;
   esac
 done <<<"$RUN_OUT"
+
+[ -z "$unknown" ] || stop "ownership of $unknown could not be classified"
 
 if [ -n "$namespaces" ]; then
   echo "verdict: upstream Rook present in: $namespaces" >&2

@@ -71,9 +71,16 @@ def run_script(name: str, bin_dir: Path, *args: str) -> subprocess.CompletedProc
     )
 
 
-# "unserved" resources fail like an unknown type; "errors" maps a resource to the
-# stderr of a real failure; "noise" prints a client warning on every call, as
-# client-side throttling does; "log" records every argv.
+# The only jsonpath the audit may send (finalizer scan); anything else fails, so a
+# malformed expression cannot pass unnoticed.
+FINALIZER_JSONPATH = 'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.metadata.finalizers[*]}{"\\n"}{end}'
+
+SHOW_SERVER = "https://api.cluster.example.com:6443"
+
+# "unserved" resources fail like an unknown type; "errors" maps a resource (or
+# "whoami") to the stderr of a real failure; "noise" prints a client warning (or
+# the given text) on every call, as client-side throttling does; "log" records
+# every argv. `delete` only records.
 _CLUSTER_OC = """\
 WORLD = json.loads(__WORLD__)
 args = sys.argv[1:]
@@ -82,9 +89,16 @@ if WORLD["log"]:
         fh.write(json.dumps(args) + chr(10))
 args = [a for a in args if not a.startswith(("--context=", "--kubeconfig="))]
 if WORLD["noise"]:
-    print("I1007 10:00:00.000000 request.go:700 Waited for 1.0s due to client-side throttling", file=sys.stderr)
-if args == ["whoami"]:
-    print("admin")
+    noise = WORLD["noise"] if isinstance(WORLD["noise"], str) else (
+        "I1007 10:00:00.000000 request.go:700 Waited for 1.0s due to client-side throttling")
+    sys.stderr.write(noise + chr(10))
+if args[:1] == ["whoami"]:
+    if "whoami" in WORLD["errors"]:
+        print(WORLD["errors"]["whoami"], file=sys.stderr)
+        raise SystemExit(1)
+    print(WORLD["server"] if "--show-server" in args else "admin")
+    raise SystemExit(0)
+if args[:1] == ["delete"]:
     raise SystemExit(0)
 if args[:1] == ["api-resources"]:
     group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
@@ -114,14 +128,29 @@ if args[:1] == ["get"]:
         print(json.dumps(WORLD["featuregate"]))
         raise SystemExit(0)
     ns = args[args.index("-n") + 1] if "-n" in args else None
+    selector = ""
+    for i, a in enumerate(args):
+        if a == "--field-selector":
+            selector = args[i + 1]
+        elif a.startswith("--field-selector="):
+            selector = a.split("=", 1)[1]
     items = [
         item
         for item in WORLD["objects"].get(res, [])
-        if ns is None or item["metadata"].get("namespace") == ns
+        if (ns is None or item["metadata"].get("namespace") == ns)
+        and (not selector.startswith("metadata.name=") or item["metadata"]["name"] == selector.split("=", 1)[1])
     ]
-    if any(a.startswith("jsonpath=") for a in args):
+    jsonpath = [a for a in args if a.startswith("jsonpath=")]
+    if jsonpath:
+        if jsonpath != [WORLD["finalizer_jsonpath"]]:
+            print("error: unexpected jsonpath " + jsonpath[0], file=sys.stderr)
+            raise SystemExit(1)
         for item in items:
             print(item["metadata"]["name"] + chr(9) + " ".join(item["metadata"].get("finalizers", [])))
+        raise SystemExit(0)
+    if "-o" in args and args[args.index("-o") + 1] == "name":
+        for item in items:
+            print(res + "/" + item["metadata"]["name"])
         raise SystemExit(0)
     if "-o" in args:
         print(json.dumps({"items": items}))
@@ -146,7 +175,7 @@ def write_cluster_oc(
     unserved: tuple = (),
     errors: dict | None = None,
     featuregate: dict | None = None,
-    noise: bool = False,
+    noise: bool | str = False,
     log: Path | None = None,
     console_plugins: tuple = (),
 ) -> None:
@@ -163,6 +192,8 @@ def write_cluster_oc(
         "noise": noise,
         "log": str(log) if log else "",
         "console_plugins": list(console_plugins),
+        "finalizer_jsonpath": FINALIZER_JSONPATH,
+        "server": SHOW_SERVER,
     }
     write_oc(bin_dir, _CLUSTER_OC.replace("__WORLD__", repr(json.dumps(world))))
 
