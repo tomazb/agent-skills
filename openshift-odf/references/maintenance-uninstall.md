@@ -245,10 +245,10 @@ oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd[0-9]* 2>/dev/null || e
 Delete the ODF subscriptions by name, resolving each installed CSV from the subscription first — never delete all subscriptions wholesale (that also removes LVMS/LSO when they share the namespace), and never rely on the odf-operator CSV label selector, which matches only the odf-operator CSV and leaves the other component CSVs (ocs, rook, mcg, cephcsi, ...) behind:
 
 ```bash
-# ODF package names; the subscription names may carry catalog suffixes — match on PACKAGE.
-ODF_PKGS="odf-operator odf-dependencies ocs-operator ocs-client-operator rook-ceph-operator \
-  cephcsi-operator mcg-operator odf-csi-addons-operator odf-external-snapshotter-operator \
-  odf-prometheus-operator ocs-tls-profiles recipe"
+# ODF package names, from the definition the skill's scripts use (run from the skill
+# directory). Subscription names may carry catalog suffixes — match on PACKAGE.
+. scripts/odf_common.sh
+ODF_PKGS="${ODF_PACKAGES//|/ }"
 for pkg in $ODF_PKGS; do
   sub=$(oc -n openshift-storage get subscription -o jsonpath="{.items[?(@.spec.name=='$pkg')].metadata.name}")
   [ -z "$sub" ] && continue
@@ -368,7 +368,43 @@ Namespace deletion normally garbage-collects most namespaced residue below;
 keeping the namespace (shared with LVMS/LSO) means each item must be removed
 explicitly. Console plugins are handled in step 4a because they are
 cluster-scoped and survive namespace deletion. All of these were observed to
-survive operator removal on a live 4.22.1 uninstall:
+survive operator removal on a live 4.22.1 uninstall.
+
+**Classify Ceph ownership first.** Some objects below and in step 5 (the
+`rook-ceph`/`rook-ceph-csi` SCCs, the `ceph.rook.io`, `csi.ceph.io`, and
+`objectbucket.io` CRDs) are shared with upstream Rook. `scripts/classify_rook_ownership.sh`
+applies the rule from `SKILL.md`'s ownership gate (a non-OLM `rook-ceph-operator`
+Deployment outside `openshift-storage` marks its namespace as upstream Rook; a
+`CephCluster` counts only there, when not being deleted, not owned by a
+`StorageCluster`, and not named like ODF's). It is read-only, prints the Rook
+namespaces on stdout and its verdict on stderr, and exits nonzero whenever it cannot
+classify. Run it from the skill directory through this function, which sets
+`ODF_OWNERSHIP_CLASSIFIED=yes` only on success — every shared deletion below checks
+that variable, so a failed classification cannot fall through with an empty
+namespace list. It uses `return`, not `exit`, so pasting it cannot close your shell:
+
+```bash
+odf_classify() {
+  ODF_OWNERSHIP_CLASSIFIED=""
+  ROOK_NAMESPACES=""
+  local namespaces
+  if ! namespaces=$(bash scripts/classify_rook_ownership.sh); then
+    echo "ownership classification failed - stop; delete nothing shared with Rook" >&2
+    return 1
+  fi
+  ROOK_NAMESPACES="$namespaces"
+  ODF_OWNERSHIP_CLASSIFIED=yes
+}
+odf_classify
+# stderr ends with one of:
+#   verdict: no upstream Rook
+#   verdict: upstream Rook present in: rook-ceph
+#   verdict: unknown - <reason> - do not delete anything shared with Rook
+```
+
+Known limitations: an upstream Rook installed **inside** `openshift-storage`, or a
+Rook operator installed through OLM (it carries `olm.owner`), is classified as ODF.
+If either applies, stop and decide by hand.
 
 ```bash
 # ceph-csi driver instances: deleting the Driver CRs cascades their deployments/daemonsets
@@ -404,12 +440,16 @@ oc -n openshift-storage delete role,rolebinding ocs-provider-server ocs-status-r
 oc -n openshift-storage delete prometheusrule ocs-prometheus-rules --ignore-not-found
 oc -n openshift-storage delete cm odf-info --ignore-not-found
 
-# Cluster-scoped bundle objects OLM does not garbage-collect. If an upstream Rook
-# cluster runs elsewhere (see step 5), rook-ceph and rook-ceph-csi are ITS SCCs:
-#   oc get scc rook-ceph rook-ceph-csi -o jsonpath='{range .items[*]}{.metadata.name}: {.users}{"\n"}{end}'
-# and leave out any SCC whose users are all service accounts of that Rook namespace.
-oc delete scc ceph-csi-op-scc rook-ceph rook-ceph-csi noobaa noobaa-core noobaa-endpoint
+# Cluster-scoped bundle objects OLM does not garbage-collect.
+oc delete scc ceph-csi-op-scc noobaa noobaa-core noobaa-endpoint --ignore-not-found
 oc delete mutatingwebhookconfiguration csv.odf.openshift.io
+# rook-ceph and rook-ceph-csi are ODF's only when no upstream Rook runs. With upstream
+# Rook present they are NOT ODF's: they are that Rook's SCCs and must stay.
+if [ "${ODF_OWNERSHIP_CLASSIFIED:-}" = yes ] && [ -z "$ROOK_NAMESPACES" ]; then
+  oc delete scc rook-ceph rook-ceph-csi --ignore-not-found
+else
+  echo "keeping SCCs rook-ceph and rook-ceph-csi: upstream Rook in '${ROOK_NAMESPACES}' or ownership not classified" >&2
+fi
 ```
 
 Cluster-scoped RBAC and the CRD groups are left out of this sweep on purpose: decide them with **Cluster RBAC left by ODF** below and step 5, because some of them still carry ODF labels while another product uses them.
@@ -418,30 +458,9 @@ Cluster-scoped RBAC and the CRD groups are left out of this sweep on purpose: de
 
 OLM removes most CRDs automatically when the operator is uninstalled, but they can linger — especially after forced or manual removal, and always when the namespace is kept. Sweep by API group rather than a fixed name list — the set changes per release (ODF 4.22 adds `storageautoscalers`/`storageclusterpeers`/`tlsprofiles` under `ocs.openshift.io` and the NooBaa embedded CloudNativePG group `postgresql.cnpg.noobaa.io`; `storagesystems.odf.openshift.io` is gone). A live ODF 4.20 SNO uninstall also left **`csiaddons.openshift.io`** (from `odf-csi-addons-operator`) and **`objectbucket.io`** (OBC/OB) after the core ODF groups were gone, and ODF 4.20.17 leftovers on an OCP 4.20.34 SNO cluster included **`replication.storage.openshift.io`** (five CRDs, package `odf-csi-addons-operator`) and **`ramendr.openshift.io`** (`recipes`, package `recipe`), each with zero instances — include them.
 
-**Re-run the ownership gate before sweeping.** `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` are not ODF's alone: an upstream (non-OLM) Rook cluster uses the same CRDs. On a cluster where upstream Rook ran in `rook-ceph` after ODF was removed, the unguarded sweep below would have deleted that cluster's `CephCluster`, its `drivers.csi.ceph.io`, its bucket claims, and the CRDs under it. Classify every `CephCluster` the way `SKILL.md` does — one outside `openshift-storage` with no `StorageCluster` owner is upstream Rook — and fail closed if the lookup errors:
+If ODF's operators were removed before its workloads and volumes (an interrupted or out-of-order uninstall), work through **Orphans After An Interrupted Uninstall** below first: its removal order ends with this step.
 
-```bash
-# Fail closed: a lookup error must not read as "no upstream Rook".
-if ! clusters=$(oc get cephclusters.ceph.rook.io -A -o json 2>&1); then
-  case "$clusters" in
-    *"doesn't have a resource type"*) clusters='{"items":[]}' ;;
-    *) echo "CephCluster lookup failed - stop and resolve: $clusters" >&2; exit 1 ;;
-  esac
-fi
-ROOK_NAMESPACES=$(jq -r '[.items[]
-  | select(.metadata.namespace != "openshift-storage")
-  | select(any(.metadata.ownerReferences[]?; .kind == "StorageCluster") | not)
-  | .metadata.namespace] | unique | join(" ")' <<<"$clusters")
-echo "upstream Rook namespaces: ${ROOK_NAMESPACES:-none}"
-
-ODF_GROUPS="ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.io \
-  csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io"
-if [ -z "$ROOK_NAMESPACES" ]; then
-  ODF_GROUPS="$ODF_GROUPS ceph.rook.io csi.ceph.io objectbucket.io"
-fi
-```
-
-When `ROOK_NAMESPACES` is not empty, leave the three shared groups and their CRDs in place, and delete only ODF's own instances, which live in `openshift-storage`:
+**Use the ownership classification before sweeping.** `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` are not ODF's alone: an upstream (non-OLM) Rook cluster uses the same CRDs. On a cluster where upstream Rook ran in `rook-ceph` after ODF was removed, an unguarded sweep would have deleted that cluster's `CephCluster`, its `drivers.csi.ceph.io`, its bucket claims, and the CRDs under it. The sweep below runs only after `odf_classify` from step 4b succeeded in the same shell (in a new shell, paste that block again first), and leaves the three shared groups alone whenever upstream Rook was found. With upstream Rook present, delete only ODF's own instances of those groups, which live in `openshift-storage`; review them first:
 
 ```bash
 for group in ceph.rook.io csi.ceph.io objectbucket.io; do
@@ -457,48 +476,66 @@ done
 ODF's cluster-scoped `ObjectBucket`s and bucket claims in consumer namespaces are decided by their StorageClass (see **Orphans After An Interrupted Uninstall**), not by group. Anything about the running Rook cluster itself — its health, its CRDs, its SCCs — is the `openshift-rook` skill's job; hand it off rather than changing it from this runbook.
 
 ```bash
-for group in $ODF_GROUPS local.storage.openshift.io groupsnapshot.storage.openshift.io; do
+for group in ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.io \
+             csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io \
+             ceph.rook.io csi.ceph.io objectbucket.io \
+             local.storage.openshift.io groupsnapshot.storage.openshift.io; do
   echo "=== $group ==="; oc get crd 2>/dev/null | grep "$group" || echo "clean"
 done
 ```
 
-Delete every CR instance in a group before its CRDs, then the CRDs themselves:
+Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep is a function so that a refusal returns instead of closing your shell; it refuses to run unless the classification succeeded, and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
 
 ```bash
-# Skip local.storage.openshift.io when LSO stays installed (shared node/namespace).
-for group in $ODF_GROUPS; do
-  # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
-  #    returns an empty list, which would silently skip instance deletion and
-  #    then delete the CRDs anyway, with instances still live.
-  if ! kinds=$(oc api-resources --api-group="$group" --verbs=list -o name); then
-    echo "kind discovery failed for $group - leaving its CRDs in place" >&2
-    continue
+odf_crd_sweep() {
+  if [ "${ODF_OWNERSHIP_CLASSIFIED:-}" != yes ]; then
+    echo "ownership has not been classified in this shell - run odf_classify (step 4b) first; nothing deleted" >&2
+    return 1
   fi
-  if ! namespaced=$(oc api-resources --api-group="$group" --namespaced=true -o name); then
-    echo "scope discovery failed for $group - leaving its CRDs in place" >&2
-    continue
+  local groups="ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.io \
+    csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io"
+  if [ -z "$ROOK_NAMESPACES" ]; then
+    groups="$groups ceph.rook.io csi.ceph.io objectbucket.io"
+  else
+    echo "upstream Rook in: $ROOK_NAMESPACES - leaving ceph.rook.io, csi.ceph.io, objectbucket.io in place" >&2
   fi
 
-  # 2. CR instances before their CRDs. Deleting a CRD while instances still carry
-  #    finalizers leaves it in Terminating and stalls the rest of this sweep.
-  instances_deleted=true
-  for kind in $kinds; do
-    # -F: resource names contain dots; without it they are read as regexes.
-    if grep -Fqx -- "$kind" <<<"$namespaced"; then
-      oc delete "$kind" --all -A --ignore-not-found || instances_deleted=false
-    else
-      oc delete "$kind" --all --ignore-not-found || instances_deleted=false
+  local group kinds namespaced kind instances_deleted crds
+  for group in $groups; do
+    # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
+    #    returns an empty list, which would silently skip instance deletion and
+    #    then delete the CRDs anyway, with instances still live.
+    if ! kinds=$(oc api-resources --api-group="$group" --verbs=list -o name); then
+      echo "kind discovery failed for $group - leaving its CRDs in place" >&2
+      continue
     fi
-  done
-  if [ "$instances_deleted" != true ]; then
-    echo "instance deletion failed for $group - leaving its CRDs in place" >&2
-    continue
-  fi
+    if ! namespaced=$(oc api-resources --api-group="$group" --namespaced=true -o name); then
+      echo "scope discovery failed for $group - leaving its CRDs in place" >&2
+      continue
+    fi
 
-  # 3. Only now the CRDs themselves.
-  crds=$(oc get crd -o name | grep "\.$group$" || true)
-  [ -n "$crds" ] && oc delete $crds
-done
+    # 2. CR instances before their CRDs. Deleting a CRD while instances still carry
+    #    finalizers leaves it in Terminating and stalls the rest of this sweep.
+    instances_deleted=true
+    for kind in $kinds; do
+      # -F: resource names contain dots; without it they are read as regexes.
+      if grep -Fqx -- "$kind" <<<"$namespaced"; then
+        oc delete "$kind" --all -A --ignore-not-found || instances_deleted=false
+      else
+        oc delete "$kind" --all --ignore-not-found || instances_deleted=false
+      fi
+    done
+    if [ "$instances_deleted" != true ]; then
+      echo "instance deletion failed for $group - leaving its CRDs in place" >&2
+      continue
+    fi
+
+    # 3. Only now the CRDs themselves.
+    crds=$(oc get crd -o name | grep "\.$group$" || true)
+    [ -n "$crds" ] && oc delete $crds
+  done
+}
+odf_crd_sweep
 ```
 
 The `local.storage.openshift.io` CRDs belong to LSO; delete them only when LSO itself is being removed.
@@ -517,6 +554,12 @@ oc get clusterrole -o json | jq -r --arg g "$G" '.items[] | select(any(.rules[]?
 oc get validatingwebhookconfiguration,mutatingwebhookconfiguration -o json | jq -r --arg g "$G" '.items[] | select(tostring | contains($g)) | .metadata.name'
 ```
 
+Once they are judged ODF residue (no instances, so nothing is left to finalize), delete the group's CRDs:
+
+```bash
+oc get crd -o name | grep '\.groupsnapshot\.storage\.openshift\.io$' | xargs -r oc delete
+```
+
 The same four questions — zero instances, no workload or configuration names the group, no webhook targets it, and its owning operator is gone — decide any other CRD that still carries an `operators.coreos.com/<odf-package>.openshift-storage` label. ClusterRoles that grant a group (the `clusterrole` query above) count as "configuration names the group" only when a live binding uses them; see **Cluster RBAC left by ODF**.
 
 CRDs with the `customresourcecleanup.apiextensions.k8s.io` finalizer block until all CR instances are gone. If a CRD stays in `Terminating`, see **Stuck Namespace / Orphaned CRs** below.
@@ -526,7 +569,7 @@ CRDs with the `customresourcecleanup.apiextensions.k8s.io` finalizer block until
 After uninstall, confirm:
 
 - `openshift-storage` and `rook-ceph` namespaces are absent (or not Terminating). When the namespace was kept for LVMS/LSO: it contains no rook/ceph/noobaa/ocs/odf secrets, configmaps, services, workloads, service accounts, roles, role bindings, PodDisruptionBudgets, jobs, cronjobs, ServiceMonitors, or PrometheusRules; no ODF pod and no pod with a `deletionTimestamp` remains there; and the LVMS/LSO pods are still Running.
-- When an upstream Rook `CephCluster` runs (outside `openshift-storage`, no `StorageCluster` owner), its namespace, the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and the SCCs whose users are all its service accounts are retained, not residue. Instances of those groups inside `openshift-storage` still are, and so is any `CephCluster` in `openshift-storage` or owned by a `StorageCluster`.
+- When upstream Rook runs (a non-OLM `rook-ceph-operator` Deployment outside `openshift-storage`, the same rule as `scripts/classify_rook_ownership.sh`), its namespace, the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and the SCCs whose users are all its service accounts are retained, not residue. Instances of those groups outside its namespaces still are (bucket claims excepted: their StorageClass decides), and so is every `CephCluster` that is not a live upstream Rook cluster — in `openshift-storage`, owned by a `StorageCluster`, named `ocs-storagecluster-cephcluster`, being deleted, or without its operator.
 - The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io`, `csiaddons.openshift.io`, `objectbucket.io`, `replication.storage.openshift.io`, `ramendr.openshift.io` — plus `local.storage.openshift.io` only if LSO was removed too, and `groupsnapshot.storage.openshift.io` decided as in step 5.
 - OSD disks pass `ceph-volume raw list` → `{}` (not only a clean `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
 - No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
@@ -542,7 +585,7 @@ Run the post-uninstall audit script:
 bash scripts/post_uninstall_audit.sh
 ```
 
-Any `WARN` or `FAIL` line exits nonzero. `OK: ... retained: <reason>` lines name objects that look like ODF's but are in use (upstream Rook, a live RBAC subject, platform-owned group-snapshot CRDs); they do not fail the audit. "Terminating" for a PVC or PV is only how `oc get` prints it — the phase stays `Bound` or `Released` and the deletion shows as `metadata.deletionTimestamp`, which is what the audit tests. A namespace deleted seconds ago is not stuck; re-run before acting on that line.
+Any `WARN` or `FAIL` line exits nonzero. `OK: ... retained: <reason>` lines name objects that look like ODF's but are in use (upstream Rook, a live RBAC subject, platform-owned group-snapshot CRDs); they do not fail the audit. "Terminating" for a PVC or PV is only how `oc get` prints it — the phase stays `Bound` or `Released` and the deletion shows as `metadata.deletionTimestamp`, which is what the audit tests. Namespaces, pods, PVCs, and PVs are reported only after they have been deleting for more than 10 minutes; younger deletions are in progress, not stuck. Bucket-finalizer ConfigMaps and Secrets are read only in `openshift-storage` and in Terminating namespaces, as names and finalizers; a user who may not list Secrets there gets a `FAIL: could not check ...` line naming the missing permission. The audit assumes ODF ran in the default `openshift-storage` namespace; an ODF install in another namespace is not recognised.
 
 Equivalent manual checks:
 
@@ -579,17 +622,21 @@ When the ODF operators and CSI driver are removed **before** the workloads and v
 Stripping a finalizer skips whatever cleanup it guards. Do it only after collecting all of this evidence, and stop if any of it fails:
 
 ```bash
+. scripts/odf_common.sh   # ODF package list and patterns, from the skill directory
 oc get csidriver | grep openshift-storage                        # expect nothing
 oc get csinode <node> -o jsonpath='{.spec.drivers[*].name}{"\n"}' # no openshift-storage.* driver
-oc get sc ocs-storagecluster-ceph-rbd ocs-storagecluster-cephfs ocs-storagecluster-ceph-rgw openshift-storage.noobaa.io
-                                                                  # expect NotFound for each
+oc get pv <pv> -o jsonpath='{.spec.csi.driver} {.spec.csi.volumeAttributes.clusterID}{"\n"}'
+                                                                  # the removed driver, clusterID openshift-storage
+oc get sc "$(oc get pv <pv> -o jsonpath='{.spec.storageClassName}')"
+                                                                  # expect NotFound: the PV's own class is gone
 oc -n openshift-storage get cephcluster 2>&1                       # no CephCluster (or no such type)
 oc api-resources --api-group=noobaa.io; oc api-resources --api-group=ocs.openshift.io
 oc api-resources --api-group=postgresql.cnpg.noobaa.io            # expect no output: CRDs gone
-oc get csv,subscription -A | grep -E 'odf-|ocs-|mcg-|cephcsi|rook-ceph-operator|recipe'
+oc get csv -A -o json | jq -r --arg re "$ODF_CSV_PREFIX_RE" \
+  '.items[] | select(.metadata.name | test($re)) | "\(.metadata.namespace)/\(.metadata.name)"'
+oc get subscription -A -o json | jq -r --arg re "$ODF_PACKAGES_RE" \
+  '.items[] | select(.spec.name | test($re)) | "\(.metadata.namespace)/\(.metadata.name)"'
                                                                   # no ODF CSV or Subscription anywhere
-oc get pv <pv> -o jsonpath='{.spec.csi.driver} {.spec.csi.volumeAttributes.clusterID}{"\n"}'
-                                                                  # the removed driver, clusterID openshift-storage
 ```
 
 An upstream Rook cluster's driver is `rook-ceph.rbd.csi.ceph.com` (or another prefix), never `openshift-storage.*`; if a PV names a driver that is still registered, it is not an orphan.
@@ -624,7 +671,7 @@ oc -n openshift-storage delete pod <pod> --grace-period=0 --force
 oc debug node/<node> -- chroot /host systemctl restart kubelet
 ```
 
-On SNO the API is briefly unavailable while the kubelet restarts; running containers, including the static control-plane pods, keep running. Afterwards the kubelet journal must show no further lines for that volume, and the kubelet removes `/var/lib/kubelet/pods/<uid>` itself:
+What the restart does: running containers keep running, including the static API server pod, so the API stays up; the node reports `NotReady` for a short while until the kubelet posts status again, and the `oc debug` session drops because it runs through the kubelet. On SNO, expect that brief `NotReady` and nothing more. Afterwards the kubelet journal must show no further lines for that volume, and the kubelet removes `/var/lib/kubelet/pods/<uid>` itself:
 
 ```bash
 oc adm node-logs <node> -u kubelet --tail=500 | grep -E 'UnmountVolume|openshift-storage\.(rbd|cephfs)\.csi\.ceph\.com' || echo "quiet"
@@ -694,18 +741,17 @@ ODF's operators leave ClusterRoles and ClusterRoleBindings that OLM does not col
 
 **A stale ODF label means ODF created the object, not that nothing uses it.** On the same cluster these carried ODF CSV or package labels but were in use by the running upstream Rook and had to be kept: ClusterRoleBinding `objectstorage-provisioner-role-binding` (subject ServiceAccount `rook-ceph/objectstorage-provisioner` exists) and its ClusterRole; ClusterRoleBinding `rook-ceph-metrics` (subject `openshift-monitoring/prometheus-k8s` exists) and its ClusterRole; ClusterRoles `rook-ceph-monitor` and `rook-ceph-monitor-mgr` (bound by live bindings); and the two `objectbucket.io` CRDs (used by the running Rook bucket provisioner).
 
-Find candidates by label, across every kind, not only RBAC:
+Find candidates by label in the kinds ODF leaves behind, with the package list and patterns the scripts use. A label selector cannot match a key prefix, so match the `operators.coreos.com/<package>.<namespace>` key (whatever the namespace suffix) and the `olm.owner` CSV name with `jq`:
 
 ```bash
-ODF_PKGS="odf-operator odf-dependencies ocs-operator ocs-client-operator rook-ceph-operator \
-  cephcsi-operator mcg-operator odf-csi-addons-operator odf-external-snapshotter-operator \
-  odf-prometheus-operator ocs-tls-profiles recipe"
-oc get clusterrole,clusterrolebinding -l olm.owner -L olm.owner \
-  | grep -E "$(echo $ODF_PKGS | tr ' ' '|')"
-for r in $(oc api-resources --verbs=list -o name); do
-  for pkg in $ODF_PKGS; do
-    oc get "$r" -A -l "operators.coreos.com/$pkg.openshift-storage" -o name --ignore-not-found 2>/dev/null
-  done
+. scripts/odf_common.sh   # from the skill directory
+for r in clusterroles clusterrolebindings roles rolebindings serviceaccounts \
+         poddisruptionbudgets configmaps servicemonitors prometheusrules crd; do
+  oc get "$r" -A -o json 2>/dev/null | jq -r --arg pkg "$ODF_PACKAGE_LABEL_RE" --arg csv "$ODF_CSV_PREFIX_RE" '
+    .items[] | select(
+      ((.metadata.labels // {})["olm.owner"] // "" | test($csv))
+      or any((.metadata.labels // {}) | keys[]; test($pkg)))
+    | "\(.kind) \(.metadata.namespace // "-")/\(.metadata.name)"'
 done
 oc get clusterrole ocs-metrics-exporter ocs-metrics-reader --ignore-not-found
 oc get clusterrolebinding ocs-metrics-exporter --ignore-not-found
@@ -713,7 +759,7 @@ oc get clusterrolebinding ocs-metrics-exporter --ignore-not-found
 
 Then decide each one by liveness, not by label:
 
-- **A ClusterRoleBinding is dead** only if its ClusterRole is missing, or none of its ServiceAccount subjects exists. A `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
+- **A ClusterRoleBinding is dead** only if its ClusterRole is missing, or none of its ServiceAccount subjects exists. A missing role makes the binding dead even with `User` or `Group` subjects; otherwise a `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
 - **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive.
 - **A CRD is dead** only if it has zero instances, no workload or configuration names its group, no webhook targets it, and its owning operator is gone (step 5).
 

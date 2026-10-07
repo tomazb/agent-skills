@@ -18,7 +18,7 @@ Before any install, upgrade, or remediation plan, classify who owns Ceph on the 
 Classify ownership as **ODF**, **upstream Rook**, **mixed/conflicting**, or **unknown**:
 
 - **ODF**: `StorageCluster` plus ODF/OCS Subscription/CSV evidence → continue with this skill and manage through `StorageCluster`/OLM only.
-- **Upstream Rook**: `CephCluster` without ODF ownership signals → stop ODF layering plans and hand off to `openshift-rook`.
+- **Upstream Rook**: `CephCluster` without ODF ownership signals → stop ODF layering plans and hand off to `openshift-rook`. Before deleting anything shared with Rook (the `ceph.rook.io`, `csi.ceph.io`, `objectbucket.io` CRDs, the `rook-ceph*` SCCs), apply the precise rule with `scripts/classify_rook_ownership.sh`: upstream Rook runs where a non-OLM `rook-ceph-operator` Deployment exists outside `openshift-storage`, and a `CephCluster` counts only there, when not being deleted, not owned by a `StorageCluster`, and not named like ODF's.
 - **Mixed/conflicting** or **unknown/insufficient access**: stop, report the evidence, and refuse mutating or destructive actions until ownership is resolved.
 
 Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook manifests, or hand-editing ODF-owned Rook CRs until ownership is classified.
