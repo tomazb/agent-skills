@@ -61,7 +61,9 @@ there and verified read-only before anything was changed.
   residue only when its CRDs are ODF-labelled, carry no release-payload annotation,
   have no instances, and the `VolumeGroupSnapshot` feature gate is off; and ODF
   cluster RBAC classified by liveness (a binding whose ServiceAccounts or ClusterRole
-  are gone `WARN`s; one bound to a live subject, or a User/Group, is retained).
+  are gone `WARN`s; one bound to a live subject, or a User/Group, is retained; a
+  ClusterRole selected by an aggregation rule, through `matchLabels` or
+  `matchExpressions`, is retained, and so is one whose selector cannot be evaluated).
 - **The audit reads `oc` output carefully.** stderr is kept apart from the JSON with
   bash builtins only, so a client-side throttling or deprecation line (or a NUL byte
   in it) on a successful call does not break the filter. Only the server's NotFound
@@ -93,7 +95,8 @@ there and verified read-only before anything was changed.
   `odf_crd_sweep` call it themselves immediately before acting, so a verdict from an
   earlier login or context is never reused, and refuse when it fails or is not
   defined. The sweep leaves a group's CRDs in place while any instance of the group
-  remains, pointing at the Orphans section. With upstream Rook present the sweep leaves `ceph.rook.io`,
+  remains, pointing at the Orphans section; its deletes use `--wait=false`, so a
+  finalizer with no controller left cannot block it before that check. With upstream Rook present the sweep leaves `ceph.rook.io`,
   `csi.ceph.io`, and `objectbucket.io` alone, `odf_list_shared_instances` lists ODF's
   instances in those groups outside the Rook namespaces for the reader to delete by
   name, and the `rook-ceph`/`rook-ceph-csi` SCCs stay (they are not ODF's then).

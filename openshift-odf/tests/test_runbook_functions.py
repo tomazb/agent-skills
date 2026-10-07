@@ -59,7 +59,9 @@ def test_runbook_defines_the_tested_functions():
     } <= set(FUNCTIONS)
 
 
-def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=()):
+def _run(
+    tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=(), blocking=False
+):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
     for name in ("classify_rook_ownership.sh", "odf_common.sh"):
@@ -74,7 +76,7 @@ def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, source_
         (bin_dir / tool).symlink_to(found)
     log = tmp_path / "argv.log"
     world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": GROUPS, "errors": errors or {}}
-    write_cluster_oc(bin_dir, log=log, **world)
+    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, **world)
     script = "\n".join(
         [
             ". scripts/odf_common.sh" if source_common else "",
@@ -123,8 +125,8 @@ def test_sweep_never_touches_the_shared_groups_next_to_upstream_rook(tmp_path):
     result, deletes = _run(tmp_path, "odf_crd_sweep", objects=UPSTREAM)
 
     assert "rc=0" in result.stdout, result.stderr
-    assert "delete storageclusters.ocs.openshift.io --all -A --ignore-not-found" in deletes
-    assert "delete crd/storageclusters.ocs.openshift.io" in deletes
+    assert "delete storageclusters.ocs.openshift.io --all -A --ignore-not-found --wait=false" in deletes
+    assert "delete crd/storageclusters.ocs.openshift.io --wait=false" in deletes
     for group in SHARED:
         assert not [d for d in deletes if group in d], deletes
 
@@ -133,9 +135,9 @@ def test_sweep_without_upstream_rook_deletes_odf_groups_only(tmp_path):
     result, deletes = _run(tmp_path, "odf_crd_sweep")
 
     assert "rc=0" in result.stdout, result.stderr
-    assert "delete cephclusters.ceph.rook.io --all -A --ignore-not-found" in deletes
-    assert "delete crd/cephclusters.ceph.rook.io" in deletes
-    assert "delete crd/objectbucketclaims.objectbucket.io crd/objectbuckets.objectbucket.io" in deletes
+    assert "delete cephclusters.ceph.rook.io --all -A --ignore-not-found --wait=false" in deletes
+    assert "delete crd/cephclusters.ceph.rook.io --wait=false" in deletes
+    assert "delete crd/objectbucketclaims.objectbucket.io crd/objectbuckets.objectbucket.io --wait=false" in deletes
     assert not [d for d in deletes if "local.storage" in d or "groupsnapshot" in d], deletes
 
 
@@ -330,3 +332,27 @@ def test_sweep_keeps_a_groups_crds_while_an_instance_remains(tmp_path, objects, 
     assert f"instances of {group} remain:" in result.stderr
     assert "Orphans After An Interrupted Uninstall" in result.stderr
     assert not [d for d in deletes if crd in d], deletes
+
+
+def test_sweep_never_waits_on_finalizers_and_still_refuses_held_instances(tmp_path):
+    # With blocking_deletes the fake fails any waiting delete of a finalizer-held
+    # object, as a real oc would block on it forever after an interrupted uninstall.
+    skill = tmp_path / "run"
+    skill.mkdir()
+    objects = {
+        "storageclusters.ocs.openshift.io": [
+            {"metadata": meta("ocs-storagecluster", "openshift-storage", finalizers=["storagecluster.ocs.openshift.io"])}
+        ],
+        "cephclusters.ceph.rook.io": [
+            {"metadata": meta("ocs-storagecluster-cephcluster", "openshift-storage", finalizers=["cephcluster.ceph.rook.io"])}
+        ],
+    }
+    result, deletes = _run(skill, "odf_crd_sweep", objects=objects, blocking=True)
+
+    assert deletes, result.stderr
+    assert all("--wait=false" in d for d in deletes), deletes
+    assert "would block" not in result.stderr
+    assert "instances of ocs.openshift.io remain:" in result.stderr
+    assert "instances of ceph.rook.io remain:" in result.stderr
+    assert "Orphans After An Interrupted Uninstall" in result.stderr
+    assert not [d for d in deletes if d.startswith("delete crd/storageclusters") or d.startswith("delete crd/cephclusters")]

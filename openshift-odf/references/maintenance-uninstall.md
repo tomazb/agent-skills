@@ -435,11 +435,11 @@ classified as ODF. If that applies, stop and decide by hand.
 
 ```bash
 # ceph-csi driver instances: deleting the Driver CRs cascades their deployments/daemonsets
-oc -n openshift-storage delete drivers.csi.ceph.io --all
+oc -n openshift-storage delete drivers.csi.ceph.io --all --wait=false
 oc delete csidriver openshift-storage.rbd.csi.ceph.com openshift-storage.cephfs.csi.ceph.com
 
 # Remaining operator-scoped CRs
-oc -n openshift-storage delete ocsinitializations.ocs.openshift.io,cephconnections.csi.ceph.io,operatorconfigs.csi.ceph.io --all
+oc -n openshift-storage delete ocsinitializations.ocs.openshift.io,cephconnections.csi.ceph.io,operatorconfigs.csi.ceph.io --all --wait=false
 
 # Console Service/cert residue (ConsolePlugin CRs were removed in step 4a).
 # The Service must go first — while it exists, service-ca keeps re-creating its cert secret.
@@ -524,7 +524,7 @@ odf_list_shared_instances() {
   done
 }
 odf_list_shared_instances
-# Review that list, then delete those objects by name: oc -n <namespace> delete <kind> <name>
+# Review that list, then delete those objects by name: oc -n <namespace> delete <kind> <name> --wait=false
 ```
 
 ODF's cluster-scoped `ObjectBucket`s and its bucket claims in consumer namespaces are decided by their StorageClass, not by group: a claim or bucket is ODF's when its class uses an ODF provisioner (`openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`), or when its class is missing and no upstream Rook runs — the same rule as the audit. With upstream Rook present a claim whose class is missing could be Rook's, so it is listed for you to decide, not deleted. Claims of any other bucket provisioner (a running Rook, a standalone MCG) are listed and kept, and so are the `objectbucket.io` CRDs while any remain. The function classifies itself, so it is safe to call on its own. Anything about a running Rook cluster itself — its health, its CRDs, its SCCs — is the `openshift-rook` skill's job; hand it off rather than changing it from this runbook.
@@ -616,6 +616,8 @@ odf_crd_sweep() {
 
     # 2. CR instances before their CRDs. Deleting a CRD while instances still carry
     #    finalizers leaves it in Terminating and stalls the rest of this sweep.
+    #    --wait=false: after an interrupted uninstall no controller removes the
+    #    finalizers, so a waiting delete would block here; step 3 decides instead.
     instances_deleted=true
     if [ "$group" = objectbucket.io ]; then
       odf_delete_odf_buckets || instances_deleted=false
@@ -623,9 +625,9 @@ odf_crd_sweep() {
       for kind in $kinds; do
         # -F: resource names contain dots; without it they are read as regexes.
         if grep -Fqx -- "$kind" <<<"$namespaced"; then
-          oc delete "$kind" --all -A --ignore-not-found || instances_deleted=false
+          oc delete "$kind" --all -A --ignore-not-found --wait=false || instances_deleted=false
         else
-          oc delete "$kind" --all --ignore-not-found || instances_deleted=false
+          oc delete "$kind" --all --ignore-not-found --wait=false || instances_deleted=false
         fi
       done
     fi
@@ -651,7 +653,7 @@ odf_crd_sweep() {
 
     # 4. Only now the CRDs themselves.
     crds=$(oc get crd -o name | grep "\.$group$" || true)
-    [ -n "$crds" ] && oc delete $crds
+    [ -n "$crds" ] && oc delete $crds --wait=false
   done
 }
 odf_crd_sweep
@@ -898,7 +900,7 @@ oc get clusterrolebinding ocs-metrics-exporter --ignore-not-found
 Then decide each one by liveness, not by label:
 
 - **A ClusterRoleBinding is dead** only if its ClusterRole is missing, or none of its ServiceAccount subjects exists. A missing role makes the binding dead even with `User` or `Group` subjects; otherwise a `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
-- **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive.
+- **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive. Evaluate each `clusterRoleSelectors` entry in full: every `matchLabels` pair and every `matchExpressions` term (`In`, `NotIn` — also true when the key is absent —, `Exists`, `DoesNotExist`) must hold; an empty selector selects nothing; if you cannot evaluate a selector (an unknown operator, a malformed term), keep the role.
 - **A CRD is dead** only if it has zero instances, no workload or configuration names its group, no webhook targets it, and its owning operator is gone (step 5).
 
 ```bash

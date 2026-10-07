@@ -1604,3 +1604,53 @@ def test_audit_reports_a_ceph_csi_that_outlived_its_operator_as_unknown(tmp_path
     assert "WARN: Rook objects whose owner cannot be classified still exist:" in result.stdout
     assert named in result.stdout
     assert "retained for upstream Rook" not in result.stdout
+
+
+AGG_LABELS = {"olm.owner": "odf-operator.v4.20.17-rhodf", "example.test/aggregate-to": "view"}
+
+
+@pytest.mark.parametrize(
+    ("selector", "verdict"),
+    [
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "In", "values": ["view", "edit"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "Exists"}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        # matchLabels and matchExpressions must both hold
+        ({"matchLabels": {"olm.owner": "odf-operator.v4.20.17-rhodf"},
+          "matchExpressions": [{"key": "example.test/aggregate-to", "operator": "NotIn", "values": ["edit"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        # the role's own value is excluded, so it is not selected
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "NotIn", "values": ["view"]}]},
+         "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "DoesNotExist"}]},
+         "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "Gt", "values": ["1"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "In"}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
+        # an empty selector selects nothing
+        ({}, "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+    ],
+    ids=["in", "exists", "labels-and-notin", "notin-excluded", "doesnotexist", "unknown-operator",
+         "in-without-values", "empty"],
+)
+def test_audit_evaluates_full_aggregation_selectors(tmp_path, selector, verdict):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "clusterroles": [
+                _cr("odf-operator-metrics-reader", AGG_LABELS),
+                _cr("aggregate", aggregation=[selector]),
+            ]
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert verdict in result.stdout
+    if verdict.startswith("OK:"):
+        assert "WARN: dead ODF cluster RBAC" not in result.stdout
+    else:
+        assert "WARN: dead ODF cluster RBAC still exists:" in result.stdout

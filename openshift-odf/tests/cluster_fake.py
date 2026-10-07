@@ -98,7 +98,21 @@ if args[:1] == ["whoami"]:
         raise SystemExit(1)
     print(WORLD["server"] if "--show-server" in args else "admin")
     raise SystemExit(0)
-if args[:1] == ["delete"]:
+if "delete" in args[:3]:
+    # A waiting delete of an object held by a finalizer never returns while no
+    # controller removes the finalizer; with "blocking_deletes" the fake fails
+    # such a delete instead of hanging.
+    if WORLD["blocking_deletes"] and "--wait=false" not in args:
+        rest = args[args.index("delete") + 1:]
+        res = rest[0]
+        names = [a for a in rest[1:] if not a.startswith("-")]
+        held = [
+            item for item in WORLD["objects"].get(res, [])
+            if item["metadata"].get("finalizers") and ("--all" in rest or item["metadata"]["name"] in names)
+        ]
+        if held:
+            print("error: would block waiting for finalizers on " + res, file=sys.stderr)
+            raise SystemExit(1)
     raise SystemExit(0)
 if args[:1] == ["api-resources"]:
     group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
@@ -178,6 +192,7 @@ def write_cluster_oc(
     noise: bool | str = False,
     log: Path | None = None,
     console_plugins: tuple = (),
+    blocking_deletes: bool = False,
 ) -> None:
     world_objects = {"sc": [DEFAULT_SC]}
     for res, items in (objects or {}).items():
@@ -194,6 +209,7 @@ def write_cluster_oc(
         "console_plugins": list(console_plugins),
         "finalizer_jsonpath": FINALIZER_JSONPATH,
         "server": SHOW_SERVER,
+        "blocking_deletes": blocking_deletes,
     }
     write_oc(bin_dir, _CLUSTER_OC.replace("__WORLD__", repr(json.dumps(world))))
 

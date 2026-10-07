@@ -740,9 +740,29 @@ check_sccs() {
 #   proven absent) and none of its ServiceAccount subjects exists;
 # - a ClusterRole is dead when no live ClusterRoleBinding or RoleBinding references
 #   it (a dead binding does not keep its role alive) and no other ClusterRole's
-#   aggregationRule selects it (non-empty matchLabels only).
+#   aggregationRule selects it. A selector is evaluated in full, matchLabels and
+#   matchExpressions (In, NotIn, Exists, DoesNotExist); an empty one selects
+#   nothing; one that cannot be evaluated keeps the role, never kills it.
 # RoleBindings are judged by the same subject rule.
 ODF_RBAC_JQ="
+def expr_result(\$labels):
+  . as \$e
+  | if (\$e | type) != \"object\" or (\$e.key | type) != \"string\" then \"error\"
+    elif \$e.operator == \"Exists\" then (\$labels | has(\$e.key))
+    elif \$e.operator == \"DoesNotExist\" then (\$labels | has(\$e.key) | not)
+    elif (\$e.values | type) != \"array\" then \"error\"
+    elif \$e.operator == \"In\" then ((\$labels | has(\$e.key)) and any(\$e.values[]; . == \$labels[\$e.key]))
+    elif \$e.operator == \"NotIn\" then ((\$labels | has(\$e.key) | not) or all(\$e.values[]; . != \$labels[\$e.key]))
+    else \"error\" end;
+def selector_result(\$labels):
+  if type != \"object\" then \"error\"
+  else (.matchLabels // {}) as \$ml | (.matchExpressions // []) as \$me
+    | if (\$ml | type) != \"object\" or (\$me | type) != \"array\" then \"error\"
+      elif (\$ml | length) == 0 and (\$me | length) == 0 then false
+      else [(\$ml | to_entries[] | \$labels[.key] == .value), (\$me[] | expr_result(\$labels))]
+        | if any(.[]; . == \"error\") then \"error\" else all(.[]; . == true) end
+      end
+  end;
 def odf_owned(\$names):
   ((.labels[\"olm.owner\"] // \"\") | test(\"$ODF_CSV_PREFIX_RE\"))
   or any(.labels | keys[]; test(\"$ODF_PACKAGE_LABEL_RE\"))
@@ -764,9 +784,10 @@ def verdict(\$roles; \$sas):
   (\$crs[] | select(odf_owned([\"ocs-metrics-exporter\", \"ocs-metrics-reader\"])) | . as \$role
    | [\$bindings[] | select(.role == \$role.name)] as \$refs
    | [\$refs[] | select(.live) | .ref] as \$live_refs
-   | any(\$crs[]; .name != \$role.name and any(.selectors[]; length > 0 and all(to_entries[]; \$role.labels[.key] == .value))) as \$aggregated
+   | [\$crs[] | select(.name != \$role.name) | .selectors[] | selector_result(\$role.labels)] as \$selected
    | if (\$live_refs | length) > 0 then [\"kept\", \"ClusterRole/\(.name)\", \"referenced by live \(\$live_refs | join(\", \"))\"]
-     elif \$aggregated then [\"kept\", \"ClusterRole/\(.name)\", \"aggregated into another ClusterRole\"]
+     elif any(\$selected[]; . == true) then [\"kept\", \"ClusterRole/\(.name)\", \"aggregated into another ClusterRole\"]
+     elif any(\$selected[]; . == \"error\") then [\"kept\", \"ClusterRole/\(.name)\", \"aggregation selector could not be evaluated\"]
      elif (\$refs | length) > 0 then [\"dead\", \"ClusterRole/\(.name)\", \"referenced only by dead \([\$refs[].ref] | join(\", \"))\"]
      else [\"dead\", \"ClusterRole/\(.name)\", \"no binding references it\"] end
    | @tsv)
@@ -783,7 +804,7 @@ check_cluster_rbac() {
   local dead=""
 
   fetch_array "ClusterRoles" \
-    '[.items[] | {name: .metadata.name, labels: (.metadata.labels // {}), selectors: [.aggregationRule.clusterRoleSelectors[]? | .matchLabels // {}]}]' \
+    '[.items[] | {name: .metadata.name, labels: (.metadata.labels // {}), selectors: [.aggregationRule.clusterRoleSelectors[]?]}]' \
     oc get clusterroles || return 0
   roles="$QUERY_RESULT"
   fetch_array "ClusterRoleBindings" \
