@@ -18,7 +18,7 @@ Before any install, upgrade, or remediation plan, classify who owns Ceph on the 
 Classify ownership as **ODF**, **upstream Rook**, **mixed/conflicting**, or **unknown**:
 
 - **ODF**: `StorageCluster` plus ODF/OCS Subscription/CSV evidence → continue with this skill and manage through `StorageCluster`/OLM only.
-- **Upstream Rook**: `CephCluster` without ODF ownership signals → stop ODF layering plans and hand off to `openshift-rook`.
+- **Upstream Rook**: `CephCluster` without ODF ownership signals → stop ODF layering plans and hand off to `openshift-rook`. Before deleting anything shared with Rook (the `ceph.rook.io`, `csi.ceph.io`, `objectbucket.io` CRDs, the `rook-ceph*` SCCs), apply the precise rule with `scripts/classify_rook_ownership.sh`: a `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, or named like ODF's (or being deleted while an upstream operator runs) is residue; any other is upstream Rook when a non-OLM `rook-ceph-operator` Deployment exists outside `openshift-storage`; an OLM-installed operator, an operator-less non-ODF `CephCluster`, or an operator-less non-ODF Ceph CSI (driver, CSIDriver, or PV) is unknown, so stop.
 - **Mixed/conflicting** or **unknown/insufficient access**: stop, report the evidence, and refuse mutating or destructive actions until ownership is resolved.
 
 Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook manifests, or hand-editing ODF-owned Rook CRs until ownership is classified.
@@ -33,7 +33,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **Capacity expansion, node addition, or device set scaling**: use `references/cluster-expand-shrink.md`.
 - **ODF operator or Ceph version upgrades**: use `references/upgrade.md`.
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
-- **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`.
+- **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`. For leftovers of an interrupted or out-of-order uninstall (PVCs, PVs, or namespaces stuck deleting, a Pod the kubelet cannot release, stale ODF RBAC), or an uninstall next to an upstream Rook cluster, use its **Orphans After An Interrupted Uninstall** section and re-run the ownership gate before the CRD sweep.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md` (on SNO, run the SNO readiness gate before declaring ODF fully ready).
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
 - **Observed SNO configurations or ODF 4.16, 4.20, and 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.

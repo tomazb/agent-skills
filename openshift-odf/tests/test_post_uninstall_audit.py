@@ -1,62 +1,36 @@
 from __future__ import annotations
 
 import json
-import shutil
-import stat
 import subprocess
 import sys
-import textwrap
 from pathlib import Path
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "post_uninstall_audit.sh"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from cluster_fake import (  # noqa: E402
+    OLD,
+    ceph_cluster,
+    merge,
+    meta,
+    recent,
+    rook_operator,
+    run_script,
+    write_cluster_oc,
+    write_jq_proxy,
+    write_oc,
+)
 
-def _write_executable(path: Path, content: str) -> None:
-    path.write_text(textwrap.dedent(content).lstrip(), encoding="utf-8")
-    path.chmod(path.stat().st_mode | stat.S_IXUSR)
-
-
-def _write_jq_proxy(bin_dir: Path) -> None:
-    jq = shutil.which("jq")
-    if jq is None:
-        pytest.skip("jq is required for post_uninstall_audit.sh tests")
-    _write_executable(
-        bin_dir / "jq",
-        f"""\
-        #!/bin/sh
-        exec {jq} "$@"
-        """,
-    )
-
-
-def _write_oc(bin_dir: Path, body: str) -> None:
-    _write_executable(
-        bin_dir / "oc",
-        "\n".join(
-            [
-                f"#!{sys.executable}",
-                "import json",
-                "import sys",
-                "",
-                textwrap.dedent(body).strip(),
-                "",
-            ]
-        ),
-    )
+_write_jq_proxy = write_jq_proxy
+_write_oc = write_oc
+_write_cluster_oc = write_cluster_oc
 
 
 def _run_audit(
     bin_dir: Path, *args: str
 ) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["/bin/bash", str(SCRIPT), *args],
-        check=False,
-        capture_output=True,
-        text=True,
-        env={"PATH": str(bin_dir)},
-    )
+    return run_script("post_uninstall_audit.sh", bin_dir, *args)
 
 
 def test_audit_fails_when_oc_is_missing(tmp_path):
@@ -157,7 +131,7 @@ def test_audit_fails_for_leftover_object_bucket_claims(tmp_path):
     result = _run_audit(tmp_path)
 
     assert result.returncode == 1
-    assert "WARN: ObjectBucketClaims still exist:" in result.stdout
+    assert "WARN: ODF ObjectBucketClaims still exist:" in result.stdout
     assert "app/bucket" in result.stdout
 
 
@@ -209,7 +183,7 @@ def test_audit_passes_when_no_odf_residue_remains(tmp_path):
     assert "OK: no noobaa.io API resources found" in result.stdout
     assert "OK: no csi.ceph.io API resources found" in result.stdout
     assert "OK: no local.storage.openshift.io API resources found" in result.stdout
-    assert "OK: no ObjectBucketClaims found" in result.stdout
+    assert "OK: no ODF ObjectBucketClaims found" in result.stdout
     assert "OK: exactly one default StorageClass: platform-default" in result.stdout
     assert "WARN:" not in result.stdout
     assert "FAIL:" not in result.stdout
@@ -402,8 +376,7 @@ def test_audit_flags_leftover_odf_statefulset_residue(tmp_path):
                 {"metadata": {"name": "lvms-operator"}, "spec": {"name": "lvms-operator"}},
             ]}))
             raise SystemExit(0)
-        if args[0] == "get" and args[1].startswith("secrets") and "-o" in args:
-            assert "statefulsets" in args[1], "residue sweep must query statefulsets"
+        if args[:2] == ["get", "statefulsets"] and "-n" in args and "-o" in args:
             print(json.dumps({"items": [
                 {"kind": "StatefulSet", "metadata": {"name": "noobaa-db-pg"}},
             ]}))
@@ -512,3 +485,1223 @@ def test_audit_rejects_empty_inline_option_values(tmp_path, arg):
     result = _run_audit(tmp_path, arg)
     assert result.returncode == 2
     assert "requires a value" in result.stderr
+
+
+# The tests below run against cluster_fake's world-driven `oc`.
+
+
+def _sa(namespace: str, name: str) -> dict:
+    return {"metadata": meta(name, namespace)}
+
+
+def _sa_subject(namespace: str, name: str) -> dict:
+    return {"kind": "ServiceAccount", "namespace": namespace, "name": name}
+
+
+def _crb(name: str, role: str, subjects: list, labels: dict | None = None) -> dict:
+    return {
+        "metadata": meta(name, labels=labels or {}),
+        "roleRef": {"kind": "ClusterRole", "name": role},
+        "subjects": subjects,
+    }
+
+
+def _cr(name: str, labels: dict | None = None, aggregation: list | None = None) -> dict:
+    role = {"metadata": meta(name, labels=labels or {})}
+    if aggregation is not None:
+        role["aggregationRule"] = {"clusterRoleSelectors": aggregation}
+    return role
+
+
+ROOK_OWNER = {"olm.owner": "rook-ceph-operator.v4.20.17-rhodf"}
+OCS_OWNER = {"olm.owner": "ocs-operator.v4.20.17-rhodf"}
+
+# Cluster shape after an ODF uninstall next to an upstream (non-OLM) Rook cluster in
+# rook-ceph: its operator, the shared Rook groups, its SCCs, a claim it serves, and
+# RBAC that still carries ODF's OLM label while the running Rook uses it.
+ROOK_GROUPS = {
+    "ceph.rook.io": [["cephclusters.ceph.rook.io", True]],
+    "csi.ceph.io": [["drivers.csi.ceph.io", True]],
+    "objectbucket.io": [
+        ["objectbucketclaims.objectbucket.io", True],
+        ["objectbuckets.objectbucket.io", False],
+    ],
+}
+
+
+def _rook_objects() -> dict:
+    return {
+        "deployments": [rook_operator()],
+        "cephclusters.ceph.rook.io": [ceph_cluster("rook-ceph", "rook-ceph")],
+        "drivers.csi.ceph.io": [
+            {"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")}
+        ],
+        "objectbucketclaims.objectbucket.io": [
+            {"kind": "ObjectBucketClaim", "metadata": meta("rook-bucket", "app")}
+        ],
+        "scc": [
+            {
+                "metadata": meta("rook-ceph"),
+                "users": ["system:serviceaccount:rook-ceph:rook-ceph-system"],
+            },
+            {
+                "metadata": meta("rook-ceph-csi"),
+                "users": ["system:serviceaccount:rook-ceph:rook-csi-rbd-plugin-sa"],
+            },
+        ],
+        "sc": [{"metadata": meta("rook-ceph-bucket"), "provisioner": "rook-ceph.ceph.rook.io/bucket"}],
+        "obc": [
+            {"metadata": meta("rook-bucket", "app"), "spec": {"storageClassName": "rook-ceph-bucket"}}
+        ],
+        "objectbucket": [
+            {"metadata": meta("obc-app-rook-bucket"), "spec": {"storageClassName": "rook-ceph-bucket"}}
+        ],
+        "configmaps": [
+            {"kind": "ConfigMap", "metadata": meta("rook-bucket", "app", finalizers=["objectbucket.io/finalizer"])}
+        ],
+        "secrets": [
+            {"kind": "Secret", "metadata": meta("rook-bucket", "app", finalizers=["objectbucket.io/finalizer"])}
+        ],
+        "serviceaccounts": [
+            _sa("rook-ceph", "objectstorage-provisioner"),
+            _sa("openshift-monitoring", "prometheus-k8s"),
+        ],
+        "clusterroles": [
+            _cr("objectstorage-provisioner-role", ROOK_OWNER),
+            _cr("rook-ceph-metrics", ROOK_OWNER),
+        ],
+        "clusterrolebindings": [
+            _crb(
+                "objectstorage-provisioner-role-binding",
+                "objectstorage-provisioner-role",
+                [_sa_subject("rook-ceph", "objectstorage-provisioner")],
+                ROOK_OWNER,
+            ),
+            _crb(
+                "rook-ceph-metrics",
+                "rook-ceph-metrics",
+                [_sa_subject("openshift-monitoring", "prometheus-k8s")],
+                ROOK_OWNER,
+            ),
+        ],
+    }
+
+
+def _assert_clean(result) -> None:
+    assert result.returncode == 0, result.stdout
+    assert "WARN:" not in result.stdout
+    assert "FAIL:" not in result.stdout
+
+
+def test_audit_reports_stuck_pvc_and_pv_by_deletion_timestamp(tmp_path):
+    # A deleting PVC or PV keeps phase Bound/Released; "Terminating" is not a phase.
+    # The old `.status.phase == "Terminating"` test could never fire.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "pvc": [
+                {
+                    "metadata": meta(
+                        "db-noobaa-db-pg-cluster-1",
+                        "openshift-storage",
+                        deletionTimestamp=OLD,
+                        finalizers=["kubernetes.io/pvc-protection"],
+                    ),
+                    "status": {"phase": "Bound"},
+                }
+            ],
+            "pv": [
+                {
+                    "metadata": meta(
+                        "pvc-released",
+                        deletionTimestamp=OLD,
+                        finalizers=["kubernetes.io/pv-protection"],
+                    ),
+                    "status": {"phase": "Released"},
+                }
+            ],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "WARN: PVCs Terminating for over 10 minutes (younger deletions ignored) still exist:"
+        in result.stdout
+    )
+    assert (
+        "openshift-storage/db-noobaa-db-pg-cluster-1 (phase Bound, finalizers: kubernetes.io/pvc-protection)"
+        in result.stdout
+    )
+    assert (
+        "WARN: PVs Terminating for over 10 minutes (younger deletions ignored) still exist:"
+        in result.stdout
+    )
+    assert "pvc-released (phase Released" in result.stdout
+
+
+def test_audit_ignores_deletions_younger_than_the_threshold(tmp_path):
+    _write_jq_proxy(tmp_path)
+    just_now = recent()
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "pvc": [
+                {"metadata": meta("data", "app", deletionTimestamp=just_now), "status": {"phase": "Bound"}}
+            ],
+            "pv": [{"metadata": meta("pv-data", deletionTimestamp=just_now), "status": {"phase": "Bound"}}],
+            "namespaces": [
+                {"metadata": meta("app", deletionTimestamp=just_now), "status": {"phase": "Terminating"}}
+            ],
+            "pods": [
+                {
+                    "metadata": meta("vg-manager-abcde", "openshift-storage", deletionTimestamp=just_now),
+                    "status": {"phase": "Running"},
+                }
+            ],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    for line in (
+        "OK: no PVCs Terminating for over 10 minutes (younger deletions ignored)",
+        "OK: no PVs Terminating for over 10 minutes (younger deletions ignored)",
+        "OK: no namespaces Terminating for over 10 minutes (younger deletions ignored)",
+        "OK: no pods in openshift-storage deleting for over 10 minutes (younger deletions ignored)",
+    ):
+        assert line in result.stdout
+
+
+def test_audit_passes_on_a_clean_cluster_with_every_new_check(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "pvc": [{"metadata": meta("data", "app"), "status": {"phase": "Bound"}}],
+            "namespaces": [{"metadata": meta("app"), "status": {"phase": "Active"}}],
+            "volumeattachment": [
+                {"metadata": meta("csi-other"), "spec": {"attacher": "topolvm.io"}}
+            ],
+            "clusterroles": [_cr("admin")],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    for line in (
+        "OK: no namespaces Terminating for over 10 minutes (younger deletions ignored)",
+        "OK: no ODF VolumeAttachments found",
+        "OK: no ODF pods in openshift-storage",
+        "OK: no ODF ObjectBuckets found",
+        "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim",
+        "OK: no replication.storage.openshift.io API resources found",
+        "OK: no ramendr.openshift.io API resources found",
+        "OK: no groupsnapshot.storage.openshift.io API resources found",
+        "OK: no CephClusters left by ODF or being deleted",
+        "OK: no dead ODF ClusterRoles or ClusterRoleBindings found",
+    ):
+        assert line in result.stdout
+
+
+def test_audit_tolerates_absent_new_kinds(tmp_path):
+    # Kinds reported as unknown types must read as "none", not as a failed audit.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        unserved=(
+            "volumeattachment",
+            "cephclusters.ceph.rook.io",
+            "deployments",
+            "obc",
+            "objectbucket",
+            "namespaces",
+            "pods",
+            "clusterroles",
+        ),
+    )
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: no ODF VolumeAttachments found" in result.stdout
+    assert "OK: no CephClusters left by ODF or being deleted" in result.stdout
+    assert "OK: no ODF ObjectBucketClaims found" in result.stdout
+    assert "OK: no dead ODF ClusterRoles or ClusterRoleBindings found" in result.stdout
+
+
+@pytest.mark.parametrize("noise", [False, True], ids=["quiet", "stderr-noise"])
+def test_audit_treats_a_running_upstream_rook_cluster_as_retained(tmp_path, noise):
+    # With noise, every oc call also prints a client-side throttling line on
+    # stderr. A successful call must still be evaluated from its JSON alone.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_rook_objects(),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+        noise=noise,
+    )
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    for line in (
+        "OK: namespace rook-ceph retained: part of an upstream (non-OLM) Rook cluster",
+        "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph",
+        "OK: csi.ceph.io API resources retained for upstream Rook in: rook-ceph",
+        "OK: objectbucket.io API resources retained for upstream Rook in: rook-ceph",
+        "OK: no ceph.rook.io objects outside upstream Rook namespaces",
+        "OK: no csi.ceph.io objects outside upstream Rook namespaces",
+        # the Rook-served claim in "app" is decided by its StorageClass, not its namespace
+        "OK: no objectbucket.io objects outside upstream Rook namespaces",
+        "OK: SCC rook-ceph retained: every user is a service account in an upstream Rook namespace",
+        "OK: SCC rook-ceph-csi retained: every user is a service account in an upstream Rook namespace",
+        "OK: no ODF SCCs found",
+        "OK: no ODF ObjectBucketClaims found",
+        "OK: no ODF ObjectBuckets found",
+        "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim",
+        "OK: no CephClusters left by ODF or being deleted",
+    ):
+        assert line in result.stdout
+
+
+def test_audit_counts_a_rook_operator_without_a_ceph_cluster_as_upstream_rook(tmp_path):
+    # The operator is up but its CephCluster is not (yet, or again) created: the
+    # shared CRDs are still Rook's.
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    del objects["cephclusters.ceph.rook.io"]
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: namespace rook-ceph retained" in result.stdout
+    assert "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("operator", "unknown"),
+    [
+        (
+            rook_operator(labels={"olm.owner": "rook-ceph-operator.v1.20.5"}),
+            "rook-ceph/rook-ceph-operator (Deployment installed by OLM",
+        ),
+        (
+            rook_operator(labels={"operators.coreos.com/rook-ceph.rook-ceph": ""}),
+            "rook-ceph/rook-ceph-operator (Deployment installed by OLM",
+        ),
+        (
+            rook_operator(deletionTimestamp=OLD),
+            "rook-ceph/rook-ceph (no non-OLM rook-ceph-operator Deployment outside openshift-storage",
+        ),
+        (
+            rook_operator(namespace="openshift-storage"),
+            "rook-ceph/rook-ceph (no non-OLM rook-ceph-operator Deployment outside openshift-storage",
+        ),
+    ],
+    ids=["olm-owner", "olm-package-label", "deleting", "in-openshift-storage"],
+)
+def test_audit_does_not_excuse_shared_groups_when_rook_ownership_is_unknown(tmp_path, operator, unknown):
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    objects["deployments"] = [operator]
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "retained for upstream Rook" not in result.stdout
+    assert "WARN: ceph.rook.io API resources still exist:" in result.stdout
+    assert "WARN: rook-ceph namespace still exists" in result.stdout
+    assert "WARN: Rook objects whose owner cannot be classified still exist:" in result.stdout
+    assert unknown in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("cluster", "reason"),
+    [
+        # orphaned by an interrupted uninstall: no StorageCluster left to own it
+        (ceph_cluster("ocs-storagecluster-cephcluster", "openshift-storage"), "in openshift-storage"),
+        (
+            ceph_cluster(
+                "ocs-storagecluster-cephcluster",
+                "ocs-elsewhere",
+                ownerReferences=[{"kind": "StorageCluster", "name": "ocs-storagecluster"}],
+            ),
+            "owned by a StorageCluster",
+        ),
+        # StorageCluster ownerReference stripped by hand, in the Rook namespace
+        (ceph_cluster("ocs-storagecluster-cephcluster", "rook-ceph"), "carries the ODF CephCluster name"),
+        (ceph_cluster("second", "rook-ceph", deletionTimestamp=OLD), "being deleted"),
+    ],
+    ids=["openshift-storage", "storagecluster-owned", "odf-name", "deleting"],
+)
+def test_audit_flags_ceph_clusters_left_by_odf_or_being_deleted(tmp_path, cluster, reason):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=merge(_rook_objects(), {"cephclusters.ceph.rook.io": [cluster]}),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+    )
+
+    result = _run_audit(tmp_path)
+    name = f"{cluster['metadata']['namespace']}/{cluster['metadata']['name']}"
+
+    assert result.returncode == 1
+    assert "WARN: CephClusters left by ODF or being deleted still exist:" in result.stdout
+    assert f"{name} ({reason})" in result.stdout
+    assert "OK: every CephCluster and rook-ceph-operator has a classified owner" in result.stdout
+    assert "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph\n" in result.stdout
+    if cluster["metadata"]["namespace"] != "rook-ceph":
+        assert (
+            "WARN: ceph.rook.io objects outside upstream Rook namespaces still exist:" in result.stdout
+        )
+        assert f"CephCluster/{name}" in result.stdout
+
+
+def test_audit_treats_a_cluster_watched_from_another_namespace_as_upstream_rook(tmp_path):
+    # Rook's operator watches every namespace by default: an operator in rook-ceph
+    # and a CephCluster in storage-b are one upstream Rook installation.
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    objects["cephclusters.ceph.rook.io"] = [ceph_cluster("b", "storage-b")]
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: namespace rook-ceph retained: part of an upstream (non-OLM) Rook cluster" in result.stdout
+    assert "OK: namespace storage-b retained: part of an upstream (non-OLM) Rook cluster" in result.stdout
+    assert "OK: ceph.rook.io API resources retained for upstream Rook in: rook-ceph storage-b" in result.stdout
+
+
+def test_audit_does_not_take_a_client_side_error_for_none(tmp_path):
+    # `oc --context nope` fails with "context was not found"; that is not "there
+    # are none" and must not produce an OK line.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        errors={"pv": "Error in configuration: * context was not found for specified context: nope"},
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: PVs Terminating for over 10 minutes (younger deletions ignored) query failed" in result.stdout
+    assert "OK: no PVs Terminating" not in result.stdout
+    assert "OK: no ODF PVs found" not in result.stdout
+
+
+def test_audit_flags_shared_group_objects_outside_rook_namespaces(tmp_path):
+    _write_jq_proxy(tmp_path)
+    objects = merge(
+        _rook_objects(),
+        {"drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("openshift-storage.rbd.csi.ceph.com", "lvms")}]},
+    )
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "WARN: csi.ceph.io objects outside upstream Rook namespaces still exist:\n"
+        "Driver/lvms/openshift-storage.rbd.csi.ceph.com" in result.stdout
+    )
+
+
+def test_audit_reports_a_failed_rook_lookup_and_does_not_excuse_the_groups(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_rook_objects(),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+        errors={"cephclusters.ceph.rook.io": "Error from server (InternalError): etcd timeout"},
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: CephClusters query failed: Error from server (InternalError): etcd timeout" in result.stdout
+    assert "retained for upstream Rook" not in result.stdout
+    assert "WARN: ceph.rook.io API resources still exist:" in result.stdout
+
+
+def test_audit_flags_rook_shared_groups_without_upstream_rook(tmp_path):
+    # Without a running Rook cluster nothing excuses these groups or the namespace.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: rook-ceph namespace still exists" in result.stdout
+    assert "WARN: ceph.rook.io API resources still exist:" in result.stdout
+    assert "WARN: objectbucket.io API resources still exist:" in result.stdout
+    assert "retained for upstream Rook" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("scc", "retained"),
+    [
+        (
+            {
+                "metadata": meta("rook-ceph-mixed"),
+                "users": [
+                    "system:serviceaccount:rook-ceph:rook-ceph-system",
+                    "system:serviceaccount:openshift-storage:rook-ceph-system",
+                ],
+            },
+            False,
+        ),
+        ({"metadata": meta("rook-ceph-empty"), "users": []}, False),
+        (
+            {
+                "metadata": meta("rook-ceph-grouped"),
+                "users": ["system:serviceaccount:rook-ceph:rook-ceph-system"],
+                "groups": ["system:serviceaccounts:rook-ceph"],
+            },
+            True,
+        ),
+        (
+            {
+                "metadata": meta("rook-ceph-wide"),
+                "users": ["system:serviceaccount:rook-ceph:rook-ceph-system"],
+                "groups": ["system:authenticated"],
+            },
+            False,
+        ),
+    ],
+    ids=["users-elsewhere", "empty-users", "rook-groups", "foreign-group"],
+)
+def test_audit_retains_only_sccs_used_solely_by_upstream_rook(tmp_path, scc, retained):
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    objects["scc"].append(scc)
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+    name = scc["metadata"]["name"]
+
+    assert "OK: SCC rook-ceph retained" in result.stdout
+    if retained:
+        _assert_clean(result)
+        assert f"OK: SCC {name} retained" in result.stdout
+    else:
+        assert result.returncode == 1
+        assert f"WARN: ODF SCCs still exist:\n{name}" in result.stdout
+        assert f"SCC {name} retained" not in result.stdout
+
+
+def test_audit_classifies_odf_cluster_rbac_by_liveness(tmp_path):
+    _write_jq_proxy(tmp_path)
+    objects = merge(
+        _rook_objects(),
+        {
+            "clusterroles": [
+                _cr("odf-prometheus", OCS_OWNER),
+                # unlabelled name ODF creates
+                _cr("ocs-metrics-reader"),
+                _cr(
+                    "csi-addons-csiaddons-networkfenceclass-viewer-role",
+                    {
+                        "olm.owner": "odf-csi-addons-operator.v4.20.17-rhodf",
+                        "example.test/aggregate-to-view": "true",
+                    },
+                ),
+                _cr("view", aggregation=[{"matchLabels": {"example.test/aggregate-to-view": "true"}}]),
+                # an empty selector must not keep every role alive
+                _cr("odf-operator-metrics-reader", {"olm.owner": "odf-operator.v4.20.17-rhodf"}),
+                _cr("catch-all", aggregation=[{"matchLabels": {}}]),
+                _cr("ocs-client-operator-metrics-reader", {"olm.owner": "ocs-client-operator.v4.20.17-rhodf"}),
+                # not ODF's: never reported
+                _cr("unrelated-role"),
+            ],
+            "clusterrolebindings": [
+                # subject namespace does not exist
+                _crb(
+                    "odf-prometheus",
+                    "odf-prometheus",
+                    [_sa_subject("odf-storage", "prometheus-k8s")],
+                    OCS_OWNER,
+                ),
+                # role gone, even though the subject lives
+                _crb(
+                    "ceph-csi-rbd-ctrlplugin-rb",
+                    "ceph-csi-rbd-ctrlplugin-role",
+                    [_sa_subject("openshift-monitoring", "prometheus-k8s")],
+                    {"operators.coreos.com/cephcsi-operator.openshift-storage": ""},
+                ),
+                # role gone: a Group subject does not save it
+                _crb(
+                    "ocs-metrics-exporter-hostnetwork",
+                    "ocs-metrics-exporter-hostnetwork",
+                    [{"kind": "Group", "name": "system:authenticated"}],
+                    OCS_OWNER,
+                ),
+                # unlabelled ODF name with a Group subject: cannot be proven dead
+                _crb(
+                    "ocs-metrics-exporter",
+                    "unrelated-role",
+                    [{"kind": "Group", "name": "system:authenticated"}],
+                ),
+                # a User subject cannot be proven absent either
+                _crb(
+                    "ocs-client-operator-metrics-reader",
+                    "ocs-client-operator-metrics-reader",
+                    [{"kind": "User", "name": "metrics-scraper"}],
+                    {"olm.owner": "ocs-client-operator.v4.20.17-rhodf"},
+                ),
+            ],
+        },
+    )
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: dead ODF cluster RBAC still exists:" in out
+    assert "ClusterRoleBinding/odf-prometheus: none of its ServiceAccount subjects exists" in out
+    assert (
+        "ClusterRoleBinding/ceph-csi-rbd-ctrlplugin-rb: its ClusterRole ceph-csi-rbd-ctrlplugin-role is missing"
+        in out
+    )
+    assert (
+        "ClusterRoleBinding/ocs-metrics-exporter-hostnetwork: its ClusterRole "
+        "ocs-metrics-exporter-hostnetwork is missing" in out
+    )
+    assert "ClusterRole/odf-prometheus: referenced only by dead ClusterRoleBinding/odf-prometheus" in out
+    assert "ClusterRole/ocs-metrics-reader: no binding references it" in out
+    assert "ClusterRole/odf-operator-metrics-reader: no binding references it" in out
+    assert (
+        "OK: ClusterRoleBinding/rook-ceph-metrics retained: bound to live ServiceAccount "
+        "openshift-monitoring/prometheus-k8s" in out
+    )
+    assert (
+        "OK: ClusterRole/rook-ceph-metrics retained: referenced by live ClusterRoleBinding/rook-ceph-metrics"
+        in out
+    )
+    assert "OK: ClusterRoleBinding/ocs-metrics-exporter retained: has a User/Group subject" in out
+    assert "OK: ClusterRoleBinding/ocs-client-operator-metrics-reader retained: has a User/Group subject" in out
+    assert (
+        "OK: ClusterRole/ocs-client-operator-metrics-reader retained: referenced by live "
+        "ClusterRoleBinding/ocs-client-operator-metrics-reader" in out
+    )
+    assert (
+        "OK: ClusterRole/csi-addons-csiaddons-networkfenceclass-viewer-role retained: "
+        "aggregated into another ClusterRole" in out
+    )
+    assert "ClusterRole/unrelated-role" not in out
+    assert "ClusterRole/view" not in out
+    assert "ClusterRole/catch-all" not in out
+
+
+def test_audit_keeps_a_cluster_role_bound_by_a_live_role_binding(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "clusterroles": [_cr("rook-ceph-monitor", ROOK_OWNER)],
+            "rolebindings": [
+                {
+                    "metadata": meta("rook-ceph-monitor", "rook-ceph"),
+                    "roleRef": {"kind": "ClusterRole", "name": "rook-ceph-monitor"},
+                    # namespace omitted: it defaults to the RoleBinding's own
+                    "subjects": [{"kind": "ServiceAccount", "name": "rook-ceph-mgr"}],
+                }
+            ],
+            "serviceaccounts": [_sa("rook-ceph", "rook-ceph-mgr")],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert (
+        "OK: ClusterRole/rook-ceph-monitor retained: referenced by live RoleBinding rook-ceph/rook-ceph-monitor"
+        in result.stdout
+    )
+
+
+def _stuck_consumer_objects() -> dict:
+    finalizer = ["objectbucket.io/finalizer"]
+    return {
+        "namespaces": [
+            {"metadata": meta("consumer", deletionTimestamp=OLD), "status": {"phase": "Terminating"}},
+            {"metadata": meta("busy"), "status": {"phase": "Active"}},
+        ],
+        "sc": [
+            {
+                "metadata": meta("ocs-storagecluster-ceph-rgw"),
+                "provisioner": "openshift-storage.ceph.rook.io/bucket",
+            }
+        ],
+        "obc": [
+            {
+                "metadata": meta("noobaa-claim", "consumer", deletionTimestamp=OLD, finalizers=finalizer),
+                "spec": {"storageClassName": "openshift-storage.noobaa.io"},
+            },
+            {
+                "metadata": meta("rgw-claim", "consumer", deletionTimestamp=OLD, finalizers=finalizer),
+                "spec": {"storageClassName": "ocs-storagecluster-ceph-rgw"},
+            },
+        ],
+        "objectbucket": [
+            {
+                "metadata": meta("obc-consumer-rgw-claim"),
+                "spec": {"storageClassName": "ocs-storagecluster-ceph-rgw"},
+            }
+        ],
+        "configmaps": [
+            {"kind": "ConfigMap", "metadata": meta("noobaa-claim", "consumer", finalizers=finalizer)},
+            {"kind": "ConfigMap", "metadata": meta("plain", "consumer")},
+            # not Terminating and not openshift-storage: out of scope
+            {"kind": "ConfigMap", "metadata": meta("held", "busy", finalizers=finalizer)},
+        ],
+        "secrets": [
+            {"kind": "Secret", "metadata": meta("rgw-claim", "consumer", finalizers=finalizer)},
+        ],
+    }
+
+
+def test_audit_flags_bucket_finalizer_residue_in_a_stuck_consumer_namespace(tmp_path):
+    # Interrupted uninstall: the claims' StorageClasses and provisioners are gone, so
+    # objectbucket.io/finalizer on the claims' ConfigMaps and Secrets is never
+    # removed and the consumer namespace stays Terminating.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    _write_jq_proxy(bin_dir)
+    log = tmp_path / "argv.log"
+    _write_cluster_oc(bin_dir, objects=_stuck_consumer_objects(), log=log)
+
+    result = _run_audit(bin_dir)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert (
+        "WARN: namespaces Terminating for over 10 minutes (younger deletions ignored) still exist:\nconsumer"
+        in out
+    )
+    assert "WARN: ODF ObjectBucketClaims still exist:" in out
+    assert "consumer/noobaa-claim (class openshift-storage.noobaa.io: missing)" in out
+    assert (
+        "consumer/rgw-claim (class ocs-storagecluster-ceph-rgw: openshift-storage.ceph.rook.io/bucket)"
+        in out
+    )
+    assert "WARN: ODF ObjectBuckets still exist:\nobc-consumer-rgw-claim" in out
+    assert (
+        "WARN: ConfigMaps and Secrets held by objectbucket.io/finalizer without a live claim still exist:"
+        in out
+    )
+    assert "ConfigMap/consumer/noobaa-claim" in out
+    assert "Secret/consumer/rgw-claim" in out
+    assert "consumer/plain" not in out
+    assert "busy/held" not in out
+
+    # Secrets are read only in openshift-storage and Terminating namespaces, and
+    # only as names and finalizers.
+    calls = [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]
+    secret_calls = [c for c in calls if c[:2] == ["get", "secrets"]]
+    assert secret_calls
+    for call in secret_calls:
+        assert "-A" not in call
+        assert call[call.index("-n") + 1] in ("openshift-storage", "consumer")
+        assert any(a.startswith("jsonpath=") for a in call)
+
+
+def test_audit_explains_when_it_may_not_list_secrets(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_stuck_consumer_objects(),
+        errors={
+            "secrets": 'Error from server (Forbidden): secrets is forbidden: User "viewer" cannot list resource "secrets"'
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: could not check secrets in consumer for objectbucket.io/finalizer: listing secrets "
+        "is forbidden for this user" in result.stdout
+    )
+    # what could be checked is still reported
+    assert "ConfigMap/consumer/noobaa-claim" in result.stdout
+
+
+def test_audit_flags_odf_volume_attachments_and_stuck_storage_pods(tmp_path):
+    _write_jq_proxy(tmp_path)
+
+    def attachment(name: str, attacher: str) -> dict:
+        return {
+            "metadata": meta(name),
+            "spec": {"attacher": attacher, "source": {"persistentVolumeName": f"pv-{name}"}},
+            "status": {"attached": True},
+        }
+
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "volumeattachment": [
+                attachment("csi-odf", "openshift-storage.rbd.csi.ceph.com"),
+                attachment("csi-rook", "rook-ceph.rbd.csi.ceph.com"),
+                # the driver pattern is anchored at both ends
+                attachment("csi-prefixed", "x-openshift-storage.rbd.csi.ceph.com"),
+                attachment("csi-suffixed", "openshift-storage.rbd.csi.ceph.com.example"),
+            ],
+            "pods": [
+                {
+                    "metadata": meta("noobaa-db-pg-cluster-1", "openshift-storage", deletionTimestamp=OLD),
+                    "status": {"phase": "Failed"},
+                },
+                {
+                    "metadata": meta("vg-manager-abcde", "openshift-storage", deletionTimestamp=OLD),
+                    "status": {"phase": "Running"},
+                },
+                {"metadata": meta("lvms-operator-12345", "openshift-storage"), "status": {"phase": "Running"}},
+            ],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: ODF VolumeAttachments still exist:\ncsi-odf (pv pv-csi-odf, attached true)\n" in out
+    for name in ("csi-rook", "csi-prefixed", "csi-suffixed"):
+        assert name not in out
+    assert "WARN: ODF pods in openshift-storage still exist:\nnoobaa-db-pg-cluster-1 (Failed)\n" in out
+    assert (
+        "WARN: pods in openshift-storage deleting for over 10 minutes (younger deletions ignored) still exist:"
+        in out
+    )
+    assert "vg-manager-abcde (Running, deleting since" in out
+    assert "lvms-operator-12345" not in out
+
+
+def _kept_namespace_objects() -> dict:
+    return {
+        "subscription": [
+            {"metadata": meta("lvms-operator", "openshift-storage"), "spec": {"name": "lvms-operator"}}
+        ],
+        "poddisruptionbudgets": [
+            {"kind": "PodDisruptionBudget", "metadata": meta("rook-ceph-mon-pdb", "openshift-storage")}
+        ],
+        "roles": [{"kind": "Role", "metadata": meta("ocs-status-reporter", "openshift-storage")}],
+        "rolebindings": [
+            {
+                "kind": "RoleBinding",
+                "metadata": meta("odf-operator-controller-manager-metrics-service", "openshift-storage"),
+                "roleRef": {"kind": "Role", "name": "odf-operator-controller-manager-metrics-service"},
+            }
+        ],
+        "serviceaccounts": [
+            {"kind": "ServiceAccount", "metadata": meta("ocs-status-reporter", "openshift-storage")},
+            {"kind": "ServiceAccount", "metadata": meta("vg-manager", "openshift-storage")},
+        ],
+        "prometheusrules.monitoring.coreos.com": [
+            {"kind": "PrometheusRule", "metadata": meta("ocs-prometheus-rules", "openshift-storage")}
+        ],
+    }
+
+
+MONITORING_GROUP = {
+    "monitoring.coreos.com": [
+        ["servicemonitors.monitoring.coreos.com", True],
+        ["prometheusrules.monitoring.coreos.com", True],
+    ]
+}
+
+
+def test_audit_flags_rbac_pdb_and_monitoring_residue_in_a_kept_namespace(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_kept_namespace_objects(),
+        groups=MONITORING_GROUP,
+        namespaces=("openshift-storage",),
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: ODF residue objects in openshift-storage still exist:" in out
+    for residue in (
+        "PodDisruptionBudget/rook-ceph-mon-pdb",
+        "Role/ocs-status-reporter",
+        "RoleBinding/odf-operator-controller-manager-metrics-service",
+        "ServiceAccount/ocs-status-reporter",
+        "PrometheusRule/ocs-prometheus-rules",
+    ):
+        assert residue in out
+    assert "vg-manager" not in out
+
+
+def test_audit_skips_one_unknown_kind_without_hiding_the_others(tmp_path):
+    # A comma-joined get fails outright when one kind is unknown, and that error
+    # reads as "not found": every other kind's residue would vanish with it.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_kept_namespace_objects(),
+        groups=MONITORING_GROUP,
+        namespaces=("openshift-storage",),
+        unserved=("servicemonitors.monitoring.coreos.com", "cronjobs"),
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: ODF residue objects in openshift-storage still exist:" in result.stdout
+    assert "PodDisruptionBudget/rook-ceph-mon-pdb" in result.stdout
+    assert "PrometheusRule/ocs-prometheus-rules" in result.stdout
+    assert "FAIL:" not in result.stdout
+
+
+def test_audit_fails_when_one_kind_cannot_be_listed(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=_kept_namespace_objects(),
+        namespaces=("openshift-storage",),
+        errors={"secrets": "Error from server (InternalError): an error on the server"},
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "FAIL: ODF residue objects in openshift-storage (secrets) query failed: "
+        "Error from server (InternalError)" in result.stdout
+    )
+    # the kinds that could be read are still reported; "none found" is never claimed
+    assert "PodDisruptionBudget/rook-ceph-mon-pdb" in result.stdout
+    assert "OK: no ODF residue objects in openshift-storage" not in result.stdout
+
+
+def test_audit_claims_no_residue_only_after_reading_every_kind(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={"subscription": _kept_namespace_objects()["subscription"]},
+        namespaces=("openshift-storage",),
+        errors={"secrets": "Error from server (InternalError): an error on the server"},
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: ODF residue objects in openshift-storage (secrets) query failed" in result.stdout
+    assert "ODF residue objects in openshift-storage" not in result.stdout.replace(
+        "FAIL: ODF residue objects in openshift-storage (secrets)", ""
+    )
+
+
+@pytest.mark.parametrize(
+    ("group", "resource"),
+    [
+        ("replication.storage.openshift.io", "volumereplications.replication.storage.openshift.io"),
+        ("ramendr.openshift.io", "recipes.ramendr.openshift.io"),
+    ],
+)
+def test_audit_flags_leftover_odf_dr_crd_groups(tmp_path, group, resource):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, groups={group: [[resource, True]]})
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert f"WARN: {group} API resources still exist:\n{resource}" in result.stdout
+
+
+GROUPSNAPSHOT = "groupsnapshot.storage.openshift.io"
+GROUPSNAPSHOT_KIND = "volumegroupsnapshots.groupsnapshot.storage.openshift.io"
+
+
+def _groupsnapshot_crd(labels=None, annotations=None) -> dict:
+    return {
+        "metadata": meta(GROUPSNAPSHOT_KIND, labels=labels or {}, annotations=annotations or {}),
+        "spec": {"group": GROUPSNAPSHOT},
+    }
+
+
+ODF_SNAPSHOTTER_LABEL = {
+    "operators.coreos.com/odf-external-snapshotter-operator.openshift-storage": ""
+}
+
+
+@pytest.mark.parametrize(
+    ("crd", "instances", "featuregate", "verdict"),
+    [
+        (_groupsnapshot_crd(ODF_SNAPSHOTTER_LABEL), [], {}, None),
+        (
+            _groupsnapshot_crd(ODF_SNAPSHOTTER_LABEL),
+            [{"metadata": meta("snap", "app")}],
+            {},
+            "1 instances exist",
+        ),
+        (
+            _groupsnapshot_crd(
+                ODF_SNAPSHOTTER_LABEL,
+                {"include.release.openshift.io/self-managed-high-availability": "true"},
+            ),
+            [],
+            {},
+            "its CRDs are not all ODF-labelled, or carry release-payload annotations",
+        ),
+        (
+            _groupsnapshot_crd(),
+            [],
+            {},
+            "its CRDs are not all ODF-labelled, or carry release-payload annotations",
+        ),
+        (
+            _groupsnapshot_crd(ODF_SNAPSHOTTER_LABEL),
+            [],
+            {"status": {"featureGates": [{"enabled": [{"name": "VolumeGroupSnapshot"}]}]}},
+            "the VolumeGroupSnapshot feature gate is enabled",
+        ),
+    ],
+    ids=["odf-unused", "in-use", "release-payload", "unlabelled", "feature-gate"],
+)
+def test_audit_reports_groupsnapshot_crds_as_residue_only_when_provably_odf_and_unused(
+    tmp_path, crd, instances, featuregate, verdict
+):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={"crd": [crd], GROUPSNAPSHOT_KIND: instances},
+        groups={GROUPSNAPSHOT: [[GROUPSNAPSHOT_KIND, True]]},
+        featuregate=featuregate,
+    )
+
+    result = _run_audit(tmp_path)
+
+    if verdict is None:
+        assert result.returncode == 1
+        assert f"WARN: {GROUPSNAPSHOT} API resources are ODF residue" in result.stdout
+    else:
+        _assert_clean(result)
+        assert f"OK: {GROUPSNAPSHOT} API resources retained: {verdict}" in result.stdout
+
+
+def test_audit_reads_json_despite_stderr_noise_on_success(tmp_path):
+    # A throttling line on stderr used to be merged into the JSON and reported as
+    # "jq filter failed"; residue must still be found.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={"csidriver": [{"metadata": meta("openshift-storage.rbd.csi.ceph.com")}]},
+        noise=True,
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: ODF CSIDrivers still exist:\nopenshift-storage.rbd.csi.ceph.com" in result.stdout
+    assert "FAIL:" not in result.stdout
+
+
+def test_audit_keeps_finalizers_of_a_live_rook_claim_in_a_terminating_namespace(tmp_path):
+    # The running Rook bucket provisioner puts objectbucket.io/finalizer on its own
+    # claims' ConfigMaps and Secrets; a namespace being deleted is not a reason to
+    # call them ODF residue.
+    _write_jq_proxy(tmp_path)
+    objects = _rook_objects()
+    objects["namespaces"] = [
+        {"metadata": meta("app", deletionTimestamp=recent()), "status": {"phase": "Terminating"}}
+    ]
+    _write_cluster_oc(tmp_path, objects=objects, groups=ROOK_GROUPS, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim" in result.stdout
+
+
+def test_audit_does_not_call_an_unserved_shared_group_retained(tmp_path):
+    _write_jq_proxy(tmp_path)
+    groups = dict(ROOK_GROUPS)
+    del groups["csi.ceph.io"]
+    _write_cluster_oc(tmp_path, objects=_rook_objects(), groups=groups, namespaces=("rook-ceph",))
+
+    result = _run_audit(tmp_path)
+
+    _assert_clean(result)
+    assert "OK: no csi.ceph.io API resources found" in result.stdout
+    assert "csi.ceph.io API resources retained" not in result.stdout
+
+
+def test_audit_flags_only_storage_classes_with_odf_provisioners(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "sc": [
+                {"metadata": meta("ocs-storagecluster-ceph-rbd"), "provisioner": "openshift-storage.rbd.csi.ceph.com"},
+                {"metadata": meta("openshift-storage.noobaa.io"), "provisioner": "openshift-storage.noobaa.io/obc"},
+                {"metadata": meta("rook-ceph-block"), "provisioner": "rook-ceph.rbd.csi.ceph.com"},
+            ]
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert (
+        "WARN: ODF StorageClasses still exist:\nocs-storagecluster-ceph-rbd\nopenshift-storage.noobaa.io\n"
+        in result.stdout
+    )
+    assert "rook-ceph-block" not in result.stdout
+
+
+def test_audit_flags_stale_odf_console_plugin_names(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, console_plugins=("monitoring-plugin", "odf-console"))
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: stale ODF names still in console.operator spec.plugins:\nodf-console\n" in result.stdout
+    assert "monitoring-plugin" not in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("extra", "named"),
+    [
+        (
+            {"drivers.csi.ceph.io": [{"kind": "Driver", "metadata": meta("rook-ceph.rbd.csi.ceph.com", "rook-ceph")}]},
+            "csi.ceph.io Driver rook-ceph/rook-ceph.rbd.csi.ceph.com (non-ODF Ceph CSI without a Rook operator",
+        ),
+        (
+            {"csidrivers": [{"metadata": meta("rook-ceph.rbd.csi.ceph.com")}]},
+            "CSIDriver rook-ceph.rbd.csi.ceph.com (non-ODF Ceph CSI driver without a Rook operator",
+        ),
+        (
+            {"pv": [{"metadata": meta("pvc-2"), "spec": {"csi": {"driver": "rook-ceph.cephfs.csi.ceph.com"}}}]},
+            "PV pvc-2 (volume of non-ODF Ceph CSI driver rook-ceph.cephfs.csi.ceph.com",
+        ),
+    ],
+    ids=["csi-driver-object", "csidriver", "pv"],
+)
+def test_audit_reports_a_ceph_csi_that_outlived_its_operator_as_unknown(tmp_path, extra, named):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, objects=extra, groups=ROOK_GROUPS)
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: Rook objects whose owner cannot be classified still exist:" in result.stdout
+    assert named in result.stdout
+    assert "retained for upstream Rook" not in result.stdout
+
+
+AGG_LABELS = {"olm.owner": "odf-operator.v4.20.17-rhodf", "example.test/aggregate-to": "view"}
+
+
+@pytest.mark.parametrize(
+    ("selector", "verdict"),
+    [
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "In", "values": ["view", "edit"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "Exists"}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        # matchLabels and matchExpressions must both hold
+        ({"matchLabels": {"olm.owner": "odf-operator.v4.20.17-rhodf"},
+          "matchExpressions": [{"key": "example.test/aggregate-to", "operator": "NotIn", "values": ["edit"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated into another ClusterRole"),
+        # the role's own value is excluded, so it is not selected
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "NotIn", "values": ["view"]}]},
+         "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "DoesNotExist"}]},
+         "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "Gt", "values": ["1"]}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
+        ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "In"}]},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
+        # an empty selector selects nothing
+        ({}, "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+    ],
+    ids=["in", "exists", "labels-and-notin", "notin-excluded", "doesnotexist", "unknown-operator",
+         "in-without-values", "empty"],
+)
+def test_audit_evaluates_full_aggregation_selectors(tmp_path, selector, verdict):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "clusterroles": [
+                _cr("odf-operator-metrics-reader", AGG_LABELS),
+                _cr("aggregate", aggregation=[selector]),
+            ]
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert verdict in result.stdout
+    if verdict.startswith("OK:"):
+        assert "WARN: dead ODF cluster RBAC" not in result.stdout
+    else:
+        assert "WARN: dead ODF cluster RBAC still exists:" in result.stdout
+
+
+def _classless_bucket_objects() -> dict:
+    finalizer = ["objectbucket.io/finalizer"]
+    return {
+        "namespaces": [{"metadata": meta("consumer", deletionTimestamp=OLD), "status": {"phase": "Terminating"}}],
+        "obc": [{"metadata": meta("lost", "consumer", finalizers=finalizer), "spec": {"storageClassName": "gone"}}],
+        "objectbucket": [{"metadata": meta("obc-consumer-lost"), "spec": {"storageClassName": "gone"}}],
+        "configmaps": [{"kind": "ConfigMap", "metadata": meta("lost", "consumer", finalizers=finalizer)}],
+        "secrets": [{"kind": "Secret", "metadata": meta("lost", "consumer", finalizers=finalizer)}],
+    }
+
+
+def test_audit_asks_for_review_of_classless_buckets_next_to_upstream_rook(tmp_path):
+    # A Rook-served claim can outlive its StorageClass as well as an ODF one can.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=merge(_rook_objects(), _classless_bucket_objects()),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert (
+        "WARN: bucket claims and buckets of unknown owner (StorageClass gone while upstream Rook runs; "
+        "review by hand) still exist:" in out
+    )
+    assert "ObjectBucketClaim consumer/lost (class gone: missing)" in out
+    assert "ObjectBucket obc-consumer-lost (class gone: missing)" in out
+    assert "OK: no ODF ObjectBucketClaims found" in out
+    assert "OK: no ODF ObjectBuckets found" in out
+    assert "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim" in out
+
+
+def test_audit_calls_classless_buckets_odf_residue_without_upstream_rook(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, objects=_classless_bucket_objects())
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: ODF ObjectBucketClaims still exist:\nconsumer/lost (class gone: missing)" in out
+    assert "WARN: ODF ObjectBuckets still exist:\nobc-consumer-lost (class gone: missing)" in out
+    assert "ConfigMap/consumer/lost" in out
+    assert "Secret/consumer/lost" in out
+    assert "OK: no bucket claims or buckets of unknown owner" in out
