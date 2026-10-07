@@ -1654,3 +1654,54 @@ def test_audit_evaluates_full_aggregation_selectors(tmp_path, selector, verdict)
         assert "WARN: dead ODF cluster RBAC" not in result.stdout
     else:
         assert "WARN: dead ODF cluster RBAC still exists:" in result.stdout
+
+
+def _classless_bucket_objects() -> dict:
+    finalizer = ["objectbucket.io/finalizer"]
+    return {
+        "namespaces": [{"metadata": meta("consumer", deletionTimestamp=OLD), "status": {"phase": "Terminating"}}],
+        "obc": [{"metadata": meta("lost", "consumer", finalizers=finalizer), "spec": {"storageClassName": "gone"}}],
+        "objectbucket": [{"metadata": meta("obc-consumer-lost"), "spec": {"storageClassName": "gone"}}],
+        "configmaps": [{"kind": "ConfigMap", "metadata": meta("lost", "consumer", finalizers=finalizer)}],
+        "secrets": [{"kind": "Secret", "metadata": meta("lost", "consumer", finalizers=finalizer)}],
+    }
+
+
+def test_audit_asks_for_review_of_classless_buckets_next_to_upstream_rook(tmp_path):
+    # A Rook-served claim can outlive its StorageClass as well as an ODF one can.
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=merge(_rook_objects(), _classless_bucket_objects()),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert (
+        "WARN: bucket claims and buckets of unknown owner (StorageClass gone while upstream Rook runs; "
+        "review by hand) still exist:" in out
+    )
+    assert "ObjectBucketClaim consumer/lost (class gone: missing)" in out
+    assert "ObjectBucket obc-consumer-lost (class gone: missing)" in out
+    assert "OK: no ODF ObjectBucketClaims found" in out
+    assert "OK: no ODF ObjectBuckets found" in out
+    assert "OK: no ConfigMaps or Secrets held by objectbucket.io/finalizer without a live claim" in out
+
+
+def test_audit_calls_classless_buckets_odf_residue_without_upstream_rook(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, objects=_classless_bucket_objects())
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: ODF ObjectBucketClaims still exist:\nconsumer/lost (class gone: missing)" in out
+    assert "WARN: ODF ObjectBuckets still exist:\nobc-consumer-lost (class gone: missing)" in out
+    assert "ConfigMap/consumer/lost" in out
+    assert "Secret/consumer/lost" in out
+    assert "OK: no bucket claims or buckets of unknown owner" in out

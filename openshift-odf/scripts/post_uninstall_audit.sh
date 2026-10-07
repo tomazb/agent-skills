@@ -571,12 +571,19 @@ check_groupsnapshot_group() {
   fi
 }
 
-# jq: true when the object (its storage class name in .sc) is an ODF bucket or has
-# lost its class. $classes maps StorageClass name to provisioner.
-ODF_BUCKET_JQ="def odf_bucket(\$classes): (\$classes[.sc // \"\"] // null) as \$p | \$p == null or (\$p | test(\"$ODF_BUCKET_PROVISIONER_RE\"));"
+# jq: whose the object (its storage class name in .sc) is: "odf" when its class
+# names an ODF provisioner, "other" for any other provisioner. A class that is gone
+# is "odf" only when no upstream Rook runs ($rook empty); next to upstream Rook a
+# Rook claim may have outlived its class too, so it is "unknown". $classes maps
+# StorageClass name to provisioner.
+ODF_BUCKET_JQ="def bucket_owner(\$classes; \$rook): (\$classes[.sc // \"\"] // null) as \$p
+  | if \$p == null then (if (\$rook | length) > 0 then \"unknown\" else \"odf\" end)
+    elif (\$p | test(\"$ODF_BUCKET_PROVISIONER_RE\")) then \"odf\" else \"other\" end;
+def describe(\$classes): \"(class \(.sc // \"none\"): \(\$classes[.sc // \"\"] // \"missing\"))\";"
 
-# Bucket claims and buckets are ODF's only when their class uses an ODF provisioner
-# or is gone; a running upstream Rook serves its own through the same CRDs.
+# Bucket claims and buckets are ODF's only when their class uses an ODF provisioner,
+# or is gone while no upstream Rook runs; a running upstream Rook serves its own
+# through the same CRDs. One that lost its class next to upstream Rook needs review.
 BUCKET_CLASSES=""
 BUCKET_CLAIMS=""
 check_object_buckets() {
@@ -598,19 +605,29 @@ check_object_buckets() {
   check_docs_list \
     "ODF ObjectBucketClaims" \
     "no ODF ObjectBucketClaims found" \
-    "$ODF_BUCKET_JQ (.[0][0] // {}) as \$classes | .[1][] | select(odf_bucket(\$classes)) | \"\(.ns)/\(.name) (class \(.sc // \"none\"): \(\$classes[.sc // \"\"] // \"missing\"))\"" \
+    "$ODF_BUCKET_JQ $ROOK_NAMESPACES_JSON as \$rook | (.[0][0] // {}) as \$classes | .[1][] | select(bucket_owner(\$classes; \$rook) == \"odf\") | \"\(.ns)/\(.name) \" + describe(\$classes)" \
     "$BUCKET_CLASSES" "$BUCKET_CLAIMS"
 
   echo
   check_docs_list \
     "ODF ObjectBuckets" \
     "no ODF ObjectBuckets found" \
-    "$ODF_BUCKET_JQ (.[0][0] // {}) as \$classes | .[1][] | select(odf_bucket(\$classes)) | \"\(.name) (class \(.sc // \"none\"): \(\$classes[.sc // \"\"] // \"missing\"))\"" \
+    "$ODF_BUCKET_JQ $ROOK_NAMESPACES_JSON as \$rook | (.[0][0] // {}) as \$classes | .[1][] | select(bucket_owner(\$classes; \$rook) == \"odf\") | \"\(.name) \" + describe(\$classes)" \
     "$BUCKET_CLASSES" "$buckets"
+
+  echo
+  check_docs_list \
+    "bucket claims and buckets of unknown owner (StorageClass gone while upstream Rook runs; review by hand)" \
+    "no bucket claims or buckets of unknown owner" \
+    "$ODF_BUCKET_JQ $ROOK_NAMESPACES_JSON as \$rook | (.[0][0] // {}) as \$classes
+      | (.[1][] | select(bucket_owner(\$classes; \$rook) == \"unknown\") | \"ObjectBucketClaim \(.ns)/\(.name) \" + describe(\$classes)),
+        (.[2][] | select(bucket_owner(\$classes; \$rook) == \"unknown\") | \"ObjectBucket \(.name) \" + describe(\$classes))" \
+    "$BUCKET_CLASSES" "$BUCKET_CLAIMS" "$buckets"
 }
 
 # A claim's ConfigMap and Secret carry objectbucket.io/finalizer too; once the
-# provisioner is gone they hold their namespace in Terminating. Only openshift-storage
+# provisioner is gone they hold their namespace in Terminating. Every claim that is
+# not provably ODF's (another provisioner's, or of unknown owner) counts as live. Only openshift-storage
 # and Terminating namespaces are read, and only names and finalizers: jsonpath keeps
 # Secret data out of this script (oc itself still receives the full objects).
 TERMINATING_NAMESPACES=""
@@ -629,7 +646,7 @@ check_bucket_finalizers() {
     return 0
   fi
   run_split jq_slurp \
-    "$ODF_BUCKET_JQ (.[0][0] // {}) as \$classes | .[1][] | select(odf_bucket(\$classes) | not) | \"\(.ns)/\(.name)\"" \
+    "$ODF_BUCKET_JQ $ROOK_NAMESPACES_JSON as \$rook | (.[0][0] // {}) as \$classes | .[1][] | select(bucket_owner(\$classes; \$rook) != \"odf\") | \"\(.ns)/\(.name)\"" \
     "$BUCKET_CLASSES" "$BUCKET_CLAIMS"
   if [ "$RUN_RC" -ne 0 ]; then
     fail "live bucket claims jq filter failed: $RUN_ERR"

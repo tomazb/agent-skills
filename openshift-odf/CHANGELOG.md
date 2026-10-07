@@ -47,7 +47,9 @@ there and verified read-only before anything was changed.
 - **Bucket claims and buckets are ODF's only when their StorageClass is gone or uses
   an ODF provisioner**, in the audit and in the runbook, so claims of a running Rook
   or another bucket provisioner are neither flagged nor deleted. With upstream Rook
-  present, the runbook lists a claim whose class is gone instead of deleting it.
+  present, a claim or bucket whose class is gone may be Rook's: the audit reports it
+  as of unknown owner for review (and does not call its ConfigMap/Secret orphaned),
+  and the runbook lists it instead of deleting it.
 - **New audit checks**: VolumeAttachments of the ODF drivers; ODF pods in
   `openshift-storage`; pods, PVCs, PVs, and namespaces deleting for more than 10
   minutes (younger deletions are in progress and ignored); ConfigMaps and Secrets
@@ -96,7 +98,9 @@ there and verified read-only before anything was changed.
   earlier login or context is never reused, and refuse when it fails or is not
   defined. The sweep leaves a group's CRDs in place while any instance of the group
   remains, pointing at the Orphans section; its deletes use `--wait=false`, so a
-  finalizer with no controller left cannot block it before that check. With upstream Rook present the sweep leaves `ceph.rook.io`,
+  finalizer with no controller left cannot block it before that check. CRDs are
+  chosen by exact `spec.group`, so `noobaa.io` never takes the
+  `postgresql.cnpg.noobaa.io` CRDs. With upstream Rook present the sweep leaves `ceph.rook.io`,
   `csi.ceph.io`, and `objectbucket.io` alone, `odf_list_shared_instances` lists ODF's
   instances in those groups outside the Rook namespaces for the reader to delete by
   name, and the `rook-ceph`/`rook-ceph-csi` SCCs stay (they are not ODF's then).

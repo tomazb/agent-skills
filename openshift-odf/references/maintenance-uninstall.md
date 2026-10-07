@@ -579,7 +579,9 @@ for group in ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.
              csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io \
              ceph.rook.io csi.ceph.io objectbucket.io \
              local.storage.openshift.io groupsnapshot.storage.openshift.io; do
-  echo "=== $group ==="; oc get crd 2>/dev/null | grep "$group" || echo "clean"
+  # Exact group match: a substring match would show noobaa.io's CNPG CRDs under noobaa.io.
+  echo "=== $group ==="
+  oc get crd -o json | jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name'
 done
 ```
 
@@ -652,8 +654,13 @@ odf_crd_sweep() {
     fi
 
     # 4. Only now the CRDs themselves.
-    crds=$(oc get crd -o name | grep "\.$group$" || true)
-    [ -n "$crds" ] && oc delete $crds --wait=false
+    #    Exact spec.group, never a name suffix: "noobaa.io" must not pick up the
+    #    postgresql.cnpg.noobaa.io CRDs, whose instances step 3 never checked.
+    if ! crds=$(oc get crd -o json | jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name'); then
+      echo "CRD lookup failed for $group - leaving its CRDs in place" >&2
+      continue
+    fi
+    [ -n "$crds" ] && oc delete crd $crds --wait=false
   done
 }
 odf_crd_sweep
@@ -678,7 +685,9 @@ oc get validatingwebhookconfiguration,mutatingwebhookconfiguration -o json | jq 
 Once they are judged ODF residue (no instances, so nothing is left to finalize), delete the group's CRDs:
 
 ```bash
-oc get crd -o name | grep '\.groupsnapshot\.storage\.openshift\.io$' | xargs -r oc delete
+oc get crd -o json \
+  | jq -r '.items[] | select(.spec.group == "groupsnapshot.storage.openshift.io") | "crd/" + .metadata.name' \
+  | xargs -r oc delete --wait=false
 ```
 
 The same four questions — zero instances, no workload or configuration names the group, no webhook targets it, and its owning operator is gone — decide any other CRD that still carries an `operators.coreos.com/<odf-package>.openshift-storage` label. ClusterRoles that grant a group (the `clusterrole` query above) count as "configuration names the group" only when a live binding uses them; see **Cluster RBAC left by ODF**.
@@ -721,7 +730,7 @@ for group in ocs.openshift.io odf.openshift.io ceph.rook.io noobaa.io \
              postgresql.cnpg.noobaa.io csi.ceph.io \
              csiaddons.openshift.io objectbucket.io \
              replication.storage.openshift.io ramendr.openshift.io; do
-  oc get crd 2>/dev/null | grep "$group" || true
+  oc get crd -o json | jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name'
 done
 
 # Deleting PVCs/PVs (deletionTimestamp set, whatever the phase)

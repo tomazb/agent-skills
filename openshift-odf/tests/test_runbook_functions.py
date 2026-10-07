@@ -33,6 +33,9 @@ FUNCTIONS = dict(
 
 GROUPS = {
     "ocs.openshift.io": [["storageclusters.ocs.openshift.io", True]],
+    # a group whose name is a suffix of another group's name
+    "noobaa.io": [["noobaas.noobaa.io", True]],
+    "postgresql.cnpg.noobaa.io": [["clusters.postgresql.cnpg.noobaa.io", True]],
     "ceph.rook.io": [["cephclusters.ceph.rook.io", True]],
     "csi.ceph.io": [["drivers.csi.ceph.io", True]],
     "objectbucket.io": [
@@ -42,7 +45,11 @@ GROUPS = {
     "local.storage.openshift.io": [["localvolumes.local.storage.openshift.io", True]],
     "groupsnapshot.storage.openshift.io": [["volumegroupsnapshots.groupsnapshot.storage.openshift.io", True]],
 }
-CRDS = [{"metadata": meta(kind)} for kinds in GROUPS.values() for kind, _ in kinds]
+CRDS = [
+    {"metadata": meta(kind), "spec": {"group": group}}
+    for group, kinds in GROUPS.items()
+    for kind, _ in kinds
+]
 UPSTREAM = {"deployments": [rook_operator()], "cephclusters.ceph.rook.io": [ceph_cluster("rook-ceph", "rook-ceph")]}
 UNKNOWN_ERRORS = {"deployments": "Error from server (Forbidden): cannot list deployments"}
 SHARED = ("ceph.rook.io", "csi.ceph.io", "objectbucket.io")
@@ -126,7 +133,7 @@ def test_sweep_never_touches_the_shared_groups_next_to_upstream_rook(tmp_path):
 
     assert "rc=0" in result.stdout, result.stderr
     assert "delete storageclusters.ocs.openshift.io --all -A --ignore-not-found --wait=false" in deletes
-    assert "delete crd/storageclusters.ocs.openshift.io --wait=false" in deletes
+    assert "delete crd storageclusters.ocs.openshift.io --wait=false" in deletes
     for group in SHARED:
         assert not [d for d in deletes if group in d], deletes
 
@@ -136,8 +143,8 @@ def test_sweep_without_upstream_rook_deletes_odf_groups_only(tmp_path):
 
     assert "rc=0" in result.stdout, result.stderr
     assert "delete cephclusters.ceph.rook.io --all -A --ignore-not-found --wait=false" in deletes
-    assert "delete crd/cephclusters.ceph.rook.io --wait=false" in deletes
-    assert "delete crd/objectbucketclaims.objectbucket.io crd/objectbuckets.objectbucket.io --wait=false" in deletes
+    assert "delete crd cephclusters.ceph.rook.io --wait=false" in deletes
+    assert "delete crd objectbucketclaims.objectbucket.io objectbuckets.objectbucket.io --wait=false" in deletes
     assert not [d for d in deletes if "local.storage" in d or "groupsnapshot" in d], deletes
 
 
@@ -158,7 +165,7 @@ def test_sweep_deletes_only_odf_bucket_claims_and_keeps_the_crds_for_others(tmp_
     assert "-n app delete objectbucketclaims.objectbucket.io odf-claim --wait=false" in deletes
     assert "delete objectbuckets.objectbucket.io obc-app-odf-claim --wait=false" in deletes
     assert not [d for d in deletes if "other-claim" in d]
-    assert not [d for d in deletes if d.startswith("delete crd/objectbucket")], deletes
+    assert not [d for d in deletes if d.startswith("delete crd objectbucket")], deletes
     assert "keeping objectbucketclaims.objectbucket.io app/other-claim" in result.stderr
 
 
@@ -314,12 +321,12 @@ def test_bucket_cleanup_called_alone_refuses_when_classification_fails(tmp_path)
                 ]
             },
             "objectbucket.io",
-            "crd/objectbucketclaims.objectbucket.io",
+            "crd objectbucketclaims.objectbucket.io",
         ),
         (
             {"storageclusters.ocs.openshift.io": [{"metadata": meta("ocs-storagecluster", "openshift-storage", finalizers=["x"])}]},
             "ocs.openshift.io",
-            "crd/storageclusters.ocs.openshift.io",
+            "crd storageclusters.ocs.openshift.io",
         ),
     ],
     ids=["bucket-claim", "storagecluster"],
@@ -355,4 +362,20 @@ def test_sweep_never_waits_on_finalizers_and_still_refuses_held_instances(tmp_pa
     assert "instances of ocs.openshift.io remain:" in result.stderr
     assert "instances of ceph.rook.io remain:" in result.stderr
     assert "Orphans After An Interrupted Uninstall" in result.stderr
-    assert not [d for d in deletes if d.startswith("delete crd/storageclusters") or d.startswith("delete crd/cephclusters")]
+    assert not [d for d in deletes if d.startswith("delete crd storageclusters") or d.startswith("delete crd cephclusters")]
+
+
+def test_sweep_selects_crds_by_exact_group_not_by_name_suffix(tmp_path):
+    # "noobaa.io" is a suffix of "postgresql.cnpg.noobaa.io". The noobaa.io pass
+    # must not take the CNPG CRDs, whose instance is still there.
+    objects = {
+        "clusters.postgresql.cnpg.noobaa.io": [
+            {"metadata": meta("noobaa-db-pg-cluster", "openshift-storage", finalizers=["cnpg.io/cluster"])}
+        ]
+    }
+
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=objects)
+
+    assert "delete crd noobaas.noobaa.io --wait=false" in deletes
+    assert not [d for d in deletes if d.startswith("delete crd") and "postgresql.cnpg.noobaa.io" in d], deletes
+    assert "instances of postgresql.cnpg.noobaa.io remain:" in result.stderr
