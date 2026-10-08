@@ -565,3 +565,14 @@ def test_missing_validated_sno_evidence_fails(validator, package_factory, refere
     )
     issues = validator.validate_root(root)
     assert any("validated-odf-sno.md" in issue and "HEALTH_OK" in issue for issue in issues)
+
+
+def test_missing_clean_cluster_uninstall_guidance_fails(validator, package_factory):
+    root = package_factory()
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("PRIOR_DEFAULT_STORAGE_CLASS", "prior default"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("clean-cluster uninstall residue" in issue for issue in issues)

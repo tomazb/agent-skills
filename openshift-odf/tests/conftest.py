@@ -121,6 +121,8 @@ Teardown queries must fail closed: if `oc get` cannot list a dependent kind, sto
 ## ODF 4.20.17 Fresh-Install Observations
 
 ODF 4.20.17 gotchas: `enableCephTools` is rejected as an `unknown field`, `ocs-operator` `runs 0 replicas until` a StorageCluster exists, and ceph-volume may log `dmcrypt` without real encryption.
+
+Clean uninstall also deletes `clientprofiles.csi.ceph.io` while the operator can still clear `csi.ceph.com/cleanup`, records `PRIOR_DEFAULT_STORAGE_CLASS`, and removes `rook-ceph-metrics` bound only to `openshift-monitoring/prometheus-k8s`, plus `odf-blackbox-scc` and the `noobaa-operator-service-auth-reader` and `cnpg-controller-manager-service-auth-reader` RoleBindings. Keep Role `extension-apiserver-authentication-reader`.
 """
 
 SKILL_TEMPLATE = """\
@@ -149,7 +151,7 @@ Use `references/console-plugin.md` for ODF console plugin enablement.
 
 ## Core Safety Rules
 
-Safety guidance.
+Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead.
 
 ## Required Source Checks
 

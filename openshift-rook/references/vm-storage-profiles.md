@@ -181,6 +181,8 @@ Expect the plain PVC on the general default (`Filesystem`) and the DataVolume PV
 
 To also confirm provisioning completes, wait for binding. This requires the StorageClass to use `volumeBindingMode: Immediate` (the Rook Ceph default). If the default class uses `WaitForFirstConsumer` (the LVMS default), the plain PVC stays Pending until a Pod is scheduled, and the DataVolume stays in `WaitForFirstConsumer` phase until the VM runs. In that case either set `running: true` on the test VM or force immediate binding on the DataVolume with the annotation `cdi.kubevirt.io/storage.bind.immediate.requested: "true"`:
 
+If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
+
 ```bash
 oc wait -n storage-default-test pvc/default-sc-test-pvc \
   --for=jsonpath='{.status.phase}'=Bound --timeout=120s

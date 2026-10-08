@@ -134,6 +134,17 @@ def test_missing_orphaned_cleanup_guidance_fails(validator, package_factory, ref
     assert any("orphaned cluster-scoped" in issue for issue in issues)
 
 
+def test_missing_clean_cluster_uninstall_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(
+        uninstall.read_text(encoding="utf-8").replace("PRIOR_DEFAULT_STORAGE_CLASS", "prior default"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("clean-cluster uninstall residue" in issue for issue in issues)
+
+
 def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.21.0
+
+- The post-uninstall audit no longer treats `openshift-monitoring/prometheus-k8s` as proof that `rook-ceph-metrics` or `ocs-metrics-reader` are still in use. Those roles are residue once no Ceph operator remains; `rook-ceph-metrics` stays while upstream Rook is running.
+- The audit warns on `odf-blackbox-scc` and on the dead `kube-system` RoleBindings `noobaa-operator-service-auth-reader` and `cnpg-controller-manager-service-auth-reader`. The platform Role `extension-apiserver-authentication-reader` stays.
+- `PRIOR_DEFAULT_STORAGE_CLASS` records the pre-install default, including when there was none, so a cluster that started without a default StorageClass is not a failed audit.
+- Uninstall now deletes `clientprofiles.csi.ceph.io` while the ceph-csi operator can still clear `csi.ceph.com/cleanup`, and documents the finalizer patch for the case where that operator is already gone.
+- `oc wait --for=jsonpath` that fails with `unrecognized condition` is polled by field instead of treated as a failed object.
+
 ## 1.20.0
 
 Leftovers of an interrupted ODF uninstall, and an audit and runbook that no longer

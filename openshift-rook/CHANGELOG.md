@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.7.0
+
+- The post-uninstall audit warns when `rook-ceph` ClusterRoles remain after both `rook-ceph` and `openshift-storage` are gone. `rook-ceph-metrics` bound only to `openshift-monitoring/prometheus-k8s` is residue in that case and stays while either namespace still runs Ceph.
+- `PRIOR_DEFAULT_STORAGE_CLASS` records the pre-install default, including when there was none, so a cluster that started without a default StorageClass is not reported as unfinished.
+- Uninstall states that finalizer `csi.ceph.com/cleanup` on `clientprofiles.csi.ceph.io` does not clear itself after the CSI operator Deployment is gone, and that those objects have to be deleted while the operator is still running.
+- `oc wait --for=jsonpath` that fails with `unrecognized condition` is polled by field instead of treated as a failed object.
+
 ## 1.6.0
 
 - Added **VM storage defaults and CDI StorageProfiles** guidance in `references/vm-storage-profiles.md`: the two-default model (`storageclass.kubernetes.io/is-default-class` for general PVCs vs `storageclass.kubevirt.io/is-default-virt-class` for CDI/KubeVirt VirtualMachine disks), StorageProfile `claimPropertySets` priority and block-mode RBD tuning, resolving the `CDIStorageProfilesIncomplete` alert for unrecognized provisioners (for example `rook-ceph.nfs.csi.ceph.com`), and the operator-reconcile gotcha when moving a default between Rook and another operator (LVMS re-pins `is-default-class` from `LVMCluster`/`LVMVolumeGroup` `default`).

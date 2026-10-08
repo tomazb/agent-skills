@@ -490,6 +490,23 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     )
     require(
         "references/maintenance-uninstall.md",
+        "clean-cluster uninstall residue",
+        [
+            "csi.ceph.com/cleanup",
+            "PRIOR_DEFAULT_STORAGE_CLASS",
+            "openshift-monitoring/prometheus-k8s",
+            "clientprofiles.csi.ceph.io",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "old oc wait jsonpath fallback",
+        [
+            "unrecognized condition",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
         "orphaned cluster-scoped and stuck-finalizer cleanup",
         [
             "clientprofiles.csi.ceph.io",

@@ -529,6 +529,28 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     )
     require(
         "references/maintenance-uninstall.md",
+        "clean-cluster uninstall residue",
+        [
+            "clientprofiles.csi.ceph.io",
+            "csi.ceph.com/cleanup",
+            "PRIOR_DEFAULT_STORAGE_CLASS",
+            "openshift-monitoring/prometheus-k8s",
+            "odf-blackbox-scc",
+            "extension-apiserver-authentication-reader",
+            "noobaa-operator-service-auth-reader",
+            "cnpg-controller-manager-service-auth-reader",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "old oc wait jsonpath fallback",
+        [
+            "unrecognized condition",
+            "PRIOR_DEFAULT_STORAGE_CLASS",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
         "BlueStore disk reuse guidance",
         [
             "BlueStore",

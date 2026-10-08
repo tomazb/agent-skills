@@ -49,7 +49,7 @@ oc -n openshift-storage patch installplan <installplan-name> \
   --type=merge -p '{"spec":{"approved":true}}'
 ```
 
-Wait for the new CSV to reach `Succeeded` and for the operators to roll out:
+Wait for the new CSV to reach `Succeeded` and for the operators to roll out. If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, poll `.status.phase` instead:
 
 ```bash
 oc -n openshift-storage wait csv -l operators.coreos.com/odf-operator.openshift-storage \
