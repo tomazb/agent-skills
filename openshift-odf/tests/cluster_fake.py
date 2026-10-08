@@ -61,13 +61,21 @@ def write_oc(bin_dir: Path, body: str) -> None:
     )
 
 
-def run_script(name: str, bin_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def run_script(
+    name: str,
+    bin_dir: Path,
+    *args: str,
+    extra_env: dict | None = None,
+) -> subprocess.CompletedProcess[str]:
+    env = {"PATH": str(bin_dir)}
+    if extra_env:
+        env.update(extra_env)
     return subprocess.run(
         ["/bin/bash", str(SCRIPTS / name), *args],
         check=False,
         capture_output=True,
         text=True,
-        env={"PATH": str(bin_dir)},
+        env=env,
     )
 
 
@@ -193,8 +201,9 @@ def write_cluster_oc(
     log: Path | None = None,
     console_plugins: tuple = (),
     blocking_deletes: bool = False,
+    storage_classes: list | None = None,
 ) -> None:
-    world_objects = {"sc": [DEFAULT_SC]}
+    world_objects = {"sc": [DEFAULT_SC] if storage_classes is None else list(storage_classes)}
     for res, items in (objects or {}).items():
         world_objects[res] = world_objects.get(res, []) + items
     world = {

@@ -210,6 +210,8 @@ Apply and wait for the CSV to reach `Succeeded`:
 oc apply -f /tmp/odf-namespace-operatorgroup.yaml
 oc apply -f /tmp/odf-subscription.yaml
 oc -n openshift-storage get csv -w
+# If this client rejects --for=jsonpath with "unrecognized condition", poll
+# .status.phase instead of treating the wait error as a failed CSV.
 oc -n openshift-storage wait csv -l operators.coreos.com/odf-operator.openshift-storage \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=15m
 ```

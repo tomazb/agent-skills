@@ -244,6 +244,24 @@ oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd[0-9]* 2>/dev/null || e
 
 ### 4. Remove the operators
 
+Delete `csi.ceph.io` objects while the ceph-csi operator is still running. `clientprofiles.csi.ceph.io` carries finalizer `csi.ceph.com/cleanup`. Once the operator CSV is gone, that finalizer never clears and the namespace stays Terminating on the ClientProfile.
+
+```bash
+oc -n openshift-storage delete \
+  drivers.csi.ceph.io,operatorconfigs.csi.ceph.io,cephconnections.csi.ceph.io,clientprofiles.csi.ceph.io,clientprofilemappings.csi.ceph.io \
+  --all --wait=false --ignore-not-found
+```
+
+If those objects are already stuck and the ceph-csi operator is gone, inspect them, then clear the finalizer on the confirmed ones:
+
+```bash
+for kind in $(oc api-resources --api-group=csi.ceph.io -o name 2>/dev/null); do
+  for item in $(oc -n openshift-storage get "$kind" --no-headers -o custom-columns=:.metadata.name 2>/dev/null); do
+    oc -n openshift-storage patch "$kind" "$item" --type=merge -p '{"metadata":{"finalizers":[]}}'
+  done
+done
+```
+
 Delete the ODF subscriptions by name, resolving each installed CSV from the subscription first — never delete all subscriptions wholesale (that also removes LVMS/LSO when they share the namespace), and never rely on the odf-operator CSV label selector, which matches only the odf-operator CSV and leaves the other component CSVs (ocs, rook, mcg, cephcsi, ...) behind:
 
 ```bash
@@ -327,7 +345,7 @@ oc get pv -o jsonpath='{range .items[*]}{.metadata.name} {.metadata.labels.stora
 oc -n <owner-namespace> get localvolumeset,localvolume,localvolumediscovery -o wide
 ```
 
-Delete only named `LocalVolumeSet` and `LocalVolumeDiscovery` objects that were dedicated to ODF. Never use `--all`, and do not delete LSO resources when `LocalVolume`, Longhorn, LVMS, or another storage system shares the node or namespace. Deleting a `LocalVolumeSet` cascades to its PVs and StorageClass; do it promptly after the `StorageCluster` teardown, or the LSO provisioner re-creates an `Available` PV on the freshly wiped disk. Then remove the symlink directory on the node (`rm -rf /mnt/local-storage/<storageclass>` — symlinks only; the disk itself was already handled by the cleanup policy).
+Delete only named `LocalVolumeSet` and `LocalVolumeDiscovery` objects that were dedicated to ODF. Never use `--all`, and do not delete LSO resources when `LocalVolume`, Longhorn, LVMS, or another storage system shares the node or namespace. Deleting a `LocalVolumeSet` cascades to its PVs and StorageClass; do it promptly after the `StorageCluster` teardown, or the LSO provisioner re-creates an `Available` PV on the freshly wiped disk. Then remove the symlink directory on the node (`rm -rf /mnt/local-storage/<storageclass>` — symlinks only; the disk itself was already handled by the cleanup policy). If `/mnt/local-storage` is empty afterward, `rmdir` it.
 
 **ODF-only LSO install (fresh-cluster expectation).** When LSO was installed solely to feed ODF (typical `openshift-local-storage` with no other consumers) and the goal is a cluster that looks like ODF was never present, also remove LSO after the ODF LocalVolume/LocalVolumeSet objects are gone: delete its Subscription/CSV, sweep `local.storage.openshift.io` CRDs, and delete `openshift-local-storage`. Skip this when LVMS, Longhorn, or another product still needs LSO.
 
@@ -468,7 +486,13 @@ oc -n openshift-storage delete prometheusrule ocs-prometheus-rules --ignore-not-
 oc -n openshift-storage delete cm odf-info --ignore-not-found
 
 # Cluster-scoped bundle objects OLM does not garbage-collect.
-oc delete scc ceph-csi-op-scc noobaa noobaa-core noobaa-endpoint --ignore-not-found
+oc delete scc ceph-csi-op-scc noobaa noobaa-core noobaa-endpoint odf-blackbox-scc --ignore-not-found
+# Subjects are ServiceAccounts in the deleted openshift-storage namespace.
+# Keep Role extension-apiserver-authentication-reader: it is a platform Role.
+oc -n kube-system delete rolebinding \
+  noobaa-operator-service-auth-reader \
+  cnpg-controller-manager-service-auth-reader \
+  --ignore-not-found
 oc delete mutatingwebhookconfiguration csv.odf.openshift.io
 ```
 
@@ -702,16 +726,18 @@ After uninstall, confirm:
 - When upstream Rook runs (the rule of `scripts/classify_rook_ownership.sh`: a non-OLM `rook-ceph-operator` Deployment outside `openshift-storage`), its namespaces — the operator's and those of the `CephCluster`s it runs, which may differ — the `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs, and the SCCs whose users are all its service accounts are retained, not residue. Instances of those groups outside its namespaces still are (bucket claims excepted: their StorageClass decides), and so is every `CephCluster` in `openshift-storage`, owned by a `StorageCluster`, named `ocs-storagecluster-cephcluster`, or being deleted while an upstream operator runs. A non-ODF `CephCluster` without any non-OLM operator, an OLM-installed `rook-ceph-operator`, or — with no such operator — a non-ODF Ceph CSI left behind (`drivers.csi.ceph.io` object, `*.csi.ceph.com` CSIDriver, or a PV on one) is reported as of unknown owner: decide it by hand before removing anything shared with Rook.
 - The ODF CRD groups are clean: `ocs.openshift.io`, `odf.openshift.io`, `ceph.rook.io`, `noobaa.io`, `postgresql.cnpg.noobaa.io`, `csi.ceph.io`, `csiaddons.openshift.io`, `objectbucket.io`, `replication.storage.openshift.io`, `ramendr.openshift.io` — plus `local.storage.openshift.io` only if LSO was removed too, and `groupsnapshot.storage.openshift.io` decided as in step 5.
 - OSD disks pass `ceph-volume raw list` → `{}` (not only a clean `wipefs -n`), and `/var/lib/rook` is absent (not merely empty).
-- No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
+- No ODF SCCs (`rook-ceph*`, `noobaa*`, `ceph-csi-op-scc`, `odf-blackbox-scc`), no `csv.odf.openshift.io` webhook, no `odf-console`/`odf-client-console` consoleplugins, and neither name remains in `console.operator.openshift.io/cluster` `spec.plugins`.
 - No StorageClass uses an ODF provisioner (`openshift-storage.rbd.csi.ceph.com`, `openshift-storage.cephfs.csi.ceph.com`, `openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`).
 - No PV/PVC uses an ODF StorageClass or has a `deletionTimestamp`, and no `VolumeAttachment` names an ODF attacher.
 - No ObjectBucketClaim or ObjectBucket whose StorageClass is missing or uses an ODF provisioner, no ConfigMap or Secret held by `objectbucket.io/finalizer` without a live claim, and no namespace stuck `Terminating`.
 - No dead ODF ClusterRole or ClusterRoleBinding (see **Cluster RBAC left by ODF**).
-- Exactly one intended default StorageClass remains.
+- The default StorageClass matches what was recorded before uninstall. No default is a clean end state when the cluster had none. More than one default, or a different name than the one recorded, is residue.
 
-Run the post-uninstall audit script:
+Run the post-uninstall audit script. Export `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall and leave it set. Empty output means there was no default:
 
 ```bash
+PRIOR_DEFAULT_STORAGE_CLASS="$(oc get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}')"
+export PRIOR_DEFAULT_STORAGE_CLASS
 bash scripts/post_uninstall_audit.sh
 ```
 
@@ -870,7 +896,11 @@ oc patch objectbucket <name> --type merge -p '{"metadata":{"finalizers":null}}'
 
 ODF's operators leave ClusterRoles and ClusterRoleBindings that OLM does not collect: labelled `olm.owner=<csv>` for CSVs that no longer exist (seen: `odf-prometheus`, `odf-operator-metrics-reader`, `ocs-client-operator-metrics-reader`, eleven `ceph-csi-*-role` / `ceph-csi-metrics-reader`, `k8s-metrics-sm-prometheus-k8s`, `csi-addons-csiaddons-networkfenceclass-editor-role` and `-viewer-role`; bindings `odf-prometheus`, `ocs-metrics-exporter-hostnetwork`, `k8s-metrics-sm-prometheus-k8s`), and three with no label at all (ClusterRoles `ocs-metrics-exporter`, `ocs-metrics-reader`; ClusterRoleBinding `ocs-metrics-exporter`).
 
-**A stale ODF label means ODF created the object, not that nothing uses it.** On the same cluster these carried ODF CSV or package labels but were in use by the running upstream Rook and had to be kept: ClusterRoleBinding `objectstorage-provisioner-role-binding` (subject ServiceAccount `rook-ceph/objectstorage-provisioner` exists) and its ClusterRole; ClusterRoleBinding `rook-ceph-metrics` (subject `openshift-monitoring/prometheus-k8s` exists) and its ClusterRole; ClusterRoles `rook-ceph-monitor` and `rook-ceph-monitor-mgr` (bound by live bindings); and the two `objectbucket.io` CRDs (used by the running Rook bucket provisioner).
+**A stale ODF label means ODF created the object, not that nothing uses it.** On the same cluster these carried ODF CSV or package labels but were in use by the running upstream Rook and had to be kept: ClusterRoleBinding `objectstorage-provisioner-role-binding` (subject ServiceAccount `rook-ceph/objectstorage-provisioner` exists) and its ClusterRole; ClusterRoleBinding `rook-ceph-metrics` while that Rook is still running; ClusterRoles `rook-ceph-monitor` and `rook-ceph-monitor-mgr` (bound by live bindings); and the two `objectbucket.io` CRDs (used by the running Rook bucket provisioner).
+
+`rook-ceph-metrics` and `ocs-metrics-reader` are both bound to `openshift-monitoring/prometheus-k8s`. That ServiceAccount exists on every OpenShift cluster, so its presence does not mean Ceph is still scraped. After both ODF and upstream Rook are gone, delete the bindings and the roles. While upstream Rook runs, keep `rook-ceph-metrics` and delete `ocs-metrics-reader`.
+
+NooBaa and CloudNativePG leave RoleBindings `noobaa-operator-service-auth-reader` and `cnpg-controller-manager-service-auth-reader` in `kube-system`, on the platform Role `extension-apiserver-authentication-reader`. Delete those RoleBindings when their ServiceAccounts in `openshift-storage` are gone. Keep the Role: console, marketplace, and other operators bind it. `odf-blackbox-scc` is residue when its only user is `system:serviceaccount:openshift-storage:odf-blackbox-exporter` and that namespace is gone.
 
 Find candidates by label in the kinds ODF leaves behind, with the package list and patterns the scripts use. A label selector cannot match a key prefix, so match the `operators.coreos.com/<package>.<namespace>` key (whatever the namespace suffix) and the `olm.owner` CSV name with `jq`:
 
@@ -908,7 +938,7 @@ oc get clusterrolebinding ocs-metrics-exporter --ignore-not-found
 
 Then decide each one by liveness, not by label:
 
-- **A ClusterRoleBinding is dead** only if its ClusterRole is missing, or none of its ServiceAccount subjects exists. A missing role makes the binding dead even with `User` or `Group` subjects; otherwise a `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
+- **A ClusterRoleBinding is dead** when its ClusterRole is missing, or none of its ServiceAccount subjects exists, or the only live ServiceAccount is `openshift-monitoring/prometheus-k8s` and the role is `ocs-metrics-reader` or (`rook-ceph-metrics` with no upstream Rook left). A missing role makes the binding dead even with `User` or `Group` subjects; otherwise a `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
 - **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive. Evaluate each `clusterRoleSelectors` entry in full: every `matchLabels` pair and every `matchExpressions` term (`In`, `NotIn` — also true when the key is absent —, `Exists`, `DoesNotExist`) must hold; an empty selector selects nothing; if you cannot evaluate a selector (an unknown operator, a malformed term), keep the role.
 - **A CRD is dead** only if it has zero instances, no workload or configuration names its group, no webhook targets it, and its owning operator is gone (step 5).
 

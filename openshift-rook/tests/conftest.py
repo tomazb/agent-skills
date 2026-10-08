@@ -89,7 +89,7 @@ Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking 
 
 Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`.
 
-During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers, then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node.
+During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers (`csi.ceph.com/cleanup`), then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node. Record `PRIOR_DEFAULT_STORAGE_CLASS`. Delete `rook-ceph-metrics` when its only subject is `openshift-monitoring/prometheus-k8s` and both operator namespaces are gone.
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
@@ -123,7 +123,7 @@ Routing guidance.
 
 ## Core Safety Rules
 
-Safety guidance.
+Safety guidance. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead.
 
 ## Required Source Checks
 

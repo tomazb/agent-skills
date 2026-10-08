@@ -60,7 +60,7 @@ oc delete namespace rook-ceph --wait=true --timeout=10m
 
 ### Namespace Stuck Terminating And Orphaned Cluster-Scoped Objects
 
-Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps its finalizer after the operator is gone. Prefer the targeted CR deletes above; if the namespace is still stuck, clear finalizers on the **confirmed** blocking CRs (inspect first, then patch):
+Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps finalizer `csi.ceph.com/cleanup` after the CSI operator Deployment is gone. That finalizer does not clear itself. Delete the `csi.ceph.io` objects while the CSI operator is still running. If it is already gone, inspect the remaining objects, patch finalizers to [] on the confirmed ones, then delete a leftover `clientprofiles.csi.ceph.io` custom resource definition once it has no instances:
 
 ```bash
 for kind in $(oc api-resources --api-group=csi.ceph.io -o name 2>/dev/null); do
@@ -147,11 +147,14 @@ After uninstall, confirm:
 - `oc api-resources --api-group=ceph.rook.io` returns no Rook Ceph resources.
 - No StorageClass uses a Rook Ceph provisioner (`rook-ceph.rbd.csi.ceph.com`, `rook-ceph.cephfs.csi.ceph.com`, `rook-ceph.ceph.rook.io/bucket`).
 - No PV/PVC uses a Rook Ceph StorageClass.
-- Exactly one intended default StorageClass remains.
+- The default StorageClass matches what was recorded before uninstall. No default is a clean end state when the cluster had none.
+- `rook-ceph-metrics` bound only to `openshift-monitoring/prometheus-k8s` is residue once both `rook-ceph` and `openshift-storage` are gone. Keep it while either namespace still runs Ceph. `prometheus-k8s` exists on every OpenShift cluster, so the ServiceAccount alone is not a reason to keep the role.
 
-Run the post-uninstall audit script:
+Run the post-uninstall audit script. Export `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall and leave it set. Empty output means there was no default:
 
 ```bash
+PRIOR_DEFAULT_STORAGE_CLASS="$(oc get sc -o jsonpath='{range .items[?(@.metadata.annotations.storageclass\.kubernetes\.io/is-default-class=="true")]}{.metadata.name}{"\n"}{end}')"
+export PRIOR_DEFAULT_STORAGE_CLASS
 bash scripts/post_uninstall_audit.sh
 ```
 

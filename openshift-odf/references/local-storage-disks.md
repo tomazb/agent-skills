@@ -54,6 +54,8 @@ spec:
   installPlanApproval: Automatic
 ```
 
+If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, poll `.status.phase` instead.
+
 ```bash
 oc apply -f /tmp/lso-subscription.yaml
 oc -n openshift-local-storage wait csv \

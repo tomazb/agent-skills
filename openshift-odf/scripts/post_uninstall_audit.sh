@@ -28,6 +28,10 @@ usage() {
     '  --kubeconfig PATH    kubeconfig file to use' \
     '  -h, --help           show this help' \
     '' \
+    'PRIOR_DEFAULT_STORAGE_CLASS, when set, is the default StorageClass recorded' \
+    'before uninstall (empty means there was none). The audit then warns only when' \
+    'that policy changed. When the variable is unset, exactly one default is required.' \
+    '' \
     'Unknown arguments are rejected. This script previously ignored them' \
     'silently, so a "--context other-cluster" that looked accepted actually' \
     'audited whichever context was current, and reported the result as if it' \
@@ -728,7 +732,7 @@ check_terminating_namespaces() {
 # are the service-account groups of those namespaces) belongs to that Rook.
 check_sccs() {
   local rook_scc_jq="def rook_scc(\$rook): (\$rook | length) > 0 and ((.users // []) | length) > 0 and all((.users // [])[]; split(\":\") as \$p | ((\$p | length) == 4) and \$p[0] == \"system\" and \$p[1] == \"serviceaccount\" and any(\$rook[]; . == \$p[2])) and all((.groups // [])[]; split(\":\") as \$p | ((\$p | length) == 3) and \$p[0] == \"system\" and \$p[1] == \"serviceaccounts\" and any(\$rook[]; . == \$p[2]));"
-  local name_jq='select((.metadata.name | contains("rook-ceph")) or (.metadata.name | contains("noobaa")) or (.metadata.name | contains("ceph-csi")))'
+  local name_jq='select((.metadata.name | contains("rook-ceph")) or (.metadata.name | contains("noobaa")) or (.metadata.name | contains("ceph-csi")) or (.metadata.name | contains("odf-blackbox")))'
   local name
 
   if upstream_rook_present && query_json \
@@ -755,6 +759,11 @@ check_sccs() {
 # - a ClusterRoleBinding is dead when its ClusterRole is missing (even with a
 #   User/Group subject), or when it has no User/Group subject (those cannot be
 #   proven absent) and none of its ServiceAccount subjects exists;
+# - rook-ceph-metrics and ocs-metrics-reader are also dead when the only live
+#   ServiceAccount is openshift-monitoring/prometheus-k8s. That account exists on
+#   every OpenShift cluster, so it is not evidence that Ceph is still scraped.
+#   rook-ceph-metrics stays live while upstream Rook is present; ocs-metrics-reader
+#   does not, because the ODF metrics exporter is already gone;
 # - a ClusterRole is dead when no live ClusterRoleBinding or RoleBinding references
 #   it (a dead binding does not keep its role alive) and no other ClusterRole's
 #   aggregationRule selects it. A selector is evaluated in full, matchLabels and
@@ -786,17 +795,23 @@ def odf_owned(\$names):
   or (.name as \$n | any(\$names[]; . == \$n));
 def live_sas(\$sas):
   [.subjects[] | select(.kind == \"ServiceAccount\") | \"\(.namespace)/\(.name)\" | select(\$sas[.] // false)];
-def verdict(\$roles; \$sas):
+def platform_prometheus_only(\$sas):
+  (any(.subjects[]; .kind == \"User\" or .kind == \"Group\") | not)
+  and ((live_sas(\$sas) | length) > 0)
+  and all(live_sas(\$sas)[]; . == \"openshift-monitoring/prometheus-k8s\");
+def verdict(\$roles; \$sas; \$rook_up):
   if (\$roles[.role] // false) | not then {live: false, why: \"its ClusterRole \(.role) is missing\"}
   elif any(.subjects[]; .kind == \"User\" or .kind == \"Group\") then {live: true, why: \"has a User/Group subject, which cannot be proven absent\"}
+  elif platform_prometheus_only(\$sas) and ((.role == \"ocs-metrics-reader\") or (.role == \"rook-ceph-metrics\" and (\$rook_up | not))) then {live: false, why: \"only the platform ServiceAccount openshift-monitoring/prometheus-k8s remains, which is not a Ceph consumer\"}
   elif (live_sas(\$sas) | length) > 0 then {live: true, why: \"bound to live ServiceAccount \(live_sas(\$sas) | join(\", \"))\"}
   else {live: false, why: \"none of its ServiceAccount subjects exists\"} end;
 .[0] as \$crs | .[1] as \$crbs | .[2] as \$rbs
 | (.[3] | map({key: ., value: true}) | from_entries) as \$sas
+| .[4] as \$rook_up
 | (\$crs | map({key: .name, value: true}) | from_entries) as \$roles
-| ([\$crbs[] | . + {ref: \"ClusterRoleBinding/\(.name)\", odf: odf_owned([\"ocs-metrics-exporter\"])}]
+| ([\$crbs[] | . + {ref: \"ClusterRoleBinding/\(.name)\", odf: odf_owned([\"ocs-metrics-exporter\", \"ocs-metrics-reader\", \"rook-ceph-metrics\"])}]
    + [\$rbs[] | . + {ref: \"RoleBinding \(.ns)/\(.name)\", odf: false}]
-   | map(. + verdict(\$roles; \$sas))) as \$bindings
+   | map(. + verdict(\$roles; \$sas; \$rook_up))) as \$bindings
 | (\$bindings[] | select(.odf) | [(if .live then \"kept\" else \"dead\" end), .ref, .why] | @tsv),
   (\$crs[] | select(odf_owned([\"ocs-metrics-exporter\", \"ocs-metrics-reader\"])) | . as \$role
    | [\$bindings[] | select(.role == \$role.name)] as \$refs
@@ -838,7 +853,11 @@ check_cluster_rbac() {
     oc get serviceaccounts -A || return 0
   accounts="$QUERY_RESULT"
 
-  run_split jq_slurp "$ODF_RBAC_JQ" "$roles" "$cluster_bindings" "$bindings" "$accounts"
+  local rook_up=false
+  if upstream_rook_present; then
+    rook_up=true
+  fi
+  run_split jq_slurp "$ODF_RBAC_JQ" "$roles" "$cluster_bindings" "$bindings" "$accounts" "$rook_up"
   if [ "$RUN_RC" -ne 0 ]; then
     fail "ODF cluster RBAC jq filter failed: $RUN_ERR"
     return 0
@@ -856,6 +875,60 @@ check_cluster_rbac() {
     printf '%s' "$dead"
   else
     ok "no dead ODF ClusterRoles or ClusterRoleBindings found"
+  fi
+}
+
+# NooBaa and the CloudNativePG manager leave RoleBindings in kube-system on the
+# platform Role extension-apiserver-authentication-reader. The Role is
+# bootstrapped by the cluster and other operators bind it; delete only the
+# storage bindings whose ServiceAccounts are gone.
+check_storage_extension_auth_bindings() {
+  local bindings
+  local accounts
+  local verdict
+  local object
+  local reason
+  local dead=""
+
+  fetch_array "NooBaa and CNPG extension-apiserver RoleBindings" \
+    '[.items[] | select(.roleRef.kind == "Role" and .roleRef.name == "extension-apiserver-authentication-reader" and (.metadata.name | test("noobaa|cnpg"))) | {ns: .metadata.namespace, name: .metadata.name, subjects: (.subjects // [])}]' \
+    oc get rolebindings -A || return 0
+  bindings="$QUERY_RESULT"
+  fetch_array "ServiceAccounts" \
+    '[.items[] | .metadata.namespace + "/" + .metadata.name]' \
+    oc get serviceaccounts -A || return 0
+  accounts="$QUERY_RESULT"
+
+  run_split jq_slurp \
+    '. [1] as $sas
+     | ([$sas[] | {key: ., value: true}] | from_entries) as $live
+     | .[0][]
+     | [.subjects[]? | select(.kind == "ServiceAccount") | ((.namespace // "") + "/" + .name)] as $wanted
+     | if (($wanted | length) > 0) and any($wanted[]; $live[.] // false) then
+         ["kept", "RoleBinding \(.ns)/\(.name)", "bound to a live ServiceAccount"]
+       else
+         ["dead", "RoleBinding \(.ns)/\(.name)", "delete the RoleBinding and keep Role extension-apiserver-authentication-reader"]
+       end
+     | @tsv' \
+    "$bindings" "$accounts"
+  if [ "$RUN_RC" -ne 0 ]; then
+    fail "extension-apiserver RoleBinding jq filter failed: $RUN_ERR"
+    return 0
+  fi
+
+  while IFS=$'\t' read -r verdict object reason; do
+    [ -n "$verdict" ] || continue
+    case "$verdict" in
+      kept) ok "$object retained: $reason" ;;
+      dead) dead="${dead}${object}: ${reason}"$'\n' ;;
+    esac
+  done <<<"$RUN_OUT"
+
+  if [ -n "$dead" ]; then
+    warn "dead NooBaa or CNPG extension-apiserver RoleBindings still exist:"
+    printf '%s' "$dead"
+  else
+    ok "no dead NooBaa or CNPG extension-apiserver RoleBindings found"
   fi
 }
 
@@ -979,6 +1052,9 @@ echo
 check_cluster_rbac
 
 echo
+check_storage_extension_auth_bindings
+
+echo
 check_json_list \
   "ODF mutating webhooks" \
   "no ODF mutating webhooks found" \
@@ -1027,13 +1103,34 @@ if query_json \
   else
     DEFAULT_SCS="$QUERY_RESULT"
     COUNT=$(count_nonempty_lines "$DEFAULT_SCS")
-    if [ "$COUNT" -eq 1 ]; then
+    found=""
+    while IFS= read -r line; do
+      [ -n "$line" ] || continue
+      found="${found:+$found,}$line"
+    done <<<"$DEFAULT_SCS"
+    [ -n "$found" ] || found=none
+    # PRIOR_DEFAULT_STORAGE_CLASS is recorded before uninstall. Unset keeps the
+    # historical check (exactly one default). An empty value means the cluster
+    # had no default, which is a valid end state.
+    if [ -z "${PRIOR_DEFAULT_STORAGE_CLASS+x}" ]; then
+      if [ "$COUNT" -eq 1 ]; then
+        ok "exactly one default StorageClass: $DEFAULT_SCS"
+      elif [ "$COUNT" -eq 0 ]; then
+        warn "no default StorageClass found"
+      else
+        warn "multiple default StorageClasses found:"
+        echo "$DEFAULT_SCS"
+      fi
+    elif [ -z "$PRIOR_DEFAULT_STORAGE_CLASS" ]; then
+      if [ "$COUNT" -eq 0 ]; then
+        ok "no default StorageClass, matching the pre-install policy"
+      else
+        warn "default StorageClass is '$found', pre-install policy had none"
+      fi
+    elif [ "$found" = "$PRIOR_DEFAULT_STORAGE_CLASS" ]; then
       ok "exactly one default StorageClass: $DEFAULT_SCS"
-    elif [ "$COUNT" -eq 0 ]; then
-      warn "no default StorageClass found"
     else
-      warn "multiple default StorageClasses found:"
-      echo "$DEFAULT_SCS"
+      warn "default StorageClass is '$found', pre-install policy was $PRIOR_DEFAULT_STORAGE_CLASS"
     fi
   fi
 fi

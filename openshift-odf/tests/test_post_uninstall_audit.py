@@ -28,9 +28,9 @@ _write_cluster_oc = write_cluster_oc
 
 
 def _run_audit(
-    bin_dir: Path, *args: str
+    bin_dir: Path, *args: str, extra_env: dict | None = None
 ) -> subprocess.CompletedProcess[str]:
-    return run_script("post_uninstall_audit.sh", bin_dir, *args)
+    return run_script("post_uninstall_audit.sh", bin_dir, *args, extra_env=extra_env)
 
 
 def test_audit_fails_when_oc_is_missing(tmp_path):
@@ -1705,3 +1705,177 @@ def test_audit_calls_classless_buckets_odf_residue_without_upstream_rook(tmp_pat
     assert "ConfigMap/consumer/lost" in out
     assert "Secret/consumer/lost" in out
     assert "OK: no bucket claims or buckets of unknown owner" in out
+
+
+PROMETHEUS_ONLY = (
+    "only the platform ServiceAccount openshift-monitoring/prometheus-k8s remains, "
+    "which is not a Ceph consumer"
+)
+
+
+def _prometheus_metrics_rbac() -> dict:
+    return {
+        "serviceaccounts": [_sa("openshift-monitoring", "prometheus-k8s")],
+        "clusterroles": [
+            _cr("rook-ceph-metrics", OCS_OWNER),
+            _cr("ocs-metrics-reader"),
+        ],
+        "clusterrolebindings": [
+            _crb(
+                "rook-ceph-metrics",
+                "rook-ceph-metrics",
+                [_sa_subject("openshift-monitoring", "prometheus-k8s")],
+                OCS_OWNER,
+            ),
+            _crb(
+                "ocs-metrics-reader",
+                "ocs-metrics-reader",
+                [_sa_subject("openshift-monitoring", "prometheus-k8s")],
+            ),
+        ],
+    }
+
+
+def test_audit_treats_prometheus_metrics_roles_as_residue_when_no_ceph_operator_remains(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, objects=_prometheus_metrics_rbac())
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: dead ODF cluster RBAC still exists:" in out
+    assert f"ClusterRoleBinding/rook-ceph-metrics: {PROMETHEUS_ONLY}" in out
+    assert f"ClusterRoleBinding/ocs-metrics-reader: {PROMETHEUS_ONLY}" in out
+    assert "ClusterRole/rook-ceph-metrics: referenced only by dead ClusterRoleBinding/rook-ceph-metrics" in out
+    assert "ClusterRole/ocs-metrics-reader: referenced only by dead ClusterRoleBinding/ocs-metrics-reader" in out
+    assert "rook-ceph-metrics retained" not in out
+    assert "ocs-metrics-reader retained" not in out
+
+
+def test_audit_keeps_rook_ceph_metrics_while_upstream_rook_runs(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects=merge(_rook_objects(), _prometheus_metrics_rbac()),
+        groups=ROOK_GROUPS,
+        namespaces=("rook-ceph",),
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert (
+        "OK: ClusterRoleBinding/rook-ceph-metrics retained: bound to live ServiceAccount "
+        "openshift-monitoring/prometheus-k8s" in out
+    )
+    assert f"ClusterRoleBinding/ocs-metrics-reader: {PROMETHEUS_ONLY}" in out
+    assert "ocs-metrics-reader retained" not in out
+
+
+def test_audit_flags_odf_blackbox_scc(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "scc": [
+                {
+                    "metadata": meta("odf-blackbox-scc"),
+                    "users": ["system:serviceaccount:openshift-storage:odf-blackbox-exporter"],
+                    "groups": [],
+                }
+            ]
+        },
+    )
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: ODF SCCs still exist:\nodf-blackbox-scc" in result.stdout
+    assert "odf-blackbox-scc retained" not in result.stdout
+
+
+def test_audit_flags_dead_noobaa_and_cnpg_extension_auth_bindings(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(
+        tmp_path,
+        objects={
+            "serviceaccounts": [_sa("openshift-console", "console")],
+            "rolebindings": [
+                {
+                    "metadata": meta("noobaa-operator-service-auth-reader", "kube-system"),
+                    "roleRef": {
+                        "kind": "Role",
+                        "name": "extension-apiserver-authentication-reader",
+                    },
+                    "subjects": [_sa_subject("openshift-storage", "noobaa")],
+                },
+                {
+                    "metadata": meta("cnpg-controller-manager-service-auth-reader", "kube-system"),
+                    "roleRef": {
+                        "kind": "Role",
+                        "name": "extension-apiserver-authentication-reader",
+                    },
+                    "subjects": [_sa_subject("openshift-storage", "cnpg-manager")],
+                },
+                {
+                    "metadata": meta("console", "kube-system"),
+                    "roleRef": {
+                        "kind": "Role",
+                        "name": "extension-apiserver-authentication-reader",
+                    },
+                    "subjects": [_sa_subject("openshift-console", "console")],
+                },
+            ],
+        },
+    )
+
+    result = _run_audit(tmp_path)
+    out = result.stdout
+
+    assert result.returncode == 1
+    assert "WARN: dead NooBaa or CNPG extension-apiserver RoleBindings still exist:" in out
+    assert (
+        "RoleBinding kube-system/noobaa-operator-service-auth-reader: "
+        "delete the RoleBinding and keep Role extension-apiserver-authentication-reader" in out
+    )
+    assert (
+        "RoleBinding kube-system/cnpg-controller-manager-service-auth-reader: "
+        "delete the RoleBinding and keep Role extension-apiserver-authentication-reader" in out
+    )
+    assert "RoleBinding kube-system/console" not in out
+
+
+def test_audit_accepts_no_default_storageclass_when_that_was_the_prior_policy(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, storage_classes=[])
+
+    result = _run_audit(tmp_path, extra_env={"PRIOR_DEFAULT_STORAGE_CLASS": ""})
+
+    assert result.returncode == 0, result.stdout
+    assert "OK: no default StorageClass, matching the pre-install policy" in result.stdout
+    assert "WARN:" not in result.stdout
+
+
+def test_audit_warns_when_the_prior_default_storageclass_is_gone(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path)
+
+    result = _run_audit(tmp_path, extra_env={"PRIOR_DEFAULT_STORAGE_CLASS": "other-class"})
+
+    assert result.returncode == 1
+    assert (
+        "WARN: default StorageClass is 'platform-default', pre-install policy was other-class"
+        in result.stdout
+    )
+
+
+def test_audit_still_warns_when_no_default_storageclass_and_no_prior_policy(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, storage_classes=[])
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "WARN: no default StorageClass found" in result.stdout
