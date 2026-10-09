@@ -1017,9 +1017,9 @@ def test_audit_classifies_odf_cluster_rbac_by_liveness(tmp_path):
                     },
                 ),
                 _cr("view", aggregation=[{"matchLabels": {"example.test/aggregate-to-view": "true"}}]),
-                # an empty selector must not keep every role alive
                 _cr("odf-operator-metrics-reader", {"olm.owner": "odf-operator.v4.20.17-rhodf"}),
-                _cr("catch-all", aggregation=[{"matchLabels": {}}]),
+                # selects nothing here: a selector that matches no label is not select-all
+                _cr("narrow", aggregation=[{"matchLabels": {"example.test/aggregate-to-nothing": "true"}}]),
                 _cr("ocs-client-operator-metrics-reader", {"olm.owner": "ocs-client-operator.v4.20.17-rhodf"}),
                 # not ODF's: never reported
                 _cr("unrelated-role"),
@@ -1629,11 +1629,13 @@ AGG_LABELS = {"olm.owner": "odf-operator.v4.20.17-rhodf", "example.test/aggregat
          "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
         ({"matchExpressions": [{"key": "example.test/aggregate-to", "operator": "In"}]},
          "OK: ClusterRole/odf-operator-metrics-reader retained: aggregation selector could not be evaluated"),
-        # an empty selector selects nothing
-        ({}, "ClusterRole/odf-operator-metrics-reader: no binding references it"),
+        # Kubernetes reads a non-nil empty selector as "everything"
+        ({}, "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated by a select-all rule into aggregate"),
+        ({"matchLabels": {}},
+         "OK: ClusterRole/odf-operator-metrics-reader retained: aggregated by a select-all rule into aggregate"),
     ],
     ids=["in", "exists", "labels-and-notin", "notin-excluded", "doesnotexist", "unknown-operator",
-         "in-without-values", "empty"],
+         "in-without-values", "empty", "empty-match-labels"],
 )
 def test_audit_evaluates_full_aggregation_selectors(tmp_path, selector, verdict):
     _write_jq_proxy(tmp_path)
@@ -1879,3 +1881,23 @@ def test_audit_still_warns_when_no_default_storageclass_and_no_prior_policy(tmp_
 
     assert result.returncode == 1
     assert "WARN: no default StorageClass found" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("resource", "label", "ok_line"),
+    [
+        ("pv", "ODF PVs", "no ODF PVs found"),
+        ("csidriver", "ODF CSIDrivers", "no ODF CSIDrivers found"),
+        ("clusterroles", "ClusterRoles", "no dead ODF ClusterRoles or ClusterRoleBindings found"),
+    ],
+    ids=["pv", "csidriver", "clusterroles"],
+)
+def test_audit_fails_when_a_successful_call_prints_nothing(tmp_path, resource, label, ok_line):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, empty=(resource,))
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert f"FAIL: {label} query returned nothing" in result.stdout
+    assert f"OK: {ok_line}" not in result.stdout

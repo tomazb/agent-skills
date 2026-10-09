@@ -33,7 +33,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Cluster expansion, shrink, or rebalancing**: use `references/cluster-expand-shrink.md`.
 - **Rook upgrade or Ceph version selection**: use `references/upgrade.md`.
 - **Backup, DR, and snapshot planning**: use `references/backup-restore-dr.md`.
-- **Maintenance, node eviction, OSD replacement, operator uninstall, or cluster destruction**: use `references/maintenance-uninstall.md`.
+- **Maintenance, node eviction, OSD replacement, operator uninstall, cluster destruction, or leftovers of an interrupted uninstall**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
 - **VM storage defaults, CDI StorageProfiles, or `CDIStorageProfilesIncomplete`**: use `references/vm-storage-profiles.md`.
 
@@ -47,6 +47,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - Multi-node production requires at least three mons, three OSDs across failure domains, and a minimum replica count of 3 for Ceph data pools. Document explicit exceptions when the user overrides.
 - Keep exactly one default StorageClass unless the user explicitly requests another policy. Before uninstall, record that name, including when there is none, in `PRIOR_DEFAULT_STORAGE_CLASS` and leave the variable set for `scripts/post_uninstall_audit.sh`. A cluster that started with no default is clean when it still has none.
 - If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll the same field until it matches. Do not treat the wait error as a failed object.
+- Before deleting Rook's CRDs, SCCs, or `dataDirHostPath`, re-run `scripts/classify_ceph_ownership.sh` (the runbook's `rook_classify`) and stop unless it exits 0: ODF uses the same `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` CRDs and SCC names `rook-ceph`/`rook-ceph-csi`, and names some of its objects `rook-ceph-*`. Judge residue by CSI driver, provisioner, and ownership, never by name; `scripts/post_uninstall_audit.sh` does that and exits nonzero on any residue.
 - Ceph pool parameters are changeable but disruptive, not immutable: `pg_num` (the PG autoscaler is on by default), replica `size`, and failure-domain rules can all be modified on existing pools, but changes trigger rebalancing that is expensive and can degrade performance. Plan them at creation time and change them deliberately after verifying cluster health.
 - For Rook operator updates, prefer the Operator Lifecycle Manager (OLM) path when the cluster uses OLM. For direct manifest installs, use version-pinned manifests and never apply a newer Rook manifest without reading the release notes and upgrade guide.
 - Do not downgrade Rook operator or Ceph versions. For major version upgrades, verify all PGs are active+clean and OSDs are up before proceeding.

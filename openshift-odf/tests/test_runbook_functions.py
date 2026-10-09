@@ -67,7 +67,8 @@ def test_runbook_defines_the_tested_functions():
 
 
 def _run(
-    tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=(), blocking=False
+    tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=(), blocking=False,
+    tools=("bash", "grep"),
 ):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
@@ -76,7 +77,7 @@ def _run(
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     write_jq_proxy(bin_dir)
-    for tool in ("bash", "grep"):
+    for tool in tools:
         found = shutil.which(tool)
         if found is None:
             pytest.skip(f"{tool} is required for the runbook function tests")
@@ -95,7 +96,7 @@ def _run(
     result = subprocess.run(
         [str(bin_dir / "bash"), "-c", script],
         cwd=skill,
-        env={"PATH": str(bin_dir), **(env or {})},
+        env={"PATH": str(bin_dir), "ODF_DELETE_WAIT": "0", **(env or {})},
         capture_output=True,
         text=True,
         check=False,
@@ -379,3 +380,51 @@ def test_sweep_selects_crds_by_exact_group_not_by_name_suffix(tmp_path):
     assert "delete crd noobaas.noobaa.io --wait=false" in deletes
     assert not [d for d in deletes if d.startswith("delete crd") and "postgresql.cnpg.noobaa.io" in d], deletes
     assert "instances of postgresql.cnpg.noobaa.io remain:" in result.stderr
+
+
+def test_sweep_returns_nonzero_when_a_crd_delete_fails_and_still_tries_the_other_groups(tmp_path):
+    result, deletes = _run(
+        tmp_path, "odf_crd_sweep", errors={"delete crd": "Error from server (Forbidden): cannot delete crds"}
+    )
+
+    assert "rc=1" in result.stdout
+    assert "CRD deletion failed for ocs.openshift.io" in result.stderr
+    # it kept going: every ODF group was attempted
+    assert [d for d in deletes if d.startswith("delete crd noobaas.noobaa.io")]
+    assert [d for d in deletes if d.startswith("delete crd cephclusters.ceph.rook.io")]
+
+
+def test_sweep_waits_a_bounded_time_for_instances_before_counting_them(tmp_path):
+    log = tmp_path / "run" / "argv.log"
+    objects = {
+        "storageclusters.ocs.openshift.io": [
+            {"metadata": meta("ocs-storagecluster", "openshift-storage", finalizers=["storagecluster.ocs.openshift.io"])}
+        ]
+    }
+
+    result, _ = _run(tmp_path / "run", "odf_crd_sweep", objects=objects, env={"ODF_DELETE_WAIT": "3"},
+                     tools=("bash", "grep", "sleep"))
+
+    polls = [line for line in log.read_text(encoding="utf-8").splitlines()
+             if '"get", "storageclusters.ocs.openshift.io", "-A", "-o", "name"' in line]
+    assert len(polls) >= 2, polls
+    assert "instances of ocs.openshift.io remain:" in result.stderr
+
+
+def test_sweep_removes_odf_buckets_next_to_upstream_rook(tmp_path):
+    objects = dict(UPSTREAM)
+    objects["sc"] = [
+        {"metadata": meta("odf-buckets"), "provisioner": "openshift-storage.noobaa.io/obc"},
+        {"metadata": meta("rook-buckets"), "provisioner": "rook-ceph.ceph.rook.io/bucket"},
+    ]
+    objects["objectbucketclaims.objectbucket.io"] = [
+        {"metadata": meta("odf-claim", "app"), "spec": {"storageClassName": "odf-buckets"}},
+        {"metadata": meta("rook-claim", "app"), "spec": {"storageClassName": "rook-buckets"}},
+    ]
+
+    result, deletes = _run(tmp_path, "odf_crd_sweep", objects=objects)
+
+    assert "-n app delete objectbucketclaims.objectbucket.io odf-claim --wait=false" in deletes
+    assert not [d for d in deletes if "rook-claim" in d]
+    assert not [d for d in deletes if d.startswith("delete crd objectbucket")]
+    assert "keeping objectbucketclaims.objectbucket.io app/rook-claim" in result.stderr

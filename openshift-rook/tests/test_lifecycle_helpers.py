@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-import sys
+import importlib.util
 from pathlib import Path
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
-sys.path.insert(0, str(SCRIPTS_DIR))
 
-from render_smoke_manifest import render_smoke_manifest
+# Loaded by path under a name of its own: openshift-odf ships a render_smoke_manifest
+# module too.
+_spec = importlib.util.spec_from_file_location(
+    "openshift_rook_render_smoke_manifest", SCRIPTS_DIR / "render_smoke_manifest.py"
+)
+_module = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_module)
+render_smoke_manifest = _module.render_smoke_manifest
 
 
 def test_smoke_manifest_rbd_renders(tmp_path):

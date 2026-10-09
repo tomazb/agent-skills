@@ -526,7 +526,7 @@ If ODF's operators were removed before its workloads and volumes (an interrupted
 
 **Every shared step classifies first.** `ceph.rook.io`, `csi.ceph.io`, and `objectbucket.io` are not ODF's alone: an upstream (non-OLM) Rook cluster uses the same CRDs. On a cluster where upstream Rook ran in `rook-ceph` after ODF was removed, an unguarded sweep would have deleted that cluster's `CephCluster`, its `drivers.csi.ceph.io`, its bucket claims, and the CRDs under it. The functions below need `odf_classify` and `scripts/odf_common.sh` from step 4b in the same bash shell (in a new shell, paste that block again), call `odf_classify` themselves immediately before acting, and refuse when it fails.
 
-With upstream Rook present, the sweep leaves the three shared groups alone. This function lists the instances of those groups outside the Rook namespaces — candidates that are ODF's, in `openshift-storage` or anywhere else — for you to review and delete by name. Bucket claims are left out: their StorageClass, not their namespace, decides whose they are (see `odf_delete_odf_buckets` below):
+With upstream Rook present, the sweep leaves the three shared groups' CRDs alone, but still removes ODF's own bucket claims and buckets with `odf_delete_odf_buckets`, which keeps every claim of another provisioner. This function lists the instances of those groups outside the Rook namespaces — candidates that are ODF's, in `openshift-storage` or anywhere else — for you to review and delete by name. Bucket claims are left out: their StorageClass, not their namespace, decides whose they are (see `odf_delete_odf_buckets` below):
 
 ```bash
 odf_list_shared_instances() {
@@ -609,7 +609,7 @@ for group in ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.
 done
 ```
 
-Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets`; it leaves a group's CRDs in place while any instance of the group remains (an instance held by a finalizer whose controller is gone needs the **Orphans After An Interrupted Uninstall** steps first); and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
+Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets` (and runs that cleanup even when upstream Rook keeps the group); its instance deletes do not wait, so it gives finalizers whose controllers still run up to `ODF_DELETE_WAIT` seconds (default 60) before it counts an instance as remaining; it leaves a group's CRDs in place while any instance of the group remains (an instance held by a finalizer whose controller is gone needs the **Orphans After An Interrupted Uninstall** steps first); it returns nonzero when a CRD delete or the bucket cleanup failed, after trying every other group; and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
 
 ```bash
 odf_crd_sweep() {
@@ -619,13 +619,17 @@ odf_crd_sweep() {
   fi
   local groups="ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.io \
     csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io"
+  local group kinds namespaced kind instances_deleted remaining left crds deadline failed=0
   if [ -z "$ROOK_NAMESPACES" ]; then
     groups="$groups ceph.rook.io csi.ceph.io objectbucket.io"
   else
     echo "upstream Rook in: $ROOK_NAMESPACES - leaving ceph.rook.io, csi.ceph.io, objectbucket.io in place" >&2
+    # The objectbucket.io CRDs stay, but ODF's own claims and buckets in it still go.
+    if ! odf_delete_odf_buckets; then
+      echo "ODF bucket cleanup kept claims of other provisioners or failed - review the lines above" >&2
+      failed=1
+    fi
   fi
-
-  local group kinds namespaced kind instances_deleted remaining left crds
   for group in $groups; do
     # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
     #    returns an empty list, which would silently skip instance deletion and
@@ -664,13 +668,22 @@ odf_crd_sweep() {
 
     # 3. No instance may remain: one held by a finalizer whose controller is gone
     #    would leave the CRD Terminating. Clear those first (Orphans section).
-    remaining=""
-    for kind in $kinds; do
-      if ! left=$(oc get "$kind" -A -o name); then
-        remaining="$remaining could-not-list:$kind"
-      elif [ -n "$left" ]; then
-        remaining="$remaining ${left//$'\n'/ }"
+    #    The deletes above did not wait, so finalizers whose controllers still run
+    #    get up to ODF_DELETE_WAIT seconds (default 60) before an instance counts.
+    deadline=$((SECONDS + ${ODF_DELETE_WAIT:-60}))
+    while :; do
+      remaining=""
+      for kind in $kinds; do
+        if ! left=$(oc get "$kind" -A -o name); then
+          remaining="$remaining could-not-list:$kind"
+        elif [ -n "$left" ]; then
+          remaining="$remaining ${left//$'\n'/ }"
+        fi
+      done
+      if [ -z "$remaining" ] || [ "$SECONDS" -ge "$deadline" ]; then
+        break
       fi
+      sleep 2
     done
     if [ -n "$remaining" ]; then
       echo "instances of $group remain:$remaining - clear them (see Orphans After An Interrupted Uninstall); leaving its CRDs in place" >&2
@@ -684,8 +697,12 @@ odf_crd_sweep() {
       echo "CRD lookup failed for $group - leaving its CRDs in place" >&2
       continue
     fi
-    [ -n "$crds" ] && oc delete crd $crds --wait=false
+    if [ -n "$crds" ] && ! oc delete crd $crds --wait=false; then
+      echo "CRD deletion failed for $group" >&2
+      failed=1
+    fi
   done
+  return "$failed"
 }
 odf_crd_sweep
 ```
@@ -939,7 +956,7 @@ oc get clusterrolebinding ocs-metrics-exporter --ignore-not-found
 Then decide each one by liveness, not by label:
 
 - **A ClusterRoleBinding is dead** when its ClusterRole is missing, or none of its ServiceAccount subjects exists, or the only live ServiceAccount is `openshift-monitoring/prometheus-k8s` and the role is `ocs-metrics-reader` or (`rook-ceph-metrics` with no upstream Rook left). A missing role makes the binding dead even with `User` or `Group` subjects; otherwise a `User` or `Group` subject cannot be proven absent — keep that binding. (Seen: `k8s-metrics-sm-prometheus-k8s` bound only a ServiceAccount in a namespace `odf-storage` that did not exist.)
-- **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive. Evaluate each `clusterRoleSelectors` entry in full: every `matchLabels` pair and every `matchExpressions` term (`In`, `NotIn` — also true when the key is absent —, `Exists`, `DoesNotExist`) must hold; an empty selector selects nothing; if you cannot evaluate a selector (an unknown operator, a malformed term), keep the role.
+- **A ClusterRole is dead** only if no live ClusterRoleBinding or RoleBinding anywhere references it and it does not aggregate into another role. A binding you have just judged dead does not keep its role alive. Evaluate each `clusterRoleSelectors` entry in full: every `matchLabels` pair and every `matchExpressions` term (`In`, `NotIn` — also true when the key is absent —, `Exists`, `DoesNotExist`) must hold; an empty selector (`{}`) selects **every** ClusterRole, because Kubernetes reads a non-nil empty label selector as "everything"; if you cannot evaluate a selector (an unknown operator, a malformed term), keep the role.
 - **A CRD is dead** only if it has zero instances, no workload or configuration names its group, no webhook targets it, and its owning operator is gone (step 5).
 
 ```bash
