@@ -110,11 +110,11 @@ Known limitation: an upstream Rook installed **inside** `openshift-storage` is c
 
 ### Helm Uninstall
 
-`helm uninstall` deletes every object of the release, CRDs included, unless the object carries `helm.sh/resource-policy: keep`. This function needs a fresh "upstream Rook only, in: `$ROOK_NAMESPACE`" verdict, refuses while any `ceph.rook.io` object is left in `$ROOK_NAMESPACE` (removing the operator would orphan the `CephCluster`; run `rook_delete_ceph_crs` first), checks that the release exists there, and refuses when any `CustomResourceDefinition` in the release manifest is not kept: CRDs are removed only by `rook_delete_crds`. Without a YAML parser the keep test is strict: the CRD's `metadata:` block must hold an `annotations:` block with the exact line `helm.sh/resource-policy: keep`, indented the way Helm renders it (two spaces for `annotations:`, four for the entry); any other form counts as not kept.
+`helm uninstall` deletes every object of the release, CRDs included, unless the object carries `helm.sh/resource-policy: keep`. This function needs a fresh "upstream Rook only, in: `$ROOK_NAMESPACE`" verdict, refuses while any `ceph.rook.io` object is left in `$ROOK_NAMESPACE` (removing the operator would orphan the `CephCluster`; run `rook_delete_ceph_crs` first), checks that the release exists there, and refuses when any `CustomResourceDefinition` in the release manifest is not kept: CRDs are removed only by `rook_delete_crds`. The manifest is parsed as YAML by `oc create --dry-run=client -o json` (nothing is created), Lists are flattened, and every CRD must carry `metadata.annotations` `helm.sh/resource-policy: keep` exactly; a CRD without a readable `metadata.name`, or a manifest `oc` cannot parse, refuses too. The live CRDs must agree: every CRD the manifest names, and every live CRD with this release's `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace`, has to carry the same annotation.
 
 ```bash
 rook_helm_uninstall() {
-  local release="${ROOK_HELM_RELEASE:-}" manifest line kinds kind out left="" crd=0 keep=0 section="" blocked=0 json unkept name="" crd_names=""
+  local release="${ROOK_HELM_RELEASE:-}" manifest kinds kind out left="" blocked=0 parsed crds unnamed json unkept
   if [ -z "$release" ]; then
     echo "set ROOK_HELM_RELEASE to the operator chart release" >&2
     return 1
@@ -131,47 +131,32 @@ rook_helm_uninstall() {
   fi
   manifest=$(helm get manifest "$release" -n "$ROOK_NAMESPACE") || {
     echo "no Helm release $release in $ROOK_NAMESPACE" >&2; return 1; }
-  # One YAML document at a time; the trailing "---" closes the last one. A CRD is
-  # kept only by the exact metadata.annotations line Helm renders.
-  while IFS= read -r line; do
-    if [ "$line" = "---" ]; then
-      if [ "$crd" -eq 1 ] && [ "$keep" -eq 0 ]; then
-        echo "release $release would delete a CRD without metadata.annotations helm.sh/resource-policy: keep" >&2
-        blocked=1
-      elif [ "$crd" -eq 1 ] && [ -z "$name" ]; then
-        echo "release $release has a CRD whose metadata.name cannot be read" >&2
-        blocked=1
-      elif [ "$crd" -eq 1 ]; then
-        crd_names="$crd_names $name"
-      fi
-      crd=0; keep=0; section=""; name=""
-      continue
-    fi
-    # Any kind line naming a CRD counts, quoted or nested (a List of CRDs): over-
-    # matching only refuses, under-matching would delete.
-    if [[ $line == *kind:*CustomResourceDefinition* ]]; then
-      crd=1
-    fi
-    case "$line" in
-      "metadata:") section=metadata ;;
-      "  annotations:") if [ "$section" = metadata ]; then section=annotations; fi ;;
-      "    helm.sh/resource-policy: keep") if [ "$section" = annotations ]; then keep=1; fi ;;
-      "    "*) ;;
-      "  "*) if [ "$section" = annotations ]; then section=metadata; fi ;;
-      *) section="" ;;
-    esac
-    if [ "$section" = metadata ] && [[ $line == "  name: "* ]]; then
-      name=${line#  name: }
-      name=${name//[\"\']/}
-    fi
-  done <<<"$manifest"$'\n---'
-  # The line scan cannot tell a real annotation from the same text inside a
-  # multi-line annotation value; the live CRDs can. Check every CRD the manifest
-  # names, and every live CRD that carries this release's ownership annotations.
+  # Parse the manifest with the Kubernetes YAML parser (client side, nothing is
+  # created) rather than line by line: folded scalars, multi-line annotation
+  # values, and Lists of CRDs all read as YAML means them.
+  parsed=$(oc create --dry-run=client --validate=false -o json -f - <<<"$manifest") || {
+    echo "could not parse the manifest of release $release - Helm release not uninstalled" >&2; return 1; }
+  # shellcheck disable=SC2016 # jq variables
+  crds=$(jq -c 'def flat: if .kind == "List" then (.items[]? | flat) else . end;
+    [flat | select(.kind == "CustomResourceDefinition")
+     | {name: (.metadata.name // ""),
+        keep: ((.metadata.annotations // {})["helm.sh/resource-policy"] == "keep")}]' <<<"$parsed") || return 1
+  unnamed=$(jq -r '[.[] | select(.name == "")] | length' <<<"$crds") || return 1
+  if [ "$unnamed" -ne 0 ]; then
+    echo "release $release has a CRD whose metadata.name cannot be read" >&2
+    blocked=1
+  fi
+  unkept=$(jq -r '.[] | select(.name != "" and (.keep | not)) | .name' <<<"$crds") || return 1
+  if [ -n "$unkept" ]; then
+    echo "release $release would delete a CRD without metadata.annotations helm.sh/resource-policy: keep: ${unkept//$'\n'/ }" >&2
+    blocked=1
+  fi
+  # The live CRDs must agree: every CRD the manifest names, and every live CRD that
+  # carries this release's ownership annotations, has to carry keep as well.
   json=$(oc get crd -o json) || return 1
   # shellcheck disable=SC2016 # jq variables
-  unkept=$(jq -r --arg rel "$release" --arg ns "$ROOK_NAMESPACE" --arg names "$crd_names" '
-    ($names | split(" ") | map(select(. != ""))) as $listed
+  unkept=$(jq -r --arg rel "$release" --arg ns "$ROOK_NAMESPACE" --argjson crds "$crds" '
+    [$crds[].name | select(. != "")] as $listed
     | .items[]
     | (.metadata.annotations // {}) as $a
     | select(.metadata.name as $n | any($listed[]; . == $n)
@@ -771,7 +756,7 @@ oc -n "$ROOK_NAMESPACE" get pods -l app=rook-ceph-cleanup
 If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
-2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. A check that cannot run (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, `pvs`, or `sfdisk`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry. The only signatures `wipefs` and `blkid -p` may find on it are `ceph_bluestore` and a partition table (`gpt`, `PMBR`, `dos`) whose on-disk entries (`sfdisk -d`) list no partition, whatever the kernel shows; `xfs`, `ext4`, `LVM2_member`, `crypto_LUKS`, `swap`, or any other signature blocks it. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. If it fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
+2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. The script first proves that the first and last MiB of the disk can be read, because a signature probe that cannot read reports "nothing found" just like an empty disk. A check that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry, and the only signature `wipefs` and `blkid -p` may find on it is `ceph_bluestore`. Any other signature blocks it, a partition table included, even an empty one: its backup copy or a hybrid MBR can still list partitions that neither the primary table nor the kernel shows, so inspect such a disk and clear it by hand. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. If it fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
 
 ```bash
 rook_wipe_osd_disk() {
@@ -806,14 +791,21 @@ nl=${nl%x}
 link=$1
 d=$(readlink -f "$link")
 [[ $d == /dev/?* ]] || { echo "blocked: $link does not resolve to a device"; exit 3; }
+# Prove the first and last MiB can be read before trusting any probe: a probe
+# that cannot read the disk reports "nothing found" like an empty disk does.
+size=$(blockdev --getsize64 "$d")
+[[ $size =~ ^[0-9]+$ ]] && [ "$size" -ge 2097152 ] || { echo "blocked: size of $d is ${size:-unknown}, not readable as a disk of at least 2 MiB"; exit 3; }
+dd if="$d" of=/dev/null bs=1048576 count=1 status=none
+dd if="$d" of=/dev/null bs=1048576 count=1 skip=$((size - 1048576)) iflag=skip_bytes status=none
 type=$(lsblk -dno TYPE "$d")
 majmin=$(lsblk -dno MAJ:MIN "$d")
 majmin=${majmin// /}
 names=$(lsblk -nro NAME "$d")
 holders=$(ls -A "/sys/class/block/${d##*/}/holders")
 sigs=$(wipefs --noheadings -O TYPE "$d")
-# A second, independent probe: blkid -p exits 2 when it finds nothing, and any
-# status but 0 or 2 is a failed probe, never an empty disk.
+# A second, independent probe: blkid -p exits 2 when it finds nothing (or could
+# not read, which the reads above rule out for the regions probes use); any other
+# status but 0 is a failed or ambiguous probe, never an empty disk.
 if probe=$(blkid -p -o export "$d"); then rc=0; else rc=$?; fi
 case "$rc" in
   0|2) ;;
@@ -830,7 +822,6 @@ command -v pvs >/dev/null || { echo "blocked: pvs is not available, so LVM use c
 pvlist=$(pvs --noheadings -o pv_name)
 echo "device $d: type ${type:-unknown}, signatures: ${sigs//$nl/ }"
 blocked=""
-table=""
 [ "$type" = disk ] || blocked="$blocked; type ${type:-unknown}, not a whole disk"
 if [[ $names == *$nl* ]]; then
   children=${names#*$nl}
@@ -846,27 +837,12 @@ done
 for p in $pvlist; do
   if [ "$p" = "$d" ] || [ "$p" = "$link" ]; then blocked="$blocked; LVM physical volume $p"; fi
 done
+# Only a BlueStore label, or nothing, is wiped. A partition table blocks too,
+# empty or not: its backup copy or a hybrid MBR can still list partitions that
+# the primary table and the kernel do not show. Inspect and clear those by hand.
 for s in $sigs; do
-  case "$s" in
-    ceph_bluestore) ;;
-    gpt|PMBR|dos) table=yes ;;
-    *) blocked="$blocked; signature $s" ;;
-  esac
+  [ "$s" = ceph_bluestore ] || blocked="$blocked; signature $s"
 done
-# A partition table counts as empty only if the on-disk table lists no
-# partition, whatever the kernel currently shows as child devices.
-if [ -n "$table" ]; then
-  dump=$(sfdisk -d "$d")
-  parts=""
-  IFS=$nl
-  for line in $dump; do
-    case "$line" in
-      /dev/*) parts="$parts ${line%% *}" ;;
-    esac
-  done
-  unset IFS
-  [ -z "$parts" ] || blocked="$blocked; on-disk partitions:$parts"
-fi
 if [ -n "$blocked" ]; then
   echo "blocked: ${blocked#; }"
   exit 3

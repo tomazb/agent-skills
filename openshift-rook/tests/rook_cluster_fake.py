@@ -136,6 +136,17 @@ if args[:1] == ["api-resources"]:
             continue
         print(name)
     raise SystemExit(0)
+if args[:1] == ["create"] and "--dry-run=client" in args:
+    # Client-side parse of a manifest from stdin, as oc prints it with -o json:
+    # one object as itself, several as a List. A YAML error fails like oc does.
+    import yaml
+    try:
+        docs = [d for d in yaml.safe_load_all(sys.stdin.read()) if d is not None]
+    except yaml.YAMLError as exc:
+        print("error: error parsing STDIN: " + str(exc).replace(chr(10), " "), file=sys.stderr)
+        raise SystemExit(1)
+    print(json.dumps(docs[0] if len(docs) == 1 else {"apiVersion": "v1", "kind": "List", "items": docs}))
+    raise SystemExit(0)
 if args[:1] == ["debug"]:
     if WORLD["node"]:
         # Run the node-side script for real, with only the mocked node tools on
@@ -333,8 +344,8 @@ NODE_FACTS = {
     # "blkid_rc" says otherwise.
     "blkid": "",
     "blkid_rc": None,
-    # sfdisk -d output: the on-disk partition table, read only when a table is found.
-    "sfdisk": "label: gpt\ndevice: /dev/sdb\nunit: sectors",
+    # blockdev --getsize64 output, in bytes.
+    "size": "1000204886016",
     "fail": {},
     "absent": [],
 }
@@ -346,9 +357,11 @@ cmd = os.path.basename(sys.argv[0])
 args = sys.argv[1:]
 with open(F["log"], "a") as fh:
     fh.write(json.dumps([cmd, *args]) + chr(10))
-if cmd in F["fail"]:
+# "wipefs -af" fails only the destructive wipefs, not its read-only probe.
+key = "wipefs -af" if cmd == "wipefs" and "-af" in args and "wipefs -af" in F["fail"] else cmd
+if key in F["fail"]:
     print(cmd + ": simulated failure", file=sys.stderr)
-    raise SystemExit(F["fail"][cmd])
+    raise SystemExit(F["fail"][key])
 def out(value):
     if value:
         print(value)
@@ -376,11 +389,11 @@ elif cmd == "blkid":
     out(F["blkid"])
     rc = F["blkid_rc"]
     raise SystemExit((0 if F["blkid"] else 2) if rc is None else rc)
-elif cmd == "sfdisk":
-    out(F["sfdisk"])
+elif cmd == "blockdev":
+    out(F["size"])
 """
 
-NODE_TOOLS = ("readlink", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs", "sfdisk", "sgdisk")
+NODE_TOOLS = ("readlink", "blockdev", "dd", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs", "sgdisk")
 
 
 def write_node_tools(directory: Path, overrides: dict) -> dict:

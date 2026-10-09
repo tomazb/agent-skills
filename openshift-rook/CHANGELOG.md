@@ -130,14 +130,13 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   with operator finalizers, then cluster RBAC ("Cluster RBAC left by Rook") and CRDs.
 - **Destructive steps tightened further.** `rook_helm_uninstall` refuses while any
   `ceph.rook.io` object is left in the Rook namespace (removing the operator would
-  orphan the `CephCluster`). It counts a manifest CRD as kept only by the exact
-  `metadata.annotations` line `helm.sh/resource-policy: keep` as Helm renders it,
-  treats any kind line naming `CustomResourceDefinition` (quoted, or nested in a
-  List) as a CRD, refuses a CRD whose `metadata.name` it cannot read, and also
-  refuses while a live CRD lacks that annotation, because a multi-line annotation
-  value can carry the same text. The live check covers every CRD the manifest
-  names, with or without Helm ownership annotations, and every live CRD that
-  carries this release's. `rook_delete_crds` treats a CRD with either
+  orphan the `CephCluster`). It parses the release manifest as YAML with
+  `oc create --dry-run=client -o json` (nothing is created), flattens Lists, and
+  refuses any CRD without `metadata.annotations` `helm.sh/resource-policy: keep`,
+  any CRD without a readable `metadata.name`, and a manifest `oc` cannot parse; a
+  keep line inside another annotation's value or a folded name reads as YAML means
+  it. The live CRDs must agree: every CRD the manifest names, with or without Helm
+  ownership annotations, and every live CRD that carries this release's. `rook_delete_crds` treats a CRD with either
   `meta.helm.sh/release-name` or `meta.helm.sh/release-namespace` as Helm-owned
   and accepts it only when both match this Rook, so a same-named release in
   another namespace is another product's.
@@ -153,14 +152,17 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   checks the disk and wipes the resolved device right after the last check, only if
   every check passed. That narrows the window between check and wipe; it does not
   lock the disk, so nothing else on the node may be claiming it meanwhile. A check
-  that cannot run (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe,
-  `findmnt`, `swapon`, `pvs`, or `sfdisk`, `blkid -p` with any status but 0 or 2,
-  or no `pvs`) blocks the wipe. The disk must be a whole disk with no partitions,
-  holders, host mount, active swap, or `pvs` entry. Its only signatures, from
-  `wipefs` and an independent `blkid -p` probe, may be `ceph_bluestore` or a
-  partition table whose on-disk entries (`sfdisk -d`) list no partition, whatever
-  the kernel shows; `xfs`, `ext4`, and every other signature block it. A wipe that
-  fails after it started is reported as possibly partial, not as "disk not wiped".
+  that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe,
+  `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no
+  `pvs`) blocks the wipe, and before any probe the script proves the first and last
+  MiB of the disk can be read, because a probe that cannot read reports "nothing
+  found" like an empty disk. The disk must be a whole disk with no partitions,
+  holders, host mount, active swap, or `pvs` entry, and the only signature `wipefs`
+  and an independent `blkid -p` probe may find is `ceph_bluestore`. Every other
+  signature blocks it, a partition table included, even an empty one: its backup
+  copy or a hybrid MBR can list partitions that neither the primary table nor the
+  kernel shows. A wipe that fails after it started is reported as possibly
+  partial, not as "disk not wiped".
 - **1.7.0's audit rules carried into the rewrite.** `PRIOR_DEFAULT_STORAGE_CLASS`
   keeps its meaning: unset requires exactly one default, empty accepts a cluster with
   no default, and a name must match the current default. A `rook-ceph-metrics` binding
@@ -172,7 +174,7 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   `oc whoami --show-server` fails or prints nothing, `post_uninstall_audit.sh` reports
   `FAIL` and exits 1, and `classify_ceph_ownership.sh` stops with "unknown"; both used
   to go on against "unknown server".
-- Tests: 65 to 438. The classifier, every audit check (residue, clean, and kind-absent
+- Tests: 65 to 444. The classifier, every audit check (residue, clean, and kind-absent
   variants), and the runbook functions, extracted verbatim from the markdown, run
   against a fake `oc` driven by a cluster description.
 
