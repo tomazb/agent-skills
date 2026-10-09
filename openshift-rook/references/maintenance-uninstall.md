@@ -295,6 +295,24 @@ oc get namespace "$ROOK_NAMESPACE"   # repeat until NotFound; if it stays Termin
 Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps finalizer `csi.ceph.com/cleanup` after the CSI operator Deployment is gone. That finalizer does not clear itself, so delete the `csi.ceph.io` objects while the CSI operator is still running (`rook_delete_operator` does). If it is already gone and the namespace is still stuck, clear finalizers on the **confirmed** blocking CRs, then leave the `clientprofiles.csi.ceph.io` CustomResourceDefinition to `rook_delete_crds` once it has no instances. This function does not use `rook_classify`, because an orphaned `CephCluster` or ceph-csi makes the classification "unknown" in exactly this state. It is bounded instead: it only touches objects in the Rook namespace that are already being deleted (`deletionTimestamp` set), refuses `openshift-storage` (ODF's), refuses while any Deployment, DaemonSet, or StatefulSet is left there, refuses while a `rook-ceph-operator` Deployment that is not being deleted exists in any namespace, and refuses while any `app=rook-ceph-operator` pod exists, terminating ones included (an operator that still runs, here or elsewhere, does the cleanup the finalizer guards; an external-mode `CephCluster` has no workloads in its own namespace). Pass `csi.ceph.io`, or `ceph.rook.io` if a `CephCluster` stays in `Deleting`; keep mounts and consumers removed before clearing any finalizer:
 
 ```bash
+# No Rook operator may be left anywhere: no rook-ceph-operator Deployment that is
+# not being deleted, and no operator pod, terminating ones included.
+rook_no_operator() {
+  local json left
+  json=$(oc get deployments -A --field-selector metadata.name=rook-ceph-operator -o json) || return 1
+  left=$(jq -r '.items[] | select(.metadata.deletionTimestamp == null) | "\(.metadata.namespace)/\(.metadata.name)"' <<<"$json") || return 1
+  if [ -n "$left" ]; then
+    echo "a Rook operator still runs: ${left//$'\n'/ } - it owns these finalizers" >&2
+    return 1
+  fi
+  # A Deployment being deleted can still have running (or terminating) pods that
+  # act on these objects; wait until no operator pod is left anywhere.
+  left=$(oc get pods -A -l app=rook-ceph-operator -o name) || return 1
+  if [ -n "$left" ]; then
+    echo "rook-ceph-operator pods still exist: ${left//$'\n'/ } - wait until they are gone" >&2
+    return 1
+  fi
+}
 rook_clear_finalizers() {
   local group="${1:?usage: rook_clear_finalizers <csi.ceph.io|ceph.rook.io>}"
   local ns left kinds kind json items item
@@ -311,22 +329,10 @@ rook_clear_finalizers() {
     [ -z "$items" ] || left="$left ${items//$'\n'/ }"
   done
   if [ -n "$left" ]; then
-    echo "workloads still run in $ns:$left - remove the operators first; no finalizer cleared" >&2
+    echo "workloads remain in $ns:$left - remove them first (Ceph daemons of a CephCluster stuck in Deleting: rook_delete_ceph_daemons); no finalizer cleared" >&2
     return 1
   fi
-  json=$(oc get deployments -A --field-selector metadata.name=rook-ceph-operator -o json) || return 1
-  left=$(jq -r '.items[] | select(.metadata.deletionTimestamp == null) | "\(.metadata.namespace)/\(.metadata.name)"' <<<"$json") || return 1
-  if [ -n "$left" ]; then
-    echo "a Rook operator still runs: ${left//$'\n'/ } - it owns these finalizers; no finalizer cleared" >&2
-    return 1
-  fi
-  # A Deployment being deleted can still have running (or terminating) pods that
-  # act on these objects; wait until no operator pod is left anywhere.
-  left=$(oc get pods -A -l app=rook-ceph-operator -o name) || return 1
-  if [ -n "$left" ]; then
-    echo "rook-ceph-operator pods still exist: ${left//$'\n'/ } - wait until they are gone; no finalizer cleared" >&2
-    return 1
-  fi
+  rook_no_operator || { echo "no finalizer cleared" >&2; return 1; }
   kinds=$(oc api-resources --api-group="$group" --namespaced=true --verbs=list -o name) || return 1
   for kind in $kinds; do
     json=$(oc -n "$ns" get "$kind" -o json) || return 1
@@ -341,6 +347,36 @@ rook_clear_finalizers() {
   done
 }
 rook_clear_finalizers csi.ceph.io
+```
+
+A `CephCluster` deleted after its operator stays in `Deleting`, and the mon, mgr, OSD, and other daemon workloads it owns stay in `$ROOK_NAMESPACE` until its finalizer clears, so `rook_clear_finalizers ceph.rook.io` refuses. After the proofs in **Orphans After An Interrupted Uninstall**, delete those daemon workloads and rerun it. This function deletes only Deployments, DaemonSets, and StatefulSets in `$ROOK_NAMESPACE` whose owner is a `CephCluster` there that is already being deleted, without waiting; it refuses `openshift-storage`, refuses while any Rook operator is left (as above), and refuses when no `CephCluster` in the namespace is being deleted:
+
+```bash
+rook_delete_ceph_daemons() {
+  local ns json uids kind items item
+  rook_need_namespace || { echo "use the openshift-odf skill for openshift-storage" >&2; return 1; }
+  ns="$ROOK_NAMESPACE"
+  rook_no_operator || { echo "no workload deleted" >&2; return 1; }
+  json=$(oc -n "$ns" get cephclusters.ceph.rook.io -o json) || return 1
+  uids=$(jq -c '[.items[] | select(.metadata.deletionTimestamp != null) | .metadata.uid]' <<<"$json") || return 1
+  if [ "$uids" = "[]" ]; then
+    echo "no CephCluster is being deleted in $ns - no workload deleted" >&2
+    return 1
+  fi
+  for kind in deployments daemonsets statefulsets; do
+    json=$(oc -n "$ns" get "$kind" -o json) || return 1
+    # shellcheck disable=SC2016 # jq variables
+    items=$(jq -r --arg kind "$kind" --argjson uids "$uids" '.items[]
+      | select(any(.metadata.ownerReferences[]?; .kind == "CephCluster" and (.uid as $u | any($uids[]; . == $u))))
+      | "\($kind)/\(.metadata.name)"' <<<"$json") || return 1
+    for item in $items; do
+      echo "deleting $item in $ns (owned by a CephCluster being deleted)"
+      oc -n "$ns" delete "$item" --wait=false || return 1
+    done
+  done
+}
+rook_delete_ceph_daemons
+rook_clear_finalizers ceph.rook.io
 ```
 
 Several objects are **cluster-scoped and survive the namespace deletion** — they must be removed by name or a later reinstall reuses stale definitions. Match them by provisioner or driver, never by name: a StorageClass named `rook-ceph-*` may use another provisioner, and a Rook class may carry any name. The driver prefix is `$ROOK_CSI_PREFIX` (default: the namespace), so a second Ceph cluster's `.csi.ceph.com` drivers and snapshot classes are never listed. This function is read-only:
@@ -670,7 +706,7 @@ oc patch objectbucket <name> --type merge -p '{"metadata":{"finalizers":null}}'
 
 ### csi.ceph.io and ceph.rook.io CRs with operator finalizers
 
-`drivers`, `operatorconfigs`, `cephconnections`, `clientprofiles`, and `clientprofilemappings` in `csi.ceph.io`, and a `CephCluster` or pool in `ceph.rook.io`, keep their operator finalizers once the operators are gone and hold the Rook namespace in `Terminating`. Clear them with `rook_clear_finalizers` (above), after the proofs in this section.
+`drivers`, `operatorconfigs`, `cephconnections`, `clientprofiles`, and `clientprofilemappings` in `csi.ceph.io`, and a `CephCluster` or pool in `ceph.rook.io`, keep their operator finalizers once the operators are gone and hold the Rook namespace in `Terminating`. Clear them with `rook_clear_finalizers` (above), after the proofs in this section. A `CephCluster` stuck in `Deleting` still owns its daemon workloads, which block that function; remove them first with `rook_delete_ceph_daemons` (above).
 
 ### Cluster RBAC left by Rook
 

@@ -100,6 +100,8 @@ def test_runbook_defines_the_tested_functions():
         "rook_delete_ceph_crs",
         "rook_delete_operator",
         "rook_clear_finalizers",
+        "rook_no_operator",
+        "rook_delete_ceph_daemons",
         "rook_list_cluster_scoped",
         "rook_wipe_data_dir",
         "rook_delete_crds",
@@ -932,7 +934,7 @@ def test_clear_finalizers_refuses_while_deployments_remain(tmp_path):
     result, mutations = _run(tmp_path, "rook_clear_finalizers csi.ceph.io", objects=objects)
 
     assert "rc=1" in result.stdout
-    assert "remove the operators first" in result.stderr
+    assert "workloads remain in rook-ceph: deployments/rook-ceph-operator - remove them first" in result.stderr
     assert mutations == []
 
 
@@ -944,7 +946,73 @@ def test_clear_finalizers_refuses_while_other_workloads_remain(tmp_path, kind):
     result, mutations = _run(tmp_path, "rook_clear_finalizers csi.ceph.io", objects=objects)
 
     assert "rc=1" in result.stdout
-    assert f"workloads still run in rook-ceph: {kind}/csi-rbdplugin" in result.stderr
+    assert f"workloads remain in rook-ceph: {kind}/csi-rbdplugin" in result.stderr
+    assert "rook_delete_ceph_daemons" in result.stderr
+    assert mutations == []
+
+
+def _owned(name, kind, owner_uid):
+    return {"metadata": meta(name, "rook-ceph", ownerReferences=[
+        {"apiVersion": "ceph.rook.io/v1", "kind": kind, "name": "rook-ceph", "uid": owner_uid}])}
+
+
+STUCK_CLUSTER = {"metadata": meta("rook-ceph", "rook-ceph", uid="uid-stuck", finalizers=["cephcluster.ceph.rook.io"],
+                                  deletionTimestamp=OLD)}
+
+
+def test_delete_ceph_daemons_removes_only_workloads_of_a_cephcluster_being_deleted(tmp_path):
+    objects = {
+        "cephclusters.ceph.rook.io": [STUCK_CLUSTER],
+        "deployments": [_owned("rook-ceph-mon-a", "CephCluster", "uid-stuck"),
+                        _owned("rook-ceph-other", "CephCluster", "uid-other"),
+                        {"metadata": meta("unowned", "rook-ceph")}],
+        "daemonsets": [_owned("rook-ceph-crashcollector", "CephCluster", "uid-stuck")],
+        "statefulsets": [_owned("not-a-cluster", "CephFilesystem", "uid-stuck")],
+    }
+
+    result, mutations = _run(tmp_path, "rook_delete_ceph_daemons", objects=objects)
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert mutations == ["-n rook-ceph delete deployments/rook-ceph-mon-a --wait=false",
+                         "-n rook-ceph delete daemonsets/rook-ceph-crashcollector --wait=false"]
+
+
+@pytest.mark.parametrize(
+    ("extra", "stderr"),
+    [
+        ({"deployments": [rook_operator("rook-ceph")]}, "a Rook operator still runs"),
+        ({"pods": [{"metadata": meta("rook-ceph-operator-5d9c7", "rook-ceph", labels={"app": "rook-ceph-operator"})}]},
+         "rook-ceph-operator pods still exist"),
+    ],
+    ids=["operator-deployment", "operator-pod"],
+)
+def test_delete_ceph_daemons_refuses_while_an_operator_is_left(tmp_path, extra, stderr):
+    objects = merge({"cephclusters.ceph.rook.io": [STUCK_CLUSTER]}, extra)
+
+    result, mutations = _run(tmp_path, "rook_delete_ceph_daemons", objects=objects)
+
+    assert "rc=1" in result.stdout
+    assert stderr in result.stderr
+    assert "no workload deleted" in result.stderr
+    assert mutations == []
+
+
+def test_delete_ceph_daemons_refuses_without_a_cephcluster_being_deleted(tmp_path):
+    live = {"metadata": meta("rook-ceph", "rook-ceph", uid="uid-live")}
+    objects = {"cephclusters.ceph.rook.io": [live],
+               "deployments": [_owned("rook-ceph-mon-a", "CephCluster", "uid-live")]}
+
+    result, mutations = _run(tmp_path, "rook_delete_ceph_daemons", objects=objects)
+
+    assert "rc=1" in result.stdout
+    assert "no CephCluster is being deleted in rook-ceph - no workload deleted" in result.stderr
+    assert mutations == []
+
+
+def test_delete_ceph_daemons_refuses_odfs_namespace(tmp_path):
+    result, mutations = _run(tmp_path, "ROOK_NAMESPACE=openshift-storage; rook_delete_ceph_daemons")
+
+    assert "rc=1" in result.stdout
     assert mutations == []
 
 

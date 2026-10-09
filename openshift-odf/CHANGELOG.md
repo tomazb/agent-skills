@@ -29,6 +29,7 @@ Corrections to the 1.20.0 audit and CRD sweep.
   ODF's own claims and buckets stayed. The sweep now runs it in that case too; it
   keeps every claim of another provisioner, and its nonzero status makes the sweep
   return nonzero.
+
 ## 1.21.0
 
 - The post-uninstall audit no longer treats `openshift-monitoring/prometheus-k8s` as proof that `rook-ceph-metrics` or `ocs-metrics-reader` are still in use. Those roles are residue once no Ceph operator remains; `rook-ceph-metrics` stays while upstream Rook is running.

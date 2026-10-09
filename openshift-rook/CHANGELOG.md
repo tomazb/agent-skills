@@ -146,6 +146,10 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   refuses while any Deployment, DaemonSet, or StatefulSet is left in the namespace, and
   refuses while a `rook-ceph-operator` Deployment that is not being deleted exists in
   any namespace or any `app=rook-ceph-operator` pod exists, terminating ones included.
+  A `CephCluster` deleted after its operator stays `Deleting` and keeps its daemon
+  workloads, which block that check; new `rook_delete_ceph_daemons` deletes only the
+  Deployments, DaemonSets, and StatefulSets owned by a `CephCluster` already being
+  deleted, refuses while any Rook operator is left, and the refusal names it.
   `rook_record_data_dir` also records the namespace, and `rook_wipe_data_dir` refuses a
   path recorded for another namespace and warns when no mon IDs were recorded.
   `rook_wipe_osd_disk` refuses a `-part<N>` link and runs one node-side script that
@@ -174,7 +178,7 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   `oc whoami --show-server` fails or prints nothing, `post_uninstall_audit.sh` reports
   `FAIL` and exits 1, and `classify_ceph_ownership.sh` stops with "unknown"; both used
   to go on against "unknown server".
-- Tests: 65 to 444. The classifier, every audit check (residue, clean, and kind-absent
+- Tests: 65 to 449. The classifier, every audit check (residue, clean, and kind-absent
   variants), and the runbook functions, extracted verbatim from the markdown, run
   against a fake `oc` driven by a cluster description.
 
