@@ -31,8 +31,10 @@ REQUIRED_FILES = [
     "CHANGELOG.md",
     "package.json",
     "assets/smoke-pvc-writer.yaml",
+    "scripts/classify_ceph_ownership.sh",
     "scripts/patch_rook_ceph_manifest.py",
     "scripts/post_uninstall_audit.sh",
+    "scripts/rook_common.sh",
     "scripts/render_smoke_manifest.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
@@ -543,6 +545,17 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/maintenance-uninstall.md",
+        "ownership-gated uninstall and interrupted-uninstall orphan guidance",
+        [
+            "scripts/classify_ceph_ownership.sh",
+            "Orphans After An Interrupted Uninstall",
+            "restart the kubelet on that node",
+            "never delete the volume directory under a running kubelet",
+            "Cluster RBAC left by Rook",
+        ],
+    )
+    require(
         "references/validated-rook-ceph-sno.md",
         "validated SNO evidence",
         [
@@ -609,6 +622,32 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "upgrade guidance that applies csi-operator before common.yaml",
     )
 
+    return issues
+
+
+# `oc`/`kubectl delete -f` (or --filename) of a Rook install manifest. The CRD manifest
+# and csi-operator.yaml define CRDs, and common/operator manifests cluster-scoped RBAC
+# and SCCs whose names ODF and a second Rook share: deleting them by file removes
+# objects other installs still use.
+MANIFEST_DELETE_RE = re.compile(
+    r"\b(?:oc|kubectl)\b[^\n`]*?\bdelete\b[^\n`]*?(?:\s-f(?:\s+|=)?|\s--filename(?:=|\s+))"
+    r"\S*?(?:crds|csi-operator|common|operator(?:-openshift)?)\.yaml"
+)
+
+
+def check_manifest_deletes(root: Path) -> list[str]:
+    """Forbid deleting Rook install manifests by file in the reference runbooks."""
+    issues: list[str] = []
+    refs = root / "references"
+    if not refs.is_dir():
+        return issues
+    for path in sorted(refs.glob("*.md")):
+        for number, line in enumerate(read_text(path).splitlines(), start=1):
+            if MANIFEST_DELETE_RE.search(line):
+                issues.append(
+                    f"{path.relative_to(root)}:{number}: forbidden manifest delete by file "
+                    "(it removes CRDs, RBAC, or SCCs other installs still use)"
+                )
     return issues
 
 
@@ -734,6 +773,7 @@ def validate_root(root: Path) -> list[str]:
     issues.extend(check_phrase_group(all_text, UPGRADE_PHRASES, "upgrade safety"))
     issues.extend(check_content_regressions(root))
     issues.extend(check_required_reference_guidance(root))
+    issues.extend(check_manifest_deletes(root))
 
     for md_file in sorted(root.rglob("*.md")):
         if md_file == skill_file:
