@@ -402,8 +402,9 @@ def test_sweep_returns_nonzero_when_a_crd_delete_fails_and_still_tries_the_other
          "instance deletion incomplete for objectbucket.io"),
         ({"api-resources:noobaa.io": "Error from server: discovery failed"},
          "kind discovery failed for noobaa.io"),
+        ({"crd": "Error from server (Forbidden): cannot list crds"}, "CRD lookup failed for"),
     ],
-    ids=["bucket-cleanup", "discovery"],
+    ids=["bucket-cleanup", "discovery", "crd-lookup"],
 )
 def test_sweep_returns_nonzero_when_it_leaves_a_groups_crds_in_place(tmp_path, errors, line):
     result, deletes = _run(tmp_path, "odf_crd_sweep", errors=errors)

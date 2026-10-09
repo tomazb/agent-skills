@@ -249,7 +249,11 @@ def test_classify_passes_the_namespace_and_prefix(tmp_path):
 
 
 def test_helm_uninstall_runs_for_a_release_whose_crds_are_kept(tmp_path):
-    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=OPERATOR,
+    # The manifest and the live CRD both carry the keep annotation.
+    kept = [c for c in CRDS if c["metadata"]["name"] != "cephclusters.ceph.rook.io"] + [
+        {"metadata": meta("cephclusters.ceph.rook.io", annotations={"helm.sh/resource-policy": "keep"}),
+         "spec": {"group": "ceph.rook.io"}}]
+    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects={**OPERATOR, "crd": kept},
                              releases={"rook-ceph/rook-ceph": ROOK_CHART + KEPT_CRD})
 
     assert "rc=0" in result.stdout, result.stderr
@@ -345,6 +349,29 @@ def test_helm_uninstall_refuses_when_a_live_crd_of_the_release_is_not_kept(tmp_p
     assert "rc=1" in result.stdout
     assert "live CRDs of release rook-ceph lack metadata.annotations helm.sh/resource-policy: keep: " \
         "cephclusters.ceph.rook.io" in result.stderr
+    assert mutations == []
+
+
+def test_helm_uninstall_checks_a_manifest_crd_by_name_without_ownership_annotations(tmp_path):
+    # The live CRD lost its Helm annotations; the manifest still names it.
+    objects = {**OPERATOR, "crd": _live_crd({})}
+
+    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=objects,
+                             releases={"rook-ceph/rook-ceph": ROOK_CHART + SPOOFED_KEEP})
+
+    assert "rc=1" in result.stdout
+    assert "lack metadata.annotations helm.sh/resource-policy: keep: cephclusters.ceph.rook.io" in result.stderr
+    assert mutations == []
+
+
+def test_helm_uninstall_refuses_a_crd_without_a_readable_name(tmp_path):
+    nameless = "---\nkind: CustomResourceDefinition\nmetadata:\n  annotations:\n    helm.sh/resource-policy: keep\n"
+
+    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=OPERATOR,
+                             releases={"rook-ceph/rook-ceph": ROOK_CHART + nameless})
+
+    assert "rc=1" in result.stdout
+    assert "has a CRD whose metadata.name cannot be read" in result.stderr
     assert mutations == []
 
 
@@ -521,6 +548,9 @@ def _crd(name, group, labels=None, annotations=None):
         # No release namespace recorded: ownership cannot be proven.
         (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-name": "rook-ceph"}),
          [], "Helm release /rook-ceph"),
+        # Only a release namespace recorded: Helm-owned, and not provably ours.
+        (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-namespace": "other-storage"}),
+         [], "Helm release other-storage/"),
         (_crd("objectbuckets.objectbucket.io", "objectbucket.io"),
          [{"metadata": meta("noobaa-operator.v5.17.0", "noobaa"),
            "spec": {"customresourcedefinitions": {"owned": [{"name": "objectbuckets.objectbucket.io"}]}}}],
@@ -531,7 +561,7 @@ def _crd(name, group, labels=None, annotations=None):
          "listed by a ClusterServiceVersion"),
     ],
     ids=["olm-managed", "olm-package-label", "other-helm-release", "same-name-other-namespace",
-         "no-release-namespace", "csv-owned", "csv-required"],
+         "no-release-namespace", "release-namespace-only", "csv-owned", "csv-required"],
 )
 def test_crd_deletion_refuses_crds_another_product_manages(tmp_path, crd, csvs, reason):
     crds = [c for c in CRDS if c["metadata"]["name"] != crd["metadata"]["name"]] + [crd]
@@ -774,9 +804,13 @@ def test_osd_disk_wipe_checks_then_wipes_the_resolved_device_in_one_run(tmp_path
     assert len([m for m in mutations if m.startswith("debug ")]) == 1
     assert mutations[0].endswith(f" _ {DISK}")
     assert _wiped(calls) == [["wipefs", "-af", "/dev/sdb"], ["sgdisk", "--zap-all", "/dev/sdb"]]
-    # Every check ran before the first destructive call.
+    # Every check ran before the first destructive call; the on-disk table is read
+    # only when a partition-table signature was found.
     first = calls.index(["wipefs", "-af", "/dev/sdb"])
-    assert {c[0] for c in calls[:first]} == {"readlink", "lsblk", "ls", "wipefs", "findmnt", "swapon", "pvs"}
+    checks = {c[0] for c in calls[:first]}
+    assert checks >= {"readlink", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs"}
+    assert ("sfdisk" in checks) == any(t in signatures for t in ("gpt", "dos"))
+    assert "wiping /dev/sdb" in result.stdout
 
 
 @pytest.mark.parametrize(
@@ -797,9 +831,16 @@ def test_osd_disk_wipe_checks_then_wipes_the_resolved_device_in_one_run(tmp_path
         ({"signatures": "gpt\nPMBR\nxfs"}, "signature xfs"),
         ({"device": "sdb"}, "does not resolve to a device"),
         ({"absent": ["pvs"]}, "pvs is not available"),
+        # wipefs saw nothing, the independent blkid probe did
+        ({"blkid": "DEVNAME=/dev/sdb\nTYPE=xfs"}, "signature xfs"),
+        ({"blkid_rc": 8}, "blkid -p failed with status 8"),
+        # the kernel shows no partition, the on-disk table lists one
+        ({"signatures": "gpt\nPMBR", "sfdisk": "label: gpt\ndevice: /dev/sdb\n/dev/sdb1 : start=2048, size=4096"},
+         "on-disk partitions: /dev/sdb1"),
     ],
     ids=["partition", "lvm-volume", "children", "holders", "mounted", "swap-active", "physical-volume", "xfs",
-         "ext4", "lvm-member", "luks", "swap-signature", "fs-after-table", "unresolved", "pvs-missing"],
+         "ext4", "lvm-member", "luks", "swap-signature", "fs-after-table", "unresolved", "pvs-missing",
+         "blkid-only-xfs", "blkid-error", "on-disk-partition"],
 )
 def test_osd_disk_wipe_refuses_a_disk_in_use(tmp_path, facts, reason):
     result, _, calls = _wipe(tmp_path, **facts)
@@ -812,15 +853,27 @@ def test_osd_disk_wipe_refuses_a_disk_in_use(tmp_path, facts, reason):
 
 @pytest.mark.parametrize(
     ("tool", "status"),
-    [("readlink", 1), ("lsblk", 32), ("ls", 2), ("wipefs", 1), ("findmnt", 1), ("swapon", 1), ("pvs", 5)],
+    [("readlink", 1), ("lsblk", 32), ("ls", 2), ("wipefs", 1), ("findmnt", 1), ("swapon", 1), ("pvs", 5),
+     ("sfdisk", 1)],
 )
 def test_osd_disk_wipe_refuses_when_a_check_cannot_run(tmp_path, tool, status):
-    result, _, calls = _wipe(tmp_path, fail={tool: status})
+    # A partition-table signature, so the on-disk table is read too.
+    result, _, calls = _wipe(tmp_path, fail={tool: status}, signatures="gpt\nPMBR")
 
     assert "rc=1" in result.stdout
     assert "a check could not run" in result.stderr, result.stderr
     assert "disk not wiped" in result.stderr
     assert _wiped(calls) == []
+
+
+def test_osd_disk_wipe_reports_a_partial_wipe_when_a_write_fails(tmp_path):
+    result, _, calls = _wipe(tmp_path, fail={"sgdisk": 1})
+
+    assert "rc=1" in result.stdout
+    assert ["wipefs", "-af", "/dev/sdb"] in calls
+    assert "wipe step failed: sgdisk --zap-all" in result.stderr
+    assert "the disk may be partly wiped" in result.stderr
+    assert "disk not wiped" not in result.stderr
 
 
 def test_osd_disk_wipe_refuses_a_partition_link(tmp_path):

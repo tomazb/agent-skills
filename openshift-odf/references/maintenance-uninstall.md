@@ -619,7 +619,7 @@ odf_crd_sweep() {
   fi
   local groups="ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.io \
     csiaddons.openshift.io replication.storage.openshift.io ramendr.openshift.io"
-  local group kinds namespaced kind instances_deleted remaining left crds deadline failed=0
+  local group kinds namespaced kind instances_deleted remaining left crds deadline json failed=0
   if [ -z "$ROOK_NAMESPACES" ]; then
     groups="$groups ceph.rook.io csi.ceph.io objectbucket.io"
   else
@@ -697,7 +697,8 @@ odf_crd_sweep() {
     # 4. Only now the CRDs themselves.
     #    Exact spec.group, never a name suffix: "noobaa.io" must not pick up the
     #    postgresql.cnpg.noobaa.io CRDs, whose instances step 3 never checked.
-    if ! crds=$(oc get crd -o json | jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name'); then
+    if ! json=$(oc get crd -o json) ||
+       ! crds=$(jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name' <<<"$json"); then
       echo "CRD lookup failed for $group - leaving its CRDs in place" >&2
       failed=1
       continue

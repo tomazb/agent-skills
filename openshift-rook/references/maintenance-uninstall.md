@@ -114,7 +114,7 @@ Known limitation: an upstream Rook installed **inside** `openshift-storage` is c
 
 ```bash
 rook_helm_uninstall() {
-  local release="${ROOK_HELM_RELEASE:-}" manifest line kinds kind out left="" crd=0 keep=0 section="" blocked=0 json unkept
+  local release="${ROOK_HELM_RELEASE:-}" manifest line kinds kind out left="" crd=0 keep=0 section="" blocked=0 json unkept name="" crd_names=""
   if [ -z "$release" ]; then
     echo "set ROOK_HELM_RELEASE to the operator chart release" >&2
     return 1
@@ -138,8 +138,13 @@ rook_helm_uninstall() {
       if [ "$crd" -eq 1 ] && [ "$keep" -eq 0 ]; then
         echo "release $release would delete a CRD without metadata.annotations helm.sh/resource-policy: keep" >&2
         blocked=1
+      elif [ "$crd" -eq 1 ] && [ -z "$name" ]; then
+        echo "release $release has a CRD whose metadata.name cannot be read" >&2
+        blocked=1
+      elif [ "$crd" -eq 1 ]; then
+        crd_names="$crd_names $name"
       fi
-      crd=0; keep=0; section=""
+      crd=0; keep=0; section=""; name=""
       continue
     fi
     # Any kind line naming a CRD counts, quoted or nested (a List of CRDs): over-
@@ -155,14 +160,22 @@ rook_helm_uninstall() {
       "  "*) if [ "$section" = annotations ]; then section=metadata; fi ;;
       *) section="" ;;
     esac
+    if [ "$section" = metadata ] && [[ $line == "  name: "* ]]; then
+      name=${line#  name: }
+      name=${name//[\"\']/}
+    fi
   done <<<"$manifest"$'\n---'
   # The line scan cannot tell a real annotation from the same text inside a
-  # multi-line annotation value; the live CRDs this release installed can.
+  # multi-line annotation value; the live CRDs can. Check every CRD the manifest
+  # names, and every live CRD that carries this release's ownership annotations.
   json=$(oc get crd -o json) || return 1
   # shellcheck disable=SC2016 # jq variables
-  unkept=$(jq -r --arg rel "$release" --arg ns "$ROOK_NAMESPACE" '.items[]
+  unkept=$(jq -r --arg rel "$release" --arg ns "$ROOK_NAMESPACE" --arg names "$crd_names" '
+    ($names | split(" ") | map(select(. != ""))) as $listed
+    | .items[]
     | (.metadata.annotations // {}) as $a
-    | select($a["meta.helm.sh/release-name"] == $rel and $a["meta.helm.sh/release-namespace"] == $ns)
+    | select(.metadata.name as $n | any($listed[]; . == $n)
+        or ($a["meta.helm.sh/release-name"] == $rel and $a["meta.helm.sh/release-namespace"] == $ns))
     | select($a["helm.sh/resource-policy"] != "keep") | .metadata.name' <<<"$json") || return 1
   if [ -n "$unkept" ]; then
     echo "live CRDs of release $release lack metadata.annotations helm.sh/resource-policy: keep: ${unkept//$'\n'/ }" >&2
@@ -493,8 +506,9 @@ rook_delete_crds() {
     | select(.spec.group == "ceph.rook.io" or .spec.group == "csi.ceph.io" or .spec.group == "objectbucket.io")
     | .metadata.name as $crd | (.metadata.labels // {}) as $l | (.metadata.annotations // {}) as $a
     | ((if ($l | has("olm.managed")) or any($l | keys[]; startswith("operators.coreos.com/")) then "OLM labels" else empty end),
-       (($a["meta.helm.sh/release-name"] // null) as $r | ($a["meta.helm.sh/release-namespace"] // "") as $rn
-        | if $r != null and ($r != $rel or $rn != $ns) then "Helm release \($rn)/\($r)" else empty end),
+       (($a["meta.helm.sh/release-name"] // null) as $r | ($a["meta.helm.sh/release-namespace"] // null) as $rn
+        | if ($r != null or $rn != null) and ($r != $rel or $rn != $ns)
+          then "Helm release \($rn // "")/\($r // "")" else empty end),
        (if any($listed[]; . == $crd) then "listed by a ClusterServiceVersion" else empty end))
     | "\($crd): \(.)"') || return 1
   if [ -n "$owners" ]; then
@@ -757,7 +771,7 @@ oc -n "$ROOK_NAMESPACE" get pods -l app=rook-ceph-cleanup
 If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
-2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it only if every check passes, so nothing can start using the disk between a check and the wipe. A check that cannot run (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry. The only signatures `wipefs` may find on it are `ceph_bluestore` and an empty partition table (`gpt`, `PMBR`, `dos`); `xfs`, `ext4`, `LVM2_member`, `crypto_LUKS`, `swap`, or any other signature blocks it. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link:
+2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. A check that cannot run (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, `pvs`, or `sfdisk`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry. The only signatures `wipefs` and `blkid -p` may find on it are `ceph_bluestore` and a partition table (`gpt`, `PMBR`, `dos`) whose on-disk entries (`sfdisk -d`) list no partition, whatever the kernel shows; `xfs`, `ext4`, `LVM2_member`, `crypto_LUKS`, `swap`, or any other signature blocks it. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. If it fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
 
 ```bash
 rook_wipe_osd_disk() {
@@ -779,12 +793,13 @@ rook_wipe_osd_disk() {
     return 1
   fi
   rook_gone || { echo "disk not wiped" >&2; return 1; }
-  # Check and wipe in one node-side run, so nothing can start using the disk
-  # between a check and the wipe. set -e stops at the first check that cannot
-  # run: a failed probe never reads as "not in use".
+  # Check and wipe in one node-side run, so the wipe follows the last check
+  # directly. set -e stops at the first check that cannot run: a failed probe
+  # never reads as "not in use". "wiping" marks the start of the writes.
   # shellcheck disable=SC2016 # expands on the node
   out=$(oc debug "node/$node" -- chroot /host bash -c '
 set -euo pipefail
+set -f
 trap "echo \"blocked: a check could not run: \$BASH_COMMAND\"" ERR
 nl=$(printf "\nx")
 nl=${nl%x}
@@ -797,12 +812,25 @@ majmin=${majmin// /}
 names=$(lsblk -nro NAME "$d")
 holders=$(ls -A "/sys/class/block/${d##*/}/holders")
 sigs=$(wipefs --noheadings -O TYPE "$d")
+# A second, independent probe: blkid -p exits 2 when it finds nothing, and any
+# status but 0 or 2 is a failed probe, never an empty disk.
+if probe=$(blkid -p -o export "$d"); then rc=0; else rc=$?; fi
+case "$rc" in
+  0|2) ;;
+  *) echo "blocked: blkid -p failed with status $rc"; exit 3 ;;
+esac
+for kv in $probe; do
+  case "$kv" in
+    TYPE=*|PTTYPE=*) sigs="$sigs$nl${kv#*=}" ;;
+  esac
+done
 mounts=$(findmnt -N 1 -rno MAJ:MIN)
 swaps=$(swapon --show=NAME --noheadings --raw)
 command -v pvs >/dev/null || { echo "blocked: pvs is not available, so LVM use cannot be ruled out"; exit 3; }
 pvlist=$(pvs --noheadings -o pv_name)
 echo "device $d: type ${type:-unknown}, signatures: ${sigs//$nl/ }"
 blocked=""
+table=""
 [ "$type" = disk ] || blocked="$blocked; type ${type:-unknown}, not a whole disk"
 if [[ $names == *$nl* ]]; then
   children=${names#*$nl}
@@ -820,20 +848,41 @@ for p in $pvlist; do
 done
 for s in $sigs; do
   case "$s" in
-    ceph_bluestore|gpt|PMBR|dos) ;;
+    ceph_bluestore) ;;
+    gpt|PMBR|dos) table=yes ;;
     *) blocked="$blocked; signature $s" ;;
   esac
 done
+# A partition table counts as empty only if the on-disk table lists no
+# partition, whatever the kernel currently shows as child devices.
+if [ -n "$table" ]; then
+  dump=$(sfdisk -d "$d")
+  parts=""
+  IFS=$nl
+  for line in $dump; do
+    case "$line" in
+      /dev/*) parts="$parts ${line%% *}" ;;
+    esac
+  done
+  unset IFS
+  [ -z "$parts" ] || blocked="$blocked; on-disk partitions:$parts"
+fi
 if [ -n "$blocked" ]; then
   echo "blocked: ${blocked#; }"
   exit 3
 fi
+trap "echo \"wipe step failed: \$BASH_COMMAND\"" ERR
+echo "wiping $d"
 wipefs -af "$d"
 sgdisk --zap-all "$d"
 lsblk -f "$d"
 ' _ "$disk") || {
     printf '%s\n' "$out" >&2
-    echo "$disk on $node is in use or could not be checked - disk not wiped" >&2
+    if [[ $out == *"wiping /dev/"* ]]; then
+      echo "the wipe of $disk on $node started and then failed - the disk may be partly wiped; check it with lsblk -f and wipefs -n" >&2
+    else
+      echo "$disk on $node is in use or could not be checked - disk not wiped" >&2
+    fi
     return 1
   }
   printf '%s\n' "$out"

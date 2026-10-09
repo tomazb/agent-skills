@@ -329,6 +329,12 @@ NODE_FACTS = {
     "mounts": "8:0\n259:1",
     "swaps": "",
     "pvs": "  /dev/sda3",
+    # blkid -p -o export output; blkid exits 2 when it prints nothing, unless
+    # "blkid_rc" says otherwise.
+    "blkid": "",
+    "blkid_rc": None,
+    # sfdisk -d output: the on-disk partition table, read only when a table is found.
+    "sfdisk": "label: gpt\ndevice: /dev/sdb\nunit: sectors",
     "fail": {},
     "absent": [],
 }
@@ -366,9 +372,15 @@ elif cmd == "swapon":
     out(F["swaps"])
 elif cmd == "pvs":
     out(F["pvs"])
+elif cmd == "blkid":
+    out(F["blkid"])
+    rc = F["blkid_rc"]
+    raise SystemExit((0 if F["blkid"] else 2) if rc is None else rc)
+elif cmd == "sfdisk":
+    out(F["sfdisk"])
 """
 
-NODE_TOOLS = ("readlink", "lsblk", "ls", "wipefs", "findmnt", "swapon", "pvs", "sgdisk")
+NODE_TOOLS = ("readlink", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs", "sfdisk", "sgdisk")
 
 
 def write_node_tools(directory: Path, overrides: dict) -> dict:
