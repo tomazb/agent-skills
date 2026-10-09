@@ -609,7 +609,7 @@ for group in ocs.openshift.io odf.openshift.io noobaa.io postgresql.cnpg.noobaa.
 done
 ```
 
-Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets` (and runs that cleanup even when upstream Rook keeps the group); its instance deletes do not wait, so it gives finalizers whose controllers still run up to `ODF_DELETE_WAIT` seconds (default 60) before it counts an instance as remaining; it leaves a group's CRDs in place while any instance of the group remains (an instance held by a finalizer whose controller is gone needs the **Orphans After An Interrupted Uninstall** steps first); it returns nonzero when a CRD delete or the bucket cleanup failed, after trying every other group; and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
+Delete every CR instance in a group before its CRDs, then the CRDs themselves. The sweep classifies first and refuses to run unless that succeeded; it handles `objectbucket.io` with `odf_delete_odf_buckets` (and runs that cleanup even when upstream Rook keeps the group); its instance deletes do not wait, so it gives finalizers whose controllers still run up to `ODF_DELETE_WAIT` seconds (default 60) before it counts an instance as remaining; it leaves a group's CRDs in place while any instance of the group remains (an instance held by a finalizer whose controller is gone needs the **Orphans After An Interrupted Uninstall** steps first); it returns nonzero whenever it leaves a group's CRDs in place (a failed lookup, delete, or bucket cleanup, or instances that remain), after trying every other group; and it never touches `local.storage.openshift.io` (LSO) or `groupsnapshot.storage.openshift.io` (decided below):
 
 ```bash
 odf_crd_sweep() {
@@ -636,11 +636,13 @@ odf_crd_sweep() {
     #    then delete the CRDs anyway, with instances still live.
     if ! kinds=$(oc api-resources --api-group="$group" --verbs=list -o name); then
       echo "kind discovery failed for $group - leaving its CRDs in place" >&2
+      failed=1
       continue
     fi
     [ -n "$kinds" ] || continue
     if ! namespaced=$(oc api-resources --api-group="$group" --namespaced=true -o name); then
       echo "scope discovery failed for $group - leaving its CRDs in place" >&2
+      failed=1
       continue
     fi
 
@@ -663,6 +665,7 @@ odf_crd_sweep() {
     fi
     if [ "$instances_deleted" != true ]; then
       echo "instance deletion incomplete for $group - leaving its CRDs in place" >&2
+      failed=1
       continue
     fi
 
@@ -687,6 +690,7 @@ odf_crd_sweep() {
     done
     if [ -n "$remaining" ]; then
       echo "instances of $group remain:$remaining - clear them (see Orphans After An Interrupted Uninstall); leaving its CRDs in place" >&2
+      failed=1
       continue
     fi
 
@@ -695,6 +699,7 @@ odf_crd_sweep() {
     #    postgresql.cnpg.noobaa.io CRDs, whose instances step 3 never checked.
     if ! crds=$(oc get crd -o json | jq -r --arg g "$group" '.items[] | select(.spec.group == $g) | .metadata.name'); then
       echo "CRD lookup failed for $group - leaving its CRDs in place" >&2
+      failed=1
       continue
     fi
     if [ -n "$crds" ] && ! oc delete crd $crds --wait=false; then

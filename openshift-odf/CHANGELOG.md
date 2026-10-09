@@ -16,8 +16,14 @@ Corrections to the 1.20.0 audit and CRD sweep.
 - **`odf_crd_sweep` waits a bounded time for deleted instances.** Its instance
   deletes use `--wait=false`; it now polls for up to `ODF_DELETE_WAIT` seconds
   (default 60) before it counts an instance as remaining and keeps that group's CRDs.
-- **`odf_crd_sweep` returns nonzero when a CRD delete fails,** after trying every
-  other group, instead of returning the status of whatever ran last.
+- **`odf_crd_sweep` returns nonzero whenever it leaves a group's CRDs in place**: a
+  failed CRD delete, a failed kind, scope, or CRD lookup, an incomplete instance
+  delete (including a failed `odf_delete_odf_buckets`), or instances that remain. It
+  still tries every other group first. It used to return 0 on all but the first.
+- **An audit or classification that cannot name its cluster fails.** When
+  `oc whoami --show-server` fails or prints nothing, `post_uninstall_audit.sh` reports
+  `FAIL` and exits 1, and `classify_rook_ownership.sh` stops with "unknown"; both used
+  to go on against "unknown".
 - **ODF bucket cleanup also runs next to upstream Rook.** With upstream Rook present
   the sweep leaves `objectbucket.io` out, which skipped `odf_delete_odf_buckets`, so
   ODF's own claims and buckets stayed. The sweep now runs it in that case too; it

@@ -964,7 +964,12 @@ fi
 if [ -z "$OC_CONTEXT_LABEL" ]; then
   OC_CONTEXT_LABEL=$(oc config current-context 2>/dev/null || echo unknown)
 fi
-echo "auditing $(oc whoami --show-server 2>/dev/null || echo unknown)" \
+# An audit that cannot name its cluster is not a clean audit.
+if ! AUDIT_SERVER=$(oc whoami --show-server 2>/dev/null) || [ -z "$AUDIT_SERVER" ]; then
+  fail "could not read the API server URL with oc whoami --show-server"
+  exit 1
+fi
+echo "auditing $AUDIT_SERVER" \
   "(context: ${OC_CONTEXT_LABEL:-unknown})"
 
 detect_upstream_rook

@@ -86,9 +86,9 @@ FINALIZER_JSONPATH = 'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.metadat
 SHOW_SERVER = "https://api.cluster.example.com:6443"
 
 # "unserved" resources fail like an unknown type; "errors" maps a resource (or
-# "whoami") to the stderr of a real failure; "noise" prints a client warning (or
-# the given text) on every call, as client-side throttling does; "log" records
-# every argv. `delete` only records.
+# "whoami", "show-server", or "api-resources:<group>") to the stderr of a real
+# failure; "noise" prints a client warning (or the given text) on every call, as
+# client-side throttling does; "log" records every argv. `delete` only records.
 _CLUSTER_OC = """\
 WORLD = json.loads(__WORLD__)
 args = sys.argv[1:]
@@ -101,6 +101,9 @@ if WORLD["noise"]:
         "I1007 10:00:00.000000 request.go:700 Waited for 1.0s due to client-side throttling")
     sys.stderr.write(noise + chr(10))
 if args[:1] == ["whoami"]:
+    if "--show-server" in args and "show-server" in WORLD["errors"]:
+        print(WORLD["errors"]["show-server"], file=sys.stderr)
+        raise SystemExit(1)
     if "whoami" in WORLD["errors"]:
         print(WORLD["errors"]["whoami"], file=sys.stderr)
         raise SystemExit(1)
@@ -129,6 +132,9 @@ if "delete" in args[:3]:
     raise SystemExit(0)
 if args[:1] == ["api-resources"]:
     group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
+    if "api-resources:" + group in WORLD["errors"]:
+        print(WORLD["errors"]["api-resources:" + group], file=sys.stderr)
+        raise SystemExit(1)
     for name, namespaced in WORLD["groups"].get(group, []):
         if "--namespaced=true" in args and not namespaced:
             continue

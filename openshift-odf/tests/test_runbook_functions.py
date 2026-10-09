@@ -337,6 +337,7 @@ def test_sweep_keeps_a_groups_crds_while_an_instance_remains(tmp_path, objects, 
     # finalizer whose controller is gone.
     result, deletes = _run(tmp_path, "odf_crd_sweep", objects=objects)
 
+    assert "rc=1" in result.stdout
     assert f"instances of {group} remain:" in result.stderr
     assert "Orphans After An Interrupted Uninstall" in result.stderr
     assert not [d for d in deletes if crd in d], deletes
@@ -392,6 +393,23 @@ def test_sweep_returns_nonzero_when_a_crd_delete_fails_and_still_tries_the_other
     # it kept going: every ODF group was attempted
     assert [d for d in deletes if d.startswith("delete crd noobaas.noobaa.io")]
     assert [d for d in deletes if d.startswith("delete crd cephclusters.ceph.rook.io")]
+
+
+@pytest.mark.parametrize(
+    ("errors", "line"),
+    [
+        ({"objectbucketclaims.objectbucket.io": "Error from server (Forbidden): cannot list"},
+         "instance deletion incomplete for objectbucket.io"),
+        ({"api-resources:noobaa.io": "Error from server: discovery failed"},
+         "kind discovery failed for noobaa.io"),
+    ],
+    ids=["bucket-cleanup", "discovery"],
+)
+def test_sweep_returns_nonzero_when_it_leaves_a_groups_crds_in_place(tmp_path, errors, line):
+    result, deletes = _run(tmp_path, "odf_crd_sweep", errors=errors)
+
+    assert "rc=1" in result.stdout
+    assert line in result.stderr
 
 
 def test_sweep_waits_a_bounded_time_for_instances_before_counting_them(tmp_path):

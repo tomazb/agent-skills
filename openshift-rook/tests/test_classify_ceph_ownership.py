@@ -307,6 +307,12 @@ def test_classify_stops_when_the_cluster_cannot_be_reached(tmp_path):
     _assert_unknown(result, "cannot reach the cluster", CONTEXT_ERROR)
 
 
+def test_classify_stops_when_the_server_url_cannot_be_read(tmp_path):
+    result = _classify(_cluster(tmp_path, [], [], errors={"show-server": "error: You must be logged in to the server (Unauthorized)"}))
+
+    _assert_unknown(result, "cannot read the API server URL", "error: You must be logged in to the server (Unauthorized)")
+
+
 @pytest.mark.parametrize(
     "output",
     ["", "{not json", "I1007 throttling\n{\"items\": []}"],

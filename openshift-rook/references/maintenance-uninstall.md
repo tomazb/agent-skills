@@ -114,7 +114,7 @@ Known limitation: an upstream Rook installed **inside** `openshift-storage` is c
 
 ```bash
 rook_helm_uninstall() {
-  local release="${ROOK_HELM_RELEASE:-}" manifest line kinds kind out left="" crd=0 keep=0 section="" blocked=0
+  local release="${ROOK_HELM_RELEASE:-}" manifest line kinds kind out left="" crd=0 keep=0 section="" blocked=0 json unkept
   if [ -z "$release" ]; then
     echo "set ROOK_HELM_RELEASE to the operator chart release" >&2
     return 1
@@ -142,8 +142,12 @@ rook_helm_uninstall() {
       crd=0; keep=0; section=""
       continue
     fi
+    # Any kind line naming a CRD counts, quoted or nested (a List of CRDs): over-
+    # matching only refuses, under-matching would delete.
+    if [[ $line == *kind:*CustomResourceDefinition* ]]; then
+      crd=1
+    fi
     case "$line" in
-      "kind: CustomResourceDefinition") crd=1 ;;
       "metadata:") section=metadata ;;
       "  annotations:") if [ "$section" = metadata ]; then section=annotations; fi ;;
       "    helm.sh/resource-policy: keep") if [ "$section" = annotations ]; then keep=1; fi ;;
@@ -152,6 +156,18 @@ rook_helm_uninstall() {
       *) section="" ;;
     esac
   done <<<"$manifest"$'\n---'
+  # The line scan cannot tell a real annotation from the same text inside a
+  # multi-line annotation value; the live CRDs this release installed can.
+  json=$(oc get crd -o json) || return 1
+  # shellcheck disable=SC2016 # jq variables
+  unkept=$(jq -r --arg rel "$release" --arg ns "$ROOK_NAMESPACE" '.items[]
+    | (.metadata.annotations // {}) as $a
+    | select($a["meta.helm.sh/release-name"] == $rel and $a["meta.helm.sh/release-namespace"] == $ns)
+    | select($a["helm.sh/resource-policy"] != "keep") | .metadata.name' <<<"$json") || return 1
+  if [ -n "$unkept" ]; then
+    echo "live CRDs of release $release lack metadata.annotations helm.sh/resource-policy: keep: ${unkept//$'\n'/ }" >&2
+    blocked=1
+  fi
   if [ "$blocked" -ne 0 ]; then
     echo "Helm release not uninstalled: leave CRDs to rook_delete_crds" >&2
     return 1
@@ -278,7 +294,7 @@ oc get namespace "$ROOK_NAMESPACE"   # repeat until NotFound; if it stays Termin
 
 ### Namespace Stuck Terminating And Orphaned Cluster-Scoped Objects
 
-Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps finalizer `csi.ceph.com/cleanup` after the CSI operator Deployment is gone. That finalizer does not clear itself, so delete the `csi.ceph.io` objects while the CSI operator is still running (`rook_delete_operator` does). If it is already gone and the namespace is still stuck, clear finalizers on the **confirmed** blocking CRs, then leave the `clientprofiles.csi.ceph.io` CustomResourceDefinition to `rook_delete_crds` once it has no instances. This function does not use `rook_classify`, because an orphaned `CephCluster` or ceph-csi makes the classification "unknown" in exactly this state. It is bounded instead: it only touches objects in the Rook namespace that are already being deleted (`deletionTimestamp` set), refuses `openshift-storage` (ODF's), refuses while any Deployment, DaemonSet, or StatefulSet is left there, and refuses while a `rook-ceph-operator` Deployment that is not being deleted exists in any namespace (an operator that still runs, here or elsewhere, does the cleanup the finalizer guards; an external-mode `CephCluster` has no workloads in its own namespace). Pass `csi.ceph.io`, or `ceph.rook.io` if a `CephCluster` stays in `Deleting`; keep mounts and consumers removed before clearing any finalizer:
+Namespace deletion can hang because a `csi.ceph.io` CR (for example `clientprofiles.csi.ceph.io/rook-ceph`) keeps finalizer `csi.ceph.com/cleanup` after the CSI operator Deployment is gone. That finalizer does not clear itself, so delete the `csi.ceph.io` objects while the CSI operator is still running (`rook_delete_operator` does). If it is already gone and the namespace is still stuck, clear finalizers on the **confirmed** blocking CRs, then leave the `clientprofiles.csi.ceph.io` CustomResourceDefinition to `rook_delete_crds` once it has no instances. This function does not use `rook_classify`, because an orphaned `CephCluster` or ceph-csi makes the classification "unknown" in exactly this state. It is bounded instead: it only touches objects in the Rook namespace that are already being deleted (`deletionTimestamp` set), refuses `openshift-storage` (ODF's), refuses while any Deployment, DaemonSet, or StatefulSet is left there, refuses while a `rook-ceph-operator` Deployment that is not being deleted exists in any namespace, and refuses while any `app=rook-ceph-operator` pod exists, terminating ones included (an operator that still runs, here or elsewhere, does the cleanup the finalizer guards; an external-mode `CephCluster` has no workloads in its own namespace). Pass `csi.ceph.io`, or `ceph.rook.io` if a `CephCluster` stays in `Deleting`; keep mounts and consumers removed before clearing any finalizer:
 
 ```bash
 rook_clear_finalizers() {
@@ -304,6 +320,13 @@ rook_clear_finalizers() {
   left=$(jq -r '.items[] | select(.metadata.deletionTimestamp == null) | "\(.metadata.namespace)/\(.metadata.name)"' <<<"$json") || return 1
   if [ -n "$left" ]; then
     echo "a Rook operator still runs: ${left//$'\n'/ } - it owns these finalizers; no finalizer cleared" >&2
+    return 1
+  fi
+  # A Deployment being deleted can still have running (or terminating) pods that
+  # act on these objects; wait until no operator pod is left anywhere.
+  left=$(oc get pods -A -l app=rook-ceph-operator -o name) || return 1
+  if [ -n "$left" ]; then
+    echo "rook-ceph-operator pods still exist: ${left//$'\n'/ } - wait until they are gone; no finalizer cleared" >&2
     return 1
   fi
   kinds=$(oc api-resources --api-group="$group" --namespaced=true --verbs=list -o name) || return 1
@@ -464,13 +487,14 @@ rook_delete_crds() {
   fi
   json=$(oc get crd -o json) || return 1
   csvs=$(oc get clusterserviceversions.operators.coreos.com -A -o json) || return 1
-  owners=$(printf '%s\n' "$json" "$csvs" | jq -r -s --arg rel "${ROOK_HELM_RELEASE:-}" '
+  owners=$(printf '%s\n' "$json" "$csvs" | jq -r -s --arg rel "${ROOK_HELM_RELEASE:-}" --arg ns "$ROOK_NAMESPACE" '
     [.[1].items[] | .spec.customresourcedefinitions // {} | (.owned // [])[], (.required // [])[] | .name] as $listed
     | .[0].items[]
     | select(.spec.group == "ceph.rook.io" or .spec.group == "csi.ceph.io" or .spec.group == "objectbucket.io")
     | .metadata.name as $crd | (.metadata.labels // {}) as $l | (.metadata.annotations // {}) as $a
     | ((if ($l | has("olm.managed")) or any($l | keys[]; startswith("operators.coreos.com/")) then "OLM labels" else empty end),
-       (($a["meta.helm.sh/release-name"] // null) as $r | if $r != null and $r != $rel then "Helm release \($r)" else empty end),
+       (($a["meta.helm.sh/release-name"] // null) as $r | ($a["meta.helm.sh/release-namespace"] // "") as $rn
+        | if $r != null and ($r != $rel or $rn != $ns) then "Helm release \($rn)/\($r)" else empty end),
        (if any($listed[]; . == $crd) then "listed by a ClusterServiceVersion" else empty end))
     | "\($crd): \(.)"') || return 1
   if [ -n "$owners" ]; then
@@ -733,11 +757,11 @@ oc -n "$ROOK_NAMESPACE" get pods -l app=rook-ceph-cleanup
 If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
-2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then inspects the disk on the node, read-only, and refuses — printing what blocked — unless the link resolves to a device of type `disk` with no partitions, no holders, no mountpoint, no `LVM2_member`, `crypto_LUKS`, or `swap` signature, that `pvs` does not list. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe itself re-resolves the link and stops if it no longer points at the inspected device:
+2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it only if every check passes, so nothing can start using the disk between a check and the wipe. A check that cannot run (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry. The only signatures `wipefs` may find on it are `ceph_bluestore` and an empty partition table (`gpt`, `PMBR`, `dos`); `xfs`, `ext4`, `LVM2_member`, `crypto_LUKS`, `swap`, or any other signature blocks it. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link:
 
 ```bash
 rook_wipe_osd_disk() {
-  local node="${1:-}" disk="${2:-}"
+  local node="${1:-}" disk="${2:-}" out
   if [ -z "$node" ] || [ -z "$disk" ]; then
     echo "usage: rook_wipe_osd_disk <node> /dev/disk/by-id/<stable-disk-id>" >&2
     return 1
@@ -755,46 +779,64 @@ rook_wipe_osd_disk() {
     return 1
   fi
   rook_gone || { echo "disk not wiped" >&2; return 1; }
-  local inspect facts line path="" type="" children="" holders="" use="" pv="" blocked=""
+  # Check and wipe in one node-side run, so nothing can start using the disk
+  # between a check and the wipe. set -e stops at the first check that cannot
+  # run: a failed probe never reads as "not in use".
   # shellcheck disable=SC2016 # expands on the node
-  inspect='d=$(readlink -f "$1") || exit 1
-echo "path=$d"
-echo "type=$(lsblk -dno TYPE "$d")"
-echo "children=$(lsblk -nro NAME "$d" | tail -n +2 | tr "\n" " ")"
-echo "holders=$(ls "/sys/class/block/${d##*/}/holders" | tr "\n" " ")"
-echo "use=$(lsblk -nro MOUNTPOINT,FSTYPE "$d" | tr "\n" " ")"
-if command -v pvs >/dev/null; then
-  echo "pv=$(pvs --noheadings -o pv_name | tr -d " " | grep -Fx "$d" || true)"
-else
-  echo "pv=unknown"
-fi'
-  facts=$(oc debug "node/$node" -- chroot /host bash -c "$inspect" _ "$disk") || {
-    echo "could not inspect $disk on $node - disk not wiped" >&2; return 1; }
-  while IFS= read -r line; do
-    case "$line" in
-      path=*) path="${line#path=}" ;;
-      type=*) type="${line#type=}" ;;
-      children=*) children="${line#children=}" ;;
-      holders=*) holders="${line#holders=}" ;;
-      use=*) use="${line#use=}" ;;
-      pv=*) pv="${line#pv=}" ;;
-    esac
-  done <<<"$facts"
-  [[ $path == /dev/* ]] || blocked="$blocked; could not resolve the link"
-  [ "$type" = disk ] || blocked="$blocked; type '$type', not a whole disk"
-  [[ $children != *[![:space:]]* ]] || blocked="$blocked; partitions or child devices: $children"
-  [[ $holders != *[![:space:]]* ]] || blocked="$blocked; holders: $holders"
-  [[ $use != */* && $use != *SWAP* ]] || blocked="$blocked; mounted or swap: $use"
-  [[ $use != *LVM2_member* && $use != *crypto_LUKS* && $use != *swap* ]] || blocked="$blocked; signature in use: $use"
-  [ -z "$pv" ] || blocked="$blocked; LVM physical volume (pvs: $pv)"
-  if [ -n "$blocked" ]; then
-    echo "$disk on $node is in use or unknown${blocked} - disk not wiped" >&2
+  out=$(oc debug "node/$node" -- chroot /host bash -c '
+set -euo pipefail
+trap "echo \"blocked: a check could not run: \$BASH_COMMAND\"" ERR
+nl=$(printf "\nx")
+nl=${nl%x}
+link=$1
+d=$(readlink -f "$link")
+[[ $d == /dev/?* ]] || { echo "blocked: $link does not resolve to a device"; exit 3; }
+type=$(lsblk -dno TYPE "$d")
+majmin=$(lsblk -dno MAJ:MIN "$d")
+majmin=${majmin// /}
+names=$(lsblk -nro NAME "$d")
+holders=$(ls -A "/sys/class/block/${d##*/}/holders")
+sigs=$(wipefs --noheadings -O TYPE "$d")
+mounts=$(findmnt -N 1 -rno MAJ:MIN)
+swaps=$(swapon --show=NAME --noheadings --raw)
+command -v pvs >/dev/null || { echo "blocked: pvs is not available, so LVM use cannot be ruled out"; exit 3; }
+pvlist=$(pvs --noheadings -o pv_name)
+echo "device $d: type ${type:-unknown}, signatures: ${sigs//$nl/ }"
+blocked=""
+[ "$type" = disk ] || blocked="$blocked; type ${type:-unknown}, not a whole disk"
+if [[ $names == *$nl* ]]; then
+  children=${names#*$nl}
+  blocked="$blocked; partitions or child devices: ${children//$nl/ }"
+fi
+[ -z "$holders" ] || blocked="$blocked; holders: ${holders//$nl/ }"
+for m in $mounts; do
+  [ "$m" != "$majmin" ] || blocked="$blocked; mounted on the host"
+done
+for s in $swaps; do
+  [ "$s" != "$d" ] || blocked="$blocked; active swap"
+done
+for p in $pvlist; do
+  if [ "$p" = "$d" ] || [ "$p" = "$link" ]; then blocked="$blocked; LVM physical volume $p"; fi
+done
+for s in $sigs; do
+  case "$s" in
+    ceph_bluestore|gpt|PMBR|dos) ;;
+    *) blocked="$blocked; signature $s" ;;
+  esac
+done
+if [ -n "$blocked" ]; then
+  echo "blocked: ${blocked#; }"
+  exit 3
+fi
+wipefs -af "$d"
+sgdisk --zap-all "$d"
+lsblk -f "$d"
+' _ "$disk") || {
+    printf '%s\n' "$out" >&2
+    echo "$disk on $node is in use or could not be checked - disk not wiped" >&2
     return 1
-  fi
-  # shellcheck disable=SC2016 # expands on the node
-  oc debug "node/$node" -- chroot /host bash -c \
-    'set -e; [ "$(readlink -f "$1")" = "$2" ] || { echo "$1 no longer points at $2" >&2; exit 1; }
-     wipefs -af "$1"; sgdisk --zap-all "$1"; lsblk -f "$1"' _ "$disk" "$path"
+  }
+  printf '%s\n' "$out"
 }
 rook_wipe_osd_disk <node> /dev/disk/by-id/<stable-disk-id>
 ```

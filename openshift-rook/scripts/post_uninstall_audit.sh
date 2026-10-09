@@ -786,7 +786,7 @@ def olm_line($ref; $csvs; $subs):
   | if $o.installed then ["kept", $ref, "carries OLM labels of installed operator \($o.by); not Rook residue"]
     else ["notrook", $ref, "carries OLM labels of \($o.by), which is not installed; not Rook residue (another operator left it)"] end;
 def live_sas($sas):
-  [.subjects[] | select(.kind == "ServiceAccount") | "\(.namespace)/\(.name)" | select($sas[.] // false)];
+  [.subjects[] | select(.kind == "ServiceAccount") | "\(.namespace)/\(.name)" | select($sas[.] // false)] | unique;
 def verdict($roles; $sas; $ceph_runs):
   if ($roles[.role] // false) | not then {live: false, why: "its ClusterRole \(.role) is missing"}
   elif any(.subjects[]; .kind == "User" or .kind == "Group") then {live: true, why: "has a User/Group subject, which cannot be proven absent"}
@@ -920,7 +920,11 @@ fi
 # reads exactly like an audit of the right one. The server URL is authoritative;
 # the context label is only what was asked for.
 run_split oc whoami --show-server
-echo "auditing ${RUN_OUT:-unknown server}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" \
+if [ "$RUN_RC" -ne 0 ] || [ -z "$RUN_OUT" ]; then
+  fail "could not read the API server URL with oc whoami --show-server: ${RUN_ERR:-empty output}"
+  exit 1
+fi
+echo "auditing ${RUN_OUT}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" \
   "for Rook in $ROOK_NAMESPACE, CSI driver prefix $ROOK_CSI_PREFIX"
 
 detect_ownership

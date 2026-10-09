@@ -969,3 +969,23 @@ def test_audit_matches_nvmeof_drivers(tmp_path):
     result = _audit(tmp_path, objects={"csidrivers": [{"metadata": meta("rook-ceph.nvmeof.csi.ceph.com")}]})
 
     _warn(result, "WARN: Rook CSIDrivers still exist:", "rook-ceph.nvmeof.csi.ceph.com")
+
+
+def test_audit_fails_when_the_server_url_cannot_be_read(tmp_path):
+    result = _audit(tmp_path, errors={"show-server": "error: You must be logged in to the server (Unauthorized)"})
+
+    assert result.returncode == 1
+    assert "FAIL: could not read the API server URL with oc whoami --show-server: error: You must be logged in to the server (Unauthorized)" in result.stdout
+
+
+def test_audit_treats_duplicate_prometheus_subjects_as_one(tmp_path):
+    objects = _rbac(
+        roles=[_role("rook-ceph-metrics")],
+        bindings=[_binding("rook-ceph-metrics", "rook-ceph-metrics",
+                           [_sa("openshift-monitoring", "prometheus-k8s"), _sa("openshift-monitoring", "prometheus-k8s")])],
+        accounts=[("openshift-monitoring", "prometheus-k8s")],
+    )
+
+    result = _audit(tmp_path, objects=objects)
+
+    _warn(result, f"ClusterRoleBinding/rook-ceph-metrics: {PROMETHEUS_ONLY}")

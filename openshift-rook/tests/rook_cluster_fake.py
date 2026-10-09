@@ -79,7 +79,7 @@ SHOW_SERVER = "https://api.cluster.example.com:6443"
 
 # "groups" maps an API group to [resource, namespaced] pairs for api-resources;
 # a `get` of a resource listed in "empty" succeeds and prints nothing;
-# "errors" maps a resource (or "whoami", or "api-resources:<group>") to the stderr
+# "errors" maps a resource (or "whoami", "show-server", or "api-resources:<group>") to the stderr
 # of a real failure; a `get` of a resource that has no entry in "objects" and is
 # not served by any group fails like an unknown type, unless it is a core kind;
 # "noise" prints a client warning (or the given text) on every call, as
@@ -101,9 +101,11 @@ if "-n" in args:
     ns = args[i + 1]
     del args[i:i + 2]
 if args[:1] == ["whoami"]:
-    if "whoami" in WORLD["errors"]:
-        print(WORLD["errors"]["whoami"], file=sys.stderr)
-        raise SystemExit(1)
+    key = "show-server" if "--show-server" in args else "whoami"
+    for k in ("whoami", key):
+        if k in WORLD["errors"]:
+            print(WORLD["errors"][k], file=sys.stderr)
+            raise SystemExit(1)
     print(WORLD["server"] if "--show-server" in args else "admin")
     raise SystemExit(0)
 if args[:1] == ["delete"]:
@@ -135,7 +137,14 @@ if args[:1] == ["api-resources"]:
         print(name)
     raise SystemExit(0)
 if args[:1] == ["debug"]:
-    # "debug" is the canned stdout of every `oc debug` (a node inspection).
+    if WORLD["node"]:
+        # Run the node-side script for real, with only the mocked node tools on
+        # PATH: a check the mocks do not answer fails instead of reaching the host.
+        import subprocess
+        i = args.index("-c")
+        done = subprocess.run([WORLD["node"]["bash"], *args[i:]], env={"PATH": WORLD["node"]["bin"]})
+        raise SystemExit(done.returncode)
+    # Otherwise "debug" is the canned stdout of every `oc debug`.
     sys.stdout.write(WORLD["debug"])
     raise SystemExit(0)
 if args[:1] != ["get"]:
@@ -152,6 +161,7 @@ if res not in WORLD["objects"] and res not in served and res not in WORLD["core"
     raise SystemExit(1)
 output = None
 selector = ""
+labels = {}
 names = []
 rest = args[2:]
 i = 0
@@ -169,6 +179,10 @@ while i < len(rest):
         continue
     elif a.startswith("--field-selector="):
         selector = a.split("=", 1)[1]
+    elif a in ("-l", "--selector"):
+        labels = dict(pair.split("=", 1) for pair in rest[i + 1].split(","))
+        i += 2
+        continue
     elif not a.startswith("-"):
         names.append(a)
     i += 1
@@ -185,6 +199,7 @@ items = [
     if (scope is None or item["metadata"].get("namespace", scope) == scope)
     and (not selector.startswith("metadata.name=") or item["metadata"]["name"] == selector.split("=", 1)[1])
     and (not names or item["metadata"]["name"] in names)
+    and all((item["metadata"].get("labels") or {}).get(k) == v for k, v in labels.items())
 ]
 if names and not items:
     if "--ignore-not-found" in args:
@@ -247,6 +262,7 @@ def write_cluster_oc(
     empty: tuple = (),
     debug: str = "",
     default_sc: bool = True,
+    node: dict | None = None,
 ) -> None:
     namespaced = set(NAMESPACED_CORE_KINDS) | {
         name for kinds in (groups or {}).values() for name, is_namespaced in kinds if is_namespaced
@@ -269,6 +285,7 @@ def write_cluster_oc(
         "core": list(core),
         "empty": list(empty),
         "debug": debug,
+        "node": write_node_tools(bin_dir / "node-bin", node) if node is not None else None,
     }
     write_oc(bin_dir, _CLUSTER_OC.replace("__WORLD__", repr(json.dumps(world))))
 
@@ -297,3 +314,80 @@ def rook_operator(namespace: str = "rook-ceph", labels: dict | None = None, **ex
 
 def ceph_cluster(name: str, namespace: str, **extra) -> dict:
     return {"kind": "CephCluster", "metadata": meta(name, namespace, **extra)}
+
+
+# Node tools for `oc debug node/... -- chroot /host bash -c SCRIPT`. Every call is
+# appended to <dir>/calls.log as a JSON argv. "fail" maps a tool to the exit status
+# it fails with; "absent" lists tools that are not installed.
+NODE_FACTS = {
+    "device": "/dev/sdb",
+    "type": "disk",
+    "majmin": " 8:16",
+    "names": "sdb",
+    "holders": "",
+    "signatures": "",
+    "mounts": "8:0\n259:1",
+    "swaps": "",
+    "pvs": "  /dev/sda3",
+    "fail": {},
+    "absent": [],
+}
+
+_NODE_TOOL = """#!__PYTHON__
+import json, os, sys
+F = json.loads(__FACTS__)
+cmd = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+with open(F["log"], "a") as fh:
+    fh.write(json.dumps([cmd, *args]) + chr(10))
+if cmd in F["fail"]:
+    print(cmd + ": simulated failure", file=sys.stderr)
+    raise SystemExit(F["fail"][cmd])
+def out(value):
+    if value:
+        print(value)
+if cmd == "readlink":
+    out(F["device"])
+elif cmd == "lsblk":
+    if "-f" in args:
+        out("NAME FSTYPE")
+    elif "-nro" in args:
+        out(F["names"])
+    else:
+        out({"TYPE": F["type"], "MAJ:MIN": F["majmin"]}[args[args.index("-dno") + 1]])
+elif cmd == "ls":
+    out(F["holders"])
+elif cmd == "wipefs":
+    if "-af" not in args:
+        out(F["signatures"])
+elif cmd == "findmnt":
+    out(F["mounts"])
+elif cmd == "swapon":
+    out(F["swaps"])
+elif cmd == "pvs":
+    out(F["pvs"])
+"""
+
+NODE_TOOLS = ("readlink", "lsblk", "ls", "wipefs", "findmnt", "swapon", "pvs", "sgdisk")
+
+
+def write_node_tools(directory: Path, overrides: dict) -> dict:
+    import shutil
+
+    directory.mkdir()
+    facts = {**NODE_FACTS, **overrides, "log": str(directory / "calls.log")}
+    body = _NODE_TOOL.replace("__PYTHON__", sys.executable).replace("__FACTS__", repr(json.dumps(facts)))
+    for tool in NODE_TOOLS:
+        if tool in facts["absent"]:
+            continue
+        path = directory / tool
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+    return {"bin": str(directory), "bash": shutil.which("bash") or "/bin/bash"}
+
+
+def node_calls(bin_dir: Path) -> list:
+    log = bin_dir / "node-bin" / "calls.log"
+    if not log.exists():
+        return []
+    return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()]

@@ -23,6 +23,7 @@ from rook_cluster_fake import (  # noqa: E402
     ceph_cluster,
     merge,
     meta,
+    node_calls,
     rook_operator,
     write_cluster_oc,
     write_executable,
@@ -134,7 +135,7 @@ def _write_helm(bin_dir: Path, log: Path, releases: dict) -> None:
 
 
 def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, omit=(), blocking=False, groups=None,
-         releases=None, debug=""):
+         releases=None, debug="", node=None):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
     for name in ("classify_ceph_ownership.sh", "rook_common.sh"):
@@ -148,7 +149,7 @@ def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, omit=()
     (bin_dir / "bash").symlink_to(found)
     log = tmp_path / "argv.log"
     world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": groups or GROUPS, "errors": errors or {}}
-    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, debug=debug, **world)
+    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, debug=debug, node=node, **world)
     _write_helm(bin_dir, log, RELEASES if releases is None else releases)
     script = "\n".join(
         [
@@ -308,8 +309,12 @@ def test_helm_uninstall_refuses_while_ceph_objects_remain(tmp_path, objects):
         # another value
         "---\nkind: CustomResourceDefinition\nmetadata:\n  name: x.ceph.rook.io\n  annotations:\n"
         "    helm.sh/resource-policy: delete\n",
+        # a quoted kind
+        '---\nkind: "CustomResourceDefinition"\nmetadata:\n  name: x.ceph.rook.io\n',
+        # CRDs nested in a List
+        "---\nkind: List\nitems:\n- kind: CustomResourceDefinition\n  metadata:\n    name: x.ceph.rook.io\n",
     ],
-    ids=["labels", "spec", "comment", "other-value"],
+    ids=["labels", "spec", "comment", "other-value", "quoted-kind", "list"],
 )
 def test_helm_keep_check_reads_the_metadata_annotation_only(tmp_path, crd):
     result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=OPERATOR,
@@ -318,6 +323,39 @@ def test_helm_keep_check_reads_the_metadata_annotation_only(tmp_path, crd):
     assert "rc=1" in result.stdout
     assert "would delete a CRD without metadata.annotations helm.sh/resource-policy: keep" in result.stderr
     assert mutations == []
+
+
+# A multi-line annotation value can carry the keep line as text; the live CRD shows
+# whether the annotation exists.
+SPOOFED_KEEP = ("---\nkind: CustomResourceDefinition\nmetadata:\n  name: cephclusters.ceph.rook.io\n"
+                "  annotations:\n    note: \"first line\n    helm.sh/resource-policy: keep\n    last line\"\n")
+
+
+def _live_crd(annotations):
+    crds = [c for c in CRDS if c["metadata"]["name"] != "cephclusters.ceph.rook.io"]
+    return crds + [_crd("cephclusters.ceph.rook.io", "ceph.rook.io", annotations=annotations)]
+
+
+def test_helm_uninstall_refuses_when_a_live_crd_of_the_release_is_not_kept(tmp_path):
+    objects = {**OPERATOR, "crd": _live_crd({"meta.helm.sh/release-name": "rook-ceph", "meta.helm.sh/release-namespace": "rook-ceph"})}
+
+    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=objects,
+                             releases={"rook-ceph/rook-ceph": ROOK_CHART + SPOOFED_KEEP})
+
+    assert "rc=1" in result.stdout
+    assert "live CRDs of release rook-ceph lack metadata.annotations helm.sh/resource-policy: keep: " \
+        "cephclusters.ceph.rook.io" in result.stderr
+    assert mutations == []
+
+
+def test_helm_uninstall_runs_when_the_live_crds_of_the_release_are_kept(tmp_path):
+    objects = {**OPERATOR, "crd": _live_crd({**{"meta.helm.sh/release-name": "rook-ceph", "meta.helm.sh/release-namespace": "rook-ceph"}, "helm.sh/resource-policy": "keep"})}
+
+    result, mutations = _run(tmp_path, "rook_helm_uninstall", objects=objects,
+                             releases={"rook-ceph/rook-ceph": ROOK_CHART + KEPT_CRD})
+
+    assert "rc=0" in result.stdout, result.stderr
+    assert mutations == ["helm uninstall rook-ceph -n rook-ceph"]
 
 
 # --- CR, operator, and CRD deletion -------------------------------------------------
@@ -473,8 +511,16 @@ def _crd(name, group, labels=None, annotations=None):
         (_crd("objectbucketclaims.objectbucket.io", "objectbucket.io", labels={"olm.managed": "true"}), [], "OLM labels"),
         (_crd("drivers.csi.ceph.io", "csi.ceph.io", labels={"operators.coreos.com/cephcsi-operator.ceph-csi": ""}),
          [], "OLM labels"),
-        (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-name": "ceph-csi-operator"}),
-         [], "Helm release ceph-csi-operator"),
+        (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-name": "ceph-csi-operator",
+                                                                  "meta.helm.sh/release-namespace": "ceph-csi"}),
+         [], "Helm release ceph-csi/ceph-csi-operator"),
+        # Same release name, another namespace: another product's release.
+        (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-name": "rook-ceph",
+                                                                  "meta.helm.sh/release-namespace": "other-storage"}),
+         [], "Helm release other-storage/rook-ceph"),
+        # No release namespace recorded: ownership cannot be proven.
+        (_crd("drivers.csi.ceph.io", "csi.ceph.io", annotations={"meta.helm.sh/release-name": "rook-ceph"}),
+         [], "Helm release /rook-ceph"),
         (_crd("objectbuckets.objectbucket.io", "objectbucket.io"),
          [{"metadata": meta("noobaa-operator.v5.17.0", "noobaa"),
            "spec": {"customresourcedefinitions": {"owned": [{"name": "objectbuckets.objectbucket.io"}]}}}],
@@ -484,7 +530,8 @@ def _crd(name, group, labels=None, annotations=None):
            "spec": {"customresourcedefinitions": {"required": [{"name": "cephclusters.ceph.rook.io"}]}}}],
          "listed by a ClusterServiceVersion"),
     ],
-    ids=["olm-managed", "olm-package-label", "other-helm-release", "csv-owned", "csv-required"],
+    ids=["olm-managed", "olm-package-label", "other-helm-release", "same-name-other-namespace",
+         "no-release-namespace", "csv-owned", "csv-required"],
 )
 def test_crd_deletion_refuses_crds_another_product_manages(tmp_path, crd, csvs, reason):
     crds = [c for c in CRDS if c["metadata"]["name"] != crd["metadata"]["name"]] + [crd]
@@ -498,7 +545,7 @@ def test_crd_deletion_refuses_crds_another_product_manages(tmp_path, crd, csvs, 
 
 
 def test_crd_deletion_accepts_crds_of_its_own_helm_release(tmp_path):
-    crd = _crd("cephclusters.ceph.rook.io", "ceph.rook.io", annotations={"meta.helm.sh/release-name": "rook-ceph"})
+    crd = _crd("cephclusters.ceph.rook.io", "ceph.rook.io", annotations={"meta.helm.sh/release-name": "rook-ceph", "meta.helm.sh/release-namespace": "rook-ceph"})
     crds = [c for c in CRDS if c["metadata"]["name"] != "cephclusters.ceph.rook.io"] + [crd]
 
     result, mutations = _run(tmp_path, "rook_delete_crds", objects={"crd": crds})
@@ -705,60 +752,80 @@ def test_osd_disk_wipe_refuses_without_a_stable_confirmed_path(tmp_path, call, s
     assert mutations == []
 
 
-def _facts(**overrides):
-    facts = {"path": "/dev/sdb", "type": "disk", "children": "", "holders": "", "use": "  ", "pv": ""}
-    facts.update(overrides)
-    return "".join(f"{key}={value}\n" for key, value in facts.items())
+def _wipe(tmp_path, **facts):
+    call = f"ROOK_CONFIRM_WIPE_DISK={DISK} rook_wipe_osd_disk node-a {DISK}"
+    result, mutations = _run(tmp_path, call, node=facts)
+    return result, mutations, node_calls(tmp_path / "bin")
 
 
-def _wiped(mutations):
-    return [m for m in mutations if "wipefs" in m or "sgdisk" in m]
+def _wiped(calls):
+    return [c for c in calls if c[:2] == ["wipefs", "-af"] or c[0] == "sgdisk"]
 
 
-def test_osd_disk_wipe_inspects_then_wipes_a_clean_disk(tmp_path):
-    result, mutations = _run(tmp_path, f"ROOK_CONFIRM_WIPE_DISK={DISK} rook_wipe_osd_disk node-a {DISK}",
-                             debug=_facts(use=" ceph_bluestore "))
+@pytest.mark.parametrize(
+    "signatures",
+    ["", "ceph_bluestore", "gpt\nPMBR", "dos"],
+    ids=["blank", "bluestore", "empty-gpt", "empty-dos"],
+)
+def test_osd_disk_wipe_checks_then_wipes_the_resolved_device_in_one_run(tmp_path, signatures):
+    result, mutations, calls = _wipe(tmp_path, signatures=signatures)
 
-    assert "rc=0" in result.stdout, result.stderr
-    assert len(mutations) == 2
-    assert "lsblk -dno TYPE" in mutations[0] and "wipefs" not in mutations[0]
+    assert "rc=0" in result.stdout, result.stdout + result.stderr
+    assert len([m for m in mutations if m.startswith("debug ")]) == 1
     assert mutations[0].endswith(f" _ {DISK}")
-    assert "wipefs -af" in mutations[1] and "sgdisk --zap-all" in mutations[1]
-    assert mutations[1].endswith(f" _ {DISK} /dev/sdb")
+    assert _wiped(calls) == [["wipefs", "-af", "/dev/sdb"], ["sgdisk", "--zap-all", "/dev/sdb"]]
+    # Every check ran before the first destructive call.
+    first = calls.index(["wipefs", "-af", "/dev/sdb"])
+    assert {c[0] for c in calls[:first]} == {"readlink", "lsblk", "ls", "wipefs", "findmnt", "swapon", "pvs"}
 
 
 @pytest.mark.parametrize(
     ("facts", "reason"),
     [
-        (_facts(type="part"), "type 'part', not a whole disk"),
-        (_facts(type="lvm"), "type 'lvm', not a whole disk"),
-        (_facts(children="sda1 sda2 "), "partitions or child devices: sda1 sda2"),
-        (_facts(holders="dm-0 "), "holders: dm-0"),
-        (_facts(use=" /boot xfs "), "mounted or swap"),
-        (_facts(use="[SWAP] swap "), "mounted or swap"),
-        (_facts(use=" LVM2_member "), "signature in use"),
-        (_facts(use=" crypto_LUKS "), "signature in use"),
-        (_facts(use=" swap "), "signature in use"),
-        (_facts(pv="/dev/sdb"), "LVM physical volume"),
-        (_facts(pv="unknown"), "LVM physical volume (pvs: unknown)"),
-        ("", "could not resolve the link"),
+        ({"type": "part"}, "type part, not a whole disk"),
+        ({"type": "lvm"}, "type lvm, not a whole disk"),
+        ({"names": "sdb\nsdb1\nsdb2"}, "partitions or child devices: sdb1 sdb2"),
+        ({"holders": "dm-0"}, "holders: dm-0"),
+        ({"mounts": "8:0\n8:16"}, "mounted on the host"),
+        ({"swaps": "/dev/sdb"}, "active swap"),
+        ({"pvs": "  /dev/sdb"}, "LVM physical volume /dev/sdb"),
+        ({"signatures": "xfs"}, "signature xfs"),
+        ({"signatures": "ext4"}, "signature ext4"),
+        ({"signatures": "LVM2_member"}, "signature LVM2_member"),
+        ({"signatures": "crypto_LUKS"}, "signature crypto_LUKS"),
+        ({"signatures": "swap"}, "signature swap"),
+        ({"signatures": "gpt\nPMBR\nxfs"}, "signature xfs"),
+        ({"device": "sdb"}, "does not resolve to a device"),
+        ({"absent": ["pvs"]}, "pvs is not available"),
     ],
-    ids=["partition", "lvm-volume", "children", "holders", "mounted", "swap-mounted", "lvm-member", "luks",
-         "swap-signature", "physical-volume", "pvs-missing", "no-facts"],
+    ids=["partition", "lvm-volume", "children", "holders", "mounted", "swap-active", "physical-volume", "xfs",
+         "ext4", "lvm-member", "luks", "swap-signature", "fs-after-table", "unresolved", "pvs-missing"],
 )
 def test_osd_disk_wipe_refuses_a_disk_in_use(tmp_path, facts, reason):
-    result, mutations = _run(tmp_path, f"ROOK_CONFIRM_WIPE_DISK={DISK} rook_wipe_osd_disk node-a {DISK}", debug=facts)
+    result, _, calls = _wipe(tmp_path, **facts)
 
     assert "rc=1" in result.stdout
-    assert reason in result.stderr
+    assert reason in result.stderr, result.stderr
     assert "disk not wiped" in result.stderr
-    assert _wiped(mutations) == []
+    assert _wiped(calls) == []
+
+
+@pytest.mark.parametrize(
+    ("tool", "status"),
+    [("readlink", 1), ("lsblk", 32), ("ls", 2), ("wipefs", 1), ("findmnt", 1), ("swapon", 1), ("pvs", 5)],
+)
+def test_osd_disk_wipe_refuses_when_a_check_cannot_run(tmp_path, tool, status):
+    result, _, calls = _wipe(tmp_path, fail={tool: status})
+
+    assert "rc=1" in result.stdout
+    assert "a check could not run" in result.stderr, result.stderr
+    assert "disk not wiped" in result.stderr
+    assert _wiped(calls) == []
 
 
 def test_osd_disk_wipe_refuses_a_partition_link(tmp_path):
     part = DISK + "-part3"
-    result, mutations = _run(tmp_path, f"ROOK_CONFIRM_WIPE_DISK={part} rook_wipe_osd_disk node-a {part}",
-                             debug=_facts())
+    result, mutations = _run(tmp_path, f"ROOK_CONFIRM_WIPE_DISK={part} rook_wipe_osd_disk node-a {part}", node={})
 
     assert "rc=1" in result.stdout
     assert "is a partition link" in result.stderr
@@ -816,6 +883,23 @@ def test_clear_finalizers_ignores_an_operator_that_is_being_deleted(tmp_path):
 
     assert "rc=0" in result.stdout, result.stderr
     assert mutations == ['-n ext patch cephclusters.ceph.rook.io/external --type=merge -p {"metadata":{"finalizers":[]}}']
+
+
+@pytest.mark.parametrize("pod_extra", [{}, {"deletionTimestamp": OLD}], ids=["running", "terminating"])
+def test_clear_finalizers_refuses_while_operator_pods_remain(tmp_path, pod_extra):
+    objects = {
+        "deployments": [rook_operator("rook-ceph", deletionTimestamp=OLD)],
+        "pods": [{"metadata": meta("rook-ceph-operator-5d9c7", "rook-ceph", labels={"app": "rook-ceph-operator"},
+                                   **pod_extra)}],
+        "cephclusters.ceph.rook.io": [{"metadata": meta("external", "ext", finalizers=["x"], deletionTimestamp=OLD)}],
+    }
+
+    result, mutations = _run(tmp_path, "ROOK_NAMESPACE=ext; rook_clear_finalizers ceph.rook.io", objects=objects)
+
+    assert "rc=1" in result.stdout
+    assert "rook-ceph-operator pods still exist: " in result.stderr
+    assert "rook-ceph-operator-5d9c7 - wait until they are gone" in result.stderr
+    assert mutations == []
 
 
 def test_clear_finalizers_patches_only_deleting_objects_in_the_rook_namespace(tmp_path):

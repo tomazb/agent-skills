@@ -51,6 +51,9 @@ def test_audit_reports_api_resource_query_failures(tmp_path):
         if args == ["whoami"]:
             print("admin")
             raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
+            raise SystemExit(0)
         if args[:2] == ["get", "namespace"]:
             print("NotFound", file=sys.stderr)
             raise SystemExit(1)
@@ -76,6 +79,9 @@ def test_audit_fails_for_leftover_api_groups_and_rook_namespace(tmp_path):
         args = sys.argv[1:]
         if args == ["whoami"]:
             print("admin")
+            raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
             raise SystemExit(0)
         if args == ["get", "namespace", "openshift-storage"]:
             print("NotFound", file=sys.stderr)
@@ -113,6 +119,9 @@ def test_audit_fails_for_leftover_object_bucket_claims(tmp_path):
         if args == ["whoami"]:
             print("admin")
             raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
+            raise SystemExit(0)
         if args[:1] == ["api-resources"]:
             raise SystemExit(0)
         if args[:2] == ["get", "namespace"]:
@@ -143,6 +152,9 @@ def test_audit_passes_when_no_odf_residue_remains(tmp_path):
         args = sys.argv[1:]
         if args == ["whoami"]:
             print("admin")
+            raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
             raise SystemExit(0)
         if args[:1] == ["api-resources"]:
             raise SystemExit(0)
@@ -198,6 +210,9 @@ def test_audit_accepts_namespace_kept_for_lvms_but_flags_odf_residue(tmp_path):
         if args == ["whoami"]:
             print("admin")
             raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
+            raise SystemExit(0)
         if args == ["get", "namespace", "openshift-storage"]:
             print("NAME\\nopenshift-storage")
             raise SystemExit(0)
@@ -247,6 +262,9 @@ def test_audit_passes_when_namespace_and_lso_are_retained_without_residue(tmp_pa
         args = sys.argv[1:]
         if args == ["whoami"]:
             print("admin")
+            raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
             raise SystemExit(0)
         if args == ["get", "namespace", "openshift-storage"]:
             print("NAME\\nopenshift-storage")
@@ -313,6 +331,9 @@ def test_audit_flags_leftover_odf_subscription_in_a_shared_namespace(tmp_path):
         if args == ["whoami"]:
             print("admin")
             raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
+            raise SystemExit(0)
         if args == ["get", "namespace", "openshift-storage"]:
             print("NAME\\nopenshift-storage")
             raise SystemExit(0)
@@ -362,6 +383,9 @@ def test_audit_flags_leftover_odf_statefulset_residue(tmp_path):
         args = sys.argv[1:]
         if args == ["whoami"]:
             print("admin")
+            raise SystemExit(0)
+        if args == ["whoami", "--show-server"]:
+            print("https://api.cluster.example.com:6443")
             raise SystemExit(0)
         if args == ["get", "namespace", "openshift-storage"]:
             print("NAME\\nopenshift-storage")
@@ -1901,3 +1925,13 @@ def test_audit_fails_when_a_successful_call_prints_nothing(tmp_path, resource, l
     assert result.returncode == 1
     assert f"FAIL: {label} query returned nothing" in result.stdout
     assert f"OK: {ok_line}" not in result.stdout
+
+
+def test_audit_fails_when_the_server_url_cannot_be_read(tmp_path):
+    _write_jq_proxy(tmp_path)
+    _write_cluster_oc(tmp_path, errors={"show-server": "error: You must be logged in to the server (Unauthorized)"})
+
+    result = _run_audit(tmp_path)
+
+    assert result.returncode == 1
+    assert "FAIL: could not read the API server URL with oc whoami --show-server" in result.stdout

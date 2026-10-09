@@ -130,27 +130,42 @@ recorded for ODF in `openshift-odf` 1.20.0; this release applies them from the R
   with operator finalizers, then cluster RBAC ("Cluster RBAC left by Rook") and CRDs.
 - **Destructive steps tightened further.** `rook_helm_uninstall` refuses while any
   `ceph.rook.io` object is left in the Rook namespace (removing the operator would
-  orphan the `CephCluster`), and counts a CRD as kept only by the exact
-  `metadata.annotations` line `helm.sh/resource-policy: keep` as Helm renders it.
+  orphan the `CephCluster`). It counts a manifest CRD as kept only by the exact
+  `metadata.annotations` line `helm.sh/resource-policy: keep` as Helm renders it,
+  treats any kind line naming `CustomResourceDefinition` (quoted, or nested in a
+  List) as a CRD, and also refuses while a live CRD of the release lacks that
+  annotation, because a multi-line annotation value can carry the same text.
+  `rook_delete_crds` accepts a Helm-owned CRD only when both
+  `meta.helm.sh/release-name` and `meta.helm.sh/release-namespace` match this Rook,
+  so a same-named release in another namespace is another product's.
   `rook_delete_operator` refuses while a ValidatingWebhookConfiguration,
   MutatingWebhookConfiguration, or APIService is served from the Rook namespace.
   `rook_clear_finalizers` strips finalizers only from objects already being deleted,
   refuses while any Deployment, DaemonSet, or StatefulSet is left in the namespace, and
-  refuses while a `rook-ceph-operator` that is not being deleted runs in any namespace.
+  refuses while a `rook-ceph-operator` Deployment that is not being deleted exists in
+  any namespace or any `app=rook-ceph-operator` pod exists, terminating ones included.
   `rook_record_data_dir` also records the namespace, and `rook_wipe_data_dir` refuses a
   path recorded for another namespace and warns when no mon IDs were recorded.
-  `rook_wipe_osd_disk` refuses a `-part<N>` link, inspects the disk on the node
-  read-only first, refuses unless it is a whole disk with no partitions, holders,
-  mountpoint, `LVM2_member`/`crypto_LUKS`/swap signature, or `pvs` entry, and re-checks
-  that the link still points at the inspected device before wiping.
+  `rook_wipe_osd_disk` refuses a `-part<N>` link and runs one node-side script that
+  checks the disk and wipes the resolved device only if every check passes, so
+  nothing can start using it between a check and the wipe. A check that cannot run
+  (a failed `readlink`, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`,
+  or `pvs`, or no `pvs`) blocks the wipe. The disk must be a whole disk with no
+  partitions, holders, host mount, active swap, or `pvs` entry, and its only
+  signatures may be `ceph_bluestore` or an empty partition table; `xfs`, `ext4`, and
+  every other signature block it.
 - **1.7.0's audit rules carried into the rewrite.** `PRIOR_DEFAULT_STORAGE_CLASS`
   keeps its meaning: unset requires exactly one default, empty accepts a cluster with
   no default, and a name must match the current default. A `rook-ceph-metrics` binding
   whose only live subject is `openshift-monitoring/prometheus-k8s` is dead once no Ceph
   runs, because that ServiceAccount exists on every OpenShift cluster. It is kept
   while upstream Rook, ODF, or a Ceph object of unknown owner remains, or when
-  ownership could not be classified.
-- Tests: 65 to 406. The classifier, every audit check (residue, clean, and kind-absent
+  ownership could not be classified. A subject listed twice counts once.
+- **An audit or classification that cannot name its cluster fails.** When
+  `oc whoami --show-server` fails or prints nothing, `post_uninstall_audit.sh` reports
+  `FAIL` and exits 1, and `classify_ceph_ownership.sh` stops with "unknown"; both used
+  to go on against "unknown server".
+- Tests: 65 to 430. The classifier, every audit check (residue, clean, and kind-absent
   variants), and the runbook functions, extracted verbatim from the markdown, run
   against a fake `oc` driven by a cluster description.
 
