@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 from pathlib import Path
 
 RBD_SMOKE_YAML = """\
@@ -29,7 +30,7 @@ metadata:
   name: rbd-smoke-writer
   namespace: {namespace}
 spec:
-  containers:
+  {node_name_line}containers:
   - name: writer
     image: registry.access.redhat.com/ubi9/ubi-minimal
     command: ["sh", "-c", "sleep 3600"]
@@ -74,7 +75,7 @@ metadata:
   name: cephfs-smoke-writer
   namespace: {namespace}
 spec:
-  containers:
+  {node_name_line}containers:
   - name: writer
     image: registry.access.redhat.com/ubi9/ubi-minimal
     command: ["sh", "-c", "sleep 3600"]
@@ -95,11 +96,30 @@ spec:
 """
 
 
-def render_smoke_manifest(mode: str, namespace: str, storage_class: str, output: str) -> None:
+def _node_name_line(node_name: str | None) -> str:
+    if not node_name:
+        return ""
+    if re.fullmatch(r"[A-Za-z0-9.-]+", node_name) is None:
+        raise ValueError(f"invalid node name: {node_name}")
+    return f"nodeName: {node_name}\n  "
+
+
+def render_smoke_manifest(
+    mode: str,
+    namespace: str,
+    storage_class: str,
+    output: str,
+    node_name: str | None = None,
+) -> None:
+    node_name_line = _node_name_line(node_name)
     if mode == "rbd":
-        yaml = RBD_SMOKE_YAML.format(namespace=namespace, storage_class=storage_class)
+        yaml = RBD_SMOKE_YAML.format(
+            namespace=namespace, storage_class=storage_class, node_name_line=node_name_line
+        )
     elif mode == "cephfs":
-        yaml = CEPHFS_SMOKE_YAML.format(namespace=namespace, storage_class=storage_class)
+        yaml = CEPHFS_SMOKE_YAML.format(
+            namespace=namespace, storage_class=storage_class, node_name_line=node_name_line
+        )
     else:
         raise ValueError(f"Unsupported mode: {mode}. Use 'rbd' or 'cephfs'.")
     Path(output).write_text(yaml, encoding="utf-8")
@@ -115,10 +135,17 @@ def main() -> int:
         "--storage-class", default=None, help="StorageClass name (defaults: rbd=rook-ceph-block, cephfs=rook-cephfs)"
     )
     parser.add_argument("--output", required=True, help="Output YAML path")
+    parser.add_argument(
+        "--node-name",
+        default=None,
+        help="Pin the smoke pod to this node. Omit to let the scheduler choose.",
+    )
     args = parser.parse_args()
 
     storage_class = args.storage_class or ("rook-ceph-block" if args.mode == "rbd" else "rook-cephfs")
-    render_smoke_manifest(args.mode, args.namespace, storage_class, args.output)
+    render_smoke_manifest(
+        args.mode, args.namespace, storage_class, args.output, node_name=args.node_name
+    )
     print(f"Smoke manifest written to {args.output}")
     return 0
 

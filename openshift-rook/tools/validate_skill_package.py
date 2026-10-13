@@ -409,6 +409,8 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "rook-rbd-aes256k-probe",
             "allowedCiphers",
             "AUTH_INSECURE_KEYS_ALLOWED",
+            "FailedMount",
+            "keepPriorKeyCountMax",
         ],
     )
     require(
