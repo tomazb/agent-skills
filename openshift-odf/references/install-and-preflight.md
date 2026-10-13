@@ -76,7 +76,7 @@ oc debug "node/${NODE}" --image="${CEPH_VOLUME_IMAGE}" -- bash -ceu '
 
 **Watch for stale krbd devices.** If a prior ODF/Rook teardown deleted an RBD-backed PVC (ODF's NooBaa DB and any `ceph-rbd` PVC) or its namespace before the volume was unmapped — or destroyed the pool under a mapped image — the node keeps a wedged `/dev/rbdN` pointing at a pool that no longer exists. A later OSD prepare then hangs forever at `ceph-volume raw list`. Remediation is node-local (run it inside `oc debug node/<node> -- chroot /host`): a forced unmap `timeout 30 rbd device unmap --force /dev/rbdN` (or the `/sys/bus/rbd/remove*` sysfs write when the `rbd` client is unavailable on the host), escalating to a node reboot or hypervisor power-cycle when the mapping is fully wedged. See the Rook cleanup runbook's "Stale krbd Devices" section for the exact commands.
 
-Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, the `dataDirHostPath` (`/var/lib/rook`), and stale krbd mappings is required in both cases. **Full-disk BlueStore zeroing is destructive and is only appropriate once ownership is classified, the operator has confirmed the disk is not a recovery candidate, and destructive confirmation is given for the exact device** — see the Disk Cleanup gate in `references/local-storage-disks.md`.
+Remove any leftover before installing: hand off ODF-owned leftovers to this skill's `maintenance-uninstall.md`, and upstream-Rook leftovers to the [Rook cleanup runbook](../../openshift-rook/references/maintenance-uninstall.md). Clearing orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, the `dataDirHostPath` (`/var/lib/rook`), and stale krbd mappings is required in both cases. **A device erase or a full-disk BlueStore zero is destructive and is only appropriate once ownership is classified, the operator has confirmed the disk is not a recovery candidate, and destructive confirmation is given for the exact device.** When `fna` or `sanicap` shows a device erase, run `scripts/select_erase_method.py` and use the fastest proper method — see `references/local-storage-disks.md`.
 
 ### Upstream Rook Conflict Check (SNO / Bare-Metal)
 
@@ -92,7 +92,7 @@ oc get subscription -A | grep -E 'rook|ceph|odf|ocs' || echo "no relevant OLM su
 
 1. All stale Rook namespaces, CRs, CRDs, and StorageClasses are deleted.
 2. Stale mon host directories (`/var/lib/rook/mon-*/`) are removed from the node **only after confirming the cluster is fully abandoned** (not a recovery candidate). If there is any chance the data is needed, treat the host path as a backup candidate before deletion.
-3. Any OSD disk that was used by the upstream Rook cluster has been fully zeroed — see the Disk Cleanup section in `references/local-storage-disks.md`.
+3. Any OSD disk that was used by the upstream Rook cluster has been erased with the device command when identify data supports it, otherwise fully zeroed — see the Disk Cleanup section in `references/local-storage-disks.md`.
 
 ## SNO Pre-flight Gate
 

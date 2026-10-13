@@ -829,6 +829,10 @@ def _wiped(calls):
     return [c for c in calls if c[:2] == ["wipefs", "-af"] or c[0] == "sgdisk"]
 
 
+def _zeroed(calls):
+    return [c for c in calls if c[:2] == ["dd", "if=/dev/zero"]]
+
+
 @pytest.mark.parametrize(
     ("signatures", "probe"),
     [("", ""), ("ceph_bluestore", "DEVNAME=/dev/sdb\nTYPE=ceph_bluestore")],
@@ -841,13 +845,25 @@ def test_osd_disk_wipe_checks_then_wipes_the_resolved_device_in_one_run(tmp_path
     assert len([m for m in mutations if m.startswith("debug ")]) == 1
     assert mutations[0].endswith(f" _ {DISK}")
     assert _wiped(calls) == [["wipefs", "-af", "/dev/sdb"], ["sgdisk", "--zap-all", "/dev/sdb"]]
-    # Every check ran before the first destructive call, the reads first of all.
-    first = calls.index(["wipefs", "-af", "/dev/sdb"])
+    # The fake disk is smaller than 1000 GiB, so that copy is skipped.
+    assert _zeroed(calls) == [
+        ["dd", "if=/dev/zero", "of=/dev/sdb", "bs=4096", "seek=0", "count=256", "status=none", "conv=fsync"],
+        ["dd", "if=/dev/zero", "of=/dev/sdb", "bs=4096", "seek=262144", "count=256", "status=none", "conv=fsync"],
+        ["dd", "if=/dev/zero", "of=/dev/sdb", "bs=4096", "seek=2621440", "count=256", "status=none", "conv=fsync"],
+        ["dd", "if=/dev/zero", "of=/dev/sdb", "bs=4096", "seek=26214400", "count=256", "status=none", "conv=fsync"],
+    ]
+    assert calls.index(_zeroed(calls)[0]) < calls.index(["wipefs", "-af", "/dev/sdb"])
+    assert ["sync"] in calls
+    # Every check ran before the first destructive write, the reads first of all.
+    first = calls.index(_zeroed(calls)[0])
     checks = [c[0] for c in calls[:first]]
     assert set(checks) == {"readlink", "blockdev", "dd", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs"}
     assert checks[:4] == ["readlink", "blockdev", "dd", "dd"]
     assert calls[3][-3:] == ["skip=1000203837440", "iflag=skip_bytes", "status=none"]
     assert "wiping /dev/sdb" in result.stdout
+    assert "zero BlueStore label at 0GiB" in result.stdout
+    assert "zero BlueStore label at 100GiB" in result.stdout
+    assert "zero BlueStore label at 1000GiB" not in result.stdout
 
 
 @pytest.mark.parametrize(

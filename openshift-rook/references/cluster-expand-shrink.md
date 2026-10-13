@@ -106,14 +106,7 @@ oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph osd tree
 
 1. Verify the OSD is down and the disk is truly failed.
 2. Follow the planned OSD removal steps above.
-3. After the OSD is fully removed, clean the disk if reusing it:
-
-```bash
-oc debug "node/<node>" -- chroot /host bash -c "
-  wipefs -af '/dev/disk/by-id/<disk>'
-  sgdisk --zap-all '/dev/disk/by-id/<disk>'
-"
-```
+3. After the OSD is fully removed, clean the disk if reusing it. `wipefs -af` and `sgdisk --zap-all` are not sufficient for a disk that held a BlueStore OSD: the label is also stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. Clear those copies, or full-disk zero when policy requires total erasure. Choose the fastest proper erase with `scripts/select_erase_method.py` and follow `references/osd-disk-prep.md`, then do not reuse the disk until `ceph-volume raw list` prints `{}`.
 
 4. Add the disk back to the `CephCluster` storage spec or replace the disk with a new one.
 5. Wait for the operator to create a new OSD and for the cluster to rebalance.

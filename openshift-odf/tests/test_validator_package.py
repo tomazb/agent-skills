@@ -439,6 +439,14 @@ def test_missing_osd_removal_guidance_fails(validator, package_factory, referenc
     )
 
 
+def test_missing_nvme_secure_erase_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    disks = root / "references" / "local-storage-disks.md"
+    disks.write_text(disks.read_text(encoding="utf-8").replace("sanicap", "identify-field"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("local-storage-disks.md" in issue and "NVMe secure erase" in issue for issue in issues)
+
+
 def test_missing_bluestore_disk_reuse_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     for ref in ("maintenance-uninstall.md", "cluster-expand-shrink.md"):

@@ -84,6 +84,7 @@ count.
 
 ## BlueStore cleanup
 For a disk that previously held a Ceph BlueStore OSD, use full-disk zeroing.
+NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem. ODF `cleanup-policy=delete` is not this controller command.
 
 ## Uninstall
 Annotate `uninstall.ocs.openshift.io/cleanup-policy` and
@@ -151,7 +152,7 @@ Use `references/console-plugin.md` for ODF console plugin enablement.
 
 ## Core Safety Rules
 
-Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead.
+Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. SSDs often support cryptographic erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. See `references/local-storage-disks.md`.
 
 ## Required Source Checks
 
@@ -222,6 +223,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "render_storagecluster.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")

@@ -102,6 +102,8 @@ During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers (`csi.ceph
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
+BlueStore label cleanup: `wipefs -af` and `sgdisk --zap-all` are not sufficient. Clear labels at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB with `for mult in 0 1 10 100 1000`, or full-disk zero when required. `ceph-volume raw list` must print `{}`. See `references/osd-disk-prep.md`. NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem.
+
 If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 
 VM storage defaults: set `storageclass.kubevirt.io/is-default-virt-class` for the CDI/KubeVirt virtualization default, keep `storageclass.kubernetes.io/is-default-class` for the general default, and configure StorageProfile `claimPropertySets` (`ReadWriteMany` + `volumeMode: Block` for RBD, `Filesystem` for CephFS/NFS). Resolve `CDIStorageProfilesIncomplete` for an `UnrecognizedProvisioner` by setting `spec.claimPropertySets`. When moving a default off an LVMS class, set `LVMCluster.spec.storage.deviceClasses[].default: false` because the operator re-pins the annotation.
@@ -132,7 +134,7 @@ Routing guidance.
 
 ## Core Safety Rules
 
-Safety guidance. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead.
+Safety guidance. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. A former BlueStore OSD also keeps labels at 10 GiB, 100 GiB, and 1000 GiB; do not reuse the disk until `ceph-volume raw list` prints `{}`. SSDs often support cryptographic erase or a sanitize block erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. See `references/osd-disk-prep.md`.
 
 ## Required Source Checks
 
@@ -205,6 +207,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "classify_ceph_ownership.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")
         (root / "tools" / "validate_skill_package.sh").write_text("", encoding="utf-8")

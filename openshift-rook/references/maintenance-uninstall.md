@@ -792,7 +792,7 @@ oc -n "$ROOK_NAMESPACE" get pods -l app=rook-ceph-cleanup
 If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
-2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. The script first proves that the first and last MiB of the disk can be read, because a signature probe that cannot read reports "nothing found" just like an empty disk. A check that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry, and the only signature `wipefs` and `blkid -p` may find on it is `ceph_bluestore`. Any other signature blocks it, a partition table included, even an empty one: its backup copy or a hybrid MBR can still list partitions that neither the primary table nor the kernel shows, so inspect such a disk and clear it by hand. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. If it fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
+2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. The script first proves that the first and last MiB of the disk can be read, because a signature probe that cannot read reports "nothing found" just like an empty disk. A check that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry, and the only signature `wipefs` and `blkid -p` may find on it is `ceph_bluestore`. Any other signature blocks it, a partition table included, even an empty one: its backup copy or a hybrid MBR can still list partitions that neither the primary table nor the kernel shows, so inspect such a disk and clear it by hand. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. `wipefs -af` and `sgdisk --zap-all` are not sufficient on a disk that held a BlueStore OSD: the label is also stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. The function zeroes those copies before `wipefs`. `lsblk -f` and `wipefs -n` can still look clean while `ceph-volume raw list` reports `osd.0 belonging to a different ceph cluster`. Do not reuse the disk until that list prints `{}`. A full-disk zero is only for total erasure. When Identify Controller shows a cryptographic erase or sanitize block erase, use that path in `references/osd-disk-prep.md` instead of the offset wipe. The other commands are there too. If the wipe fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
 
 ```bash
 rook_wipe_osd_disk() {
@@ -885,13 +885,23 @@ if [ -n "$blocked" ]; then
 fi
 trap "echo \"wipe step failed: \$BASH_COMMAND\"" ERR
 echo "wiping $d"
+# BlueStore copies its block-device label at 0, 1 GiB, 10 GiB, 100 GiB, and
+# 1000 GiB. wipefs only clears offset 0, so zero every copy that fits.
+g=$((1024 * 1024 * 1024))
+for mult in 0 1 10 100 1000; do
+  off=$((mult * g))
+  [ "$off" -ge "$size" ] && continue
+  echo "zero BlueStore label at ${mult}GiB"
+  dd if=/dev/zero of="$d" bs=4096 seek=$((off / 4096)) count=256 status=none conv=fsync
+done
 wipefs -af "$d"
 sgdisk --zap-all "$d"
+sync
 lsblk -f "$d"
 ' _ "$disk") || {
     printf '%s\n' "$out" >&2
     if [[ $out == *"wiping /dev/"* ]]; then
-      echo "the wipe of $disk on $node started and then failed - the disk may be partly wiped; check it with lsblk -f and wipefs -n" >&2
+      echo "the wipe of $disk on $node started and then failed - the disk may be partly wiped; check it with lsblk -f, wipefs -n, and ceph-volume raw list" >&2
     else
       echo "$disk on $node is in use or could not be checked - disk not wiped" >&2
     fi
@@ -900,6 +910,18 @@ lsblk -f "$d"
   printf '%s\n' "$out"
 }
 rook_wipe_osd_disk <node> /dev/disk/by-id/<stable-disk-id>
+```
+
+The function does not run `ceph-volume` (RHCOS does not ship it). After it returns, confirm the labels are gone. Do not reuse the disk while this prints anything other than `{}`:
+
+```bash
+NODE="<node>"
+DISK="/dev/disk/by-id/<stable-disk-id>"
+ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v19.2.2"   # or the cephVersion.image you plan to deploy
+oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json
+'
 ```
 
 3. Remove MachineConfigs created for Rook Ceph if any.

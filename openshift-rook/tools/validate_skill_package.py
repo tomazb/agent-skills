@@ -36,6 +36,7 @@ REQUIRED_FILES = [
     "scripts/post_uninstall_audit.sh",
     "scripts/rook_common.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/select_erase_method.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]
@@ -514,6 +515,86 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "clientprofiles.csi.ceph.io",
             "oc delete csidriver",
             "dataDirHostPath",
+        ],
+    )
+    require(
+        "references/osd-disk-prep.md",
+        "BlueStore label cleanup",
+        [
+            "not sufficient",
+            "1 GiB",
+            "10 GiB",
+            "100 GiB",
+            "1000 GiB",
+            "for mult in 0 1 10 100 1000",
+            "ceph-volume raw list",
+            "full-disk zero",
+            "cryptographic erase",
+            "sanicap",
+            "fna",
+            "--ses=2",
+            "--sanact=2",
+            "--sanact=4",
+            "Global Data Erased",
+            "0x101",
+            "select_erase_method.py",
+            "fastest",
+            "blkdiscard --zeroout",
+            "write_zeroes_max_bytes",
+            "fstrim",
+            "generic virtual",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "BlueStore label cleanup",
+        [
+            "not sufficient",
+            "10 GiB",
+            "100 GiB",
+            "1000 GiB",
+            "for mult in 0 1 10 100 1000",
+            "ceph-volume raw list",
+            "full-disk zero",
+        ],
+    )
+    require(
+        "references/cluster-expand-shrink.md",
+        "BlueStore label cleanup",
+        [
+            "not sufficient",
+            "10 GiB",
+            "100 GiB",
+            "1000 GiB",
+            "ceph-volume raw list",
+            "full-disk zero",
+            "references/osd-disk-prep.md",
+        ],
+    )
+    require(
+        "references/install-and-preflight.md",
+        "BlueStore label cleanup",
+        [
+            "not sufficient",
+            "10 GiB",
+            "100 GiB",
+            "1000 GiB",
+            "ceph-volume raw list",
+            "references/osd-disk-prep.md",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "BlueStore label cleanup",
+        [
+            "10 GiB",
+            "100 GiB",
+            "1000 GiB",
+            "ceph-volume raw list",
+            "references/osd-disk-prep.md",
+            "cryptographic erase",
+            "sanicap",
+            "select_erase_method.py",
         ],
     )
     require(

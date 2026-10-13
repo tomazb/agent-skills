@@ -147,6 +147,24 @@ def test_missing_clean_cluster_uninstall_guidance_fails(validator, package_facto
     assert any("clean-cluster uninstall residue" in issue for issue in issues)
 
 
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        ("references/osd-disk-prep.md", "for mult in 0 1 10 100 1000"),
+        ("references/maintenance-uninstall.md", "10 GiB"),
+        ("references/cluster-expand-shrink.md", "full-disk zero"),
+        ("references/install-and-preflight.md", "not sufficient"),
+        ("SKILL.md", "ceph-volume raw list"),
+    ],
+)
+def test_missing_bluestore_label_cleanup_fails(validator, package_factory, rel, needle):
+    root = package_factory()
+    path = root / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "removed"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("BlueStore label cleanup" in issue and rel in issue for issue in issues)
+
+
 def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"

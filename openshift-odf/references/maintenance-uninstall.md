@@ -230,7 +230,7 @@ oc debug node/<node> --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
 '
 ```
 
-If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md` (BlueStore labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB**, or full-disk zero) with destructive confirmation for that exact by-id path. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
+If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md`. When Identify Controller shows a cryptographic erase or sanitize block erase, run `scripts/select_erase_method.py` before the BlueStore label wipe at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** or a full-disk zero. Destructive confirmation for that exact by-id path is still required. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
 
 **If the cleanup pod left host processes in D-state (`sgdisk`, `lvs`) on the OSD disk**, `kill -9` will not free the device and a later OSD prepare hangs forever inside `ceph-volume raw prepare` / `lvs`. Confirm with `oc debug node/<node> -- chroot /host bash -c 'fuser -v /dev/disk/by-id/<id>; ps -eo pid,stat,comm | awk "\$2 ~ /D/"'`.
 
@@ -1052,7 +1052,7 @@ Repeat for each stuck namespace (`rook-ceph`, `openshift-local-storage`, smoke/t
 
 ## Disk Cleanup (Data Loss)
 
-An uninstall with `cleanup-policy="delete"` wipes the OSD disks automatically. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed) — see `references/local-storage-disks.md`. Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
+An uninstall with `cleanup-policy="delete"` wipes OSD metadata automatically. That job is not an NVMe sanitize or a media-key change. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. When `fna` or `sanicap` shows a cryptographic erase or sanitize block erase, run `scripts/select_erase_method.py` as `references/local-storage-disks.md` describes. Otherwise `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed). Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
 
 ```bash
 NODE="<node>"

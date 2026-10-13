@@ -393,7 +393,7 @@ elif cmd == "blockdev":
     out(F["size"])
 """
 
-NODE_TOOLS = ("readlink", "blockdev", "dd", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs", "sgdisk")
+NODE_TOOLS = ("readlink", "blockdev", "dd", "lsblk", "ls", "wipefs", "blkid", "findmnt", "swapon", "pvs", "sgdisk", "sync")
 
 
 def write_node_tools(directory: Path, overrides: dict) -> dict:

@@ -34,6 +34,7 @@ REQUIRED_FILES = [
     "scripts/render_storagecluster.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/select_erase_method.py",
     "scripts/render_console_plugin_patch.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
@@ -477,6 +478,37 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "LocalVolumeSet",
             "localblock",
             "deviceInclusionSpec",
+        ],
+    )
+    require(
+        "references/local-storage-disks.md",
+        "NVMe secure erase",
+        [
+            "cryptographic erase",
+            "sanicap",
+            "fna",
+            "--ses=2",
+            "--sanact=2",
+            "--sanact=4",
+            "cleanup-policy=delete",
+            "Global Data Erased",
+            "0x101",
+            "select_erase_method.py",
+            "fastest",
+            "blkdiscard --zeroout",
+            "write_zeroes_max_bytes",
+            "fstrim",
+            "generic virtual",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "NVMe secure erase",
+        [
+            "cryptographic erase",
+            "sanicap",
+            "select_erase_method.py",
+            "references/local-storage-disks.md",
         ],
     )
     require(

@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.22.0
+
+SSDs and NVMe devices often support a media-key change, a sanitize block erase, or neither. ODF's `cleanup-policy=delete` job only wipes OSD metadata, so it does not replace a controller erase.
+
+- **`references/local-storage-disks.md` discovers the erase the device actually supports.** Read `fna` and `sanicap` first. Refuse a controller with more than one namespace. Then use sanitize crypto erase (`--sanact=4`), format crypto erase (`--ses=2` with the in-use `--lbaf`), or sanitize block erase (`--sanact=2`). A controller can report `fna` 0 and `sanicap` 2: no key change, block erase only. A frozen or locked ATA security set is not an erase path. Fall back to the BlueStore offset wipe or a full-disk zero when none of those bits are set.
+- Uninstall, disk replacement, install preflight, and the skill safety rules point at that choice. Do not treat the cleanup job as an NVMe sanitize.
+- **Block erase was run on a single-namespace controller with `fna` 0 and `sanicap` 2.** nvme-cli 2.16 accepted `--sanact=2 --ause` and the command returned while the erase was still in progress (`SSTAT` `0x2`). It then finished with `SSTAT` `0x101` (success plus Global Data Erased). `SPROG` `65535` is also the idle value before any sanitize, so success is the `SSTAT` bits, not that progress field. Reads at the BlueStore label offsets were zeros and `ceph-volume raw list` stayed `{}`. The reported estimate was `4294967295` (no time period reported); the erase still finished in seconds.
+- **`scripts/select_erase_method.py` picks the fastest proper erase.** It compares reported durations for a key change and a device media erase, counts an unreported key change as finishing with the command, and does not replace an untimed block erase with an overwrite or a full-disk zero. The BlueStore offset wipe is rejected. For `fna` 0, `sanicap` 2, and every estimate `4294967295`, it prints `sanitize-block`. ODF `cleanup-policy=delete` is still not this command.
+- **Two blank NVMe disks timed the methods that actually blank.** A controller with `fna` 4 and `sanicap` 3 blanked in 234 ms with sanitize cryptographic erase (`SSTAT` `0x101`, planted markers at 0, 1 GiB, and 2 GiB read back as zeros). Format cryptographic erase finished in 71 ms and destroyed the marker, but the reads were not zeros, so the selector still prefers sanitize crypto. Block erase on that disk took 6776 ms. On the `fna` 0 / `sanicap` 2 disk, the five-offset label wipe took 18 ms and left the 2 GiB marker; block erase took 8365 ms and cleared it. A 1 GiB zero write scaled to about 502 s for the whole device.
+- **Virtio and generic virtual disks are a separate blank path.** Classify the driver first. `virtio_blk` is virtio. `virtio_scsi` and hypervisor vendor strings such as QEMU, VMware, Xen, or Msft are generic virtual disks, unless the driver is `nvme` (a virtual NVMe controller still uses `fna` and `sanicap`). Write zeroes advertised (`write_zeroes_max_bytes` greater than 0) selects `blkdiscard --zeroout`. Otherwise writing zeroes is the blank. `fstrim` only trims a mounted filesystem.
+
 ## 1.21.1
 
 Corrections to the 1.20.0 audit and CRD sweep.
