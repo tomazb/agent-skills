@@ -86,6 +86,17 @@ def test_missing_ceph_csi_version_compat_fails(validator, package_factory, refer
     assert any("version compatibility" in issue for issue in issues)
 
 
+def test_missing_allowed_ciphers_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace("allowedCiphers", "cipherList"),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("version compatibility" in issue for issue in issues)
+
+
 def test_missing_aes256k_probe_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     install = root / "references" / "install-and-preflight.md"

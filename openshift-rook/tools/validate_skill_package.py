@@ -407,6 +407,8 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "keyType: aes256k",
             "Keep AES256K",
             "rook-rbd-aes256k-probe",
+            "allowedCiphers",
+            "AUTH_INSECURE_KEYS_ALLOWED",
         ],
     )
     require(

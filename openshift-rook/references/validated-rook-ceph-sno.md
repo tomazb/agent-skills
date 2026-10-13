@@ -78,5 +78,5 @@ Observed on an OpenShift 4.20 SNO node running RHCOS kernel `5.14.0-570.134.1.el
 
 - ceph-csi `v3.17.0` left the RBD claim `Pending` with `rados: ret=-22, Invalid argument`.
 - ceph-csi `v3.17.1` (librados `20.2.4`) bound the claim. The pod mounted `/dev/rbd0` and the write returned `ok`.
-- `HEALTH_WARN` for `AUTH_INSECURE_KEYS_ALLOWED` stayed after the successful mount.
+- `HEALTH_WARN` for `AUTH_INSECURE_KEYS_ALLOWED` stayed after the successful mount because `allowedCiphers` was left empty. An empty list allows every cipher. The install default is now `allowedCiphers: [aes256k]` once every key prefix is `Ag`.
 - The kernel release string was below 7.0, and the volume still mapped. The probe, not `uname -r`, decided the cipher.
