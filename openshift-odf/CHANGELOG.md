@@ -1,5 +1,35 @@
 # Changelog
 
+## 1.21.1
+
+Corrections to the 1.20.0 audit and CRD sweep.
+
+- **An empty aggregation selector selects every ClusterRole.** Kubernetes reads a
+  non-nil empty label selector (`clusterRoleSelectors: [{}]` or `{matchLabels: {}}`)
+  as "everything", so such a rule aggregates every ClusterRole. The audit and the
+  "Cluster RBAC left by ODF" rules treated it as selecting nothing and could report
+  an aggregated role as dead. The role is now retained with "aggregated by a
+  select-all rule into <role>".
+- **`post_uninstall_audit.sh`: a successful `oc` call that prints nothing fails the
+  audit.** `-o json` always prints a document; an empty answer used to read as "none
+  found" and could turn a check green.
+- **`odf_crd_sweep` waits a bounded time for deleted instances.** Its instance
+  deletes use `--wait=false`; it now polls for up to `ODF_DELETE_WAIT` seconds
+  (default 60) before it counts an instance as remaining and keeps that group's CRDs.
+- **`odf_crd_sweep` returns nonzero whenever it leaves a group's CRDs in place**: a
+  failed CRD delete, a failed kind, scope, or CRD lookup, an incomplete instance
+  delete (including a failed `odf_delete_odf_buckets`), or instances that remain. It
+  still tries every other group first. It used to return 0 on all but the first.
+- **An audit or classification that cannot name its cluster fails.** When
+  `oc whoami --show-server` fails or prints nothing, `post_uninstall_audit.sh` reports
+  `FAIL` and exits 1, and `classify_rook_ownership.sh` stops with "unknown"; both used
+  to go on against "unknown".
+- **ODF bucket cleanup also runs next to upstream Rook.** With upstream Rook present
+  the sweep leaves `objectbucket.io` out, which skipped `odf_delete_odf_buckets`, so
+  ODF's own claims and buckets stayed. The sweep now runs it in that case too; it
+  keeps every claim of another provisioner, and its nonzero status makes the sweep
+  return nonzero.
+
 ## 1.21.0
 
 - The post-uninstall audit no longer treats `openshift-monitoring/prometheus-k8s` as proof that `rook-ceph-metrics` or `ocs-metrics-reader` are still in use. Those roles are residue once no Ceph operator remains; `rook-ceph-metrics` stays while upstream Rook is running.

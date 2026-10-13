@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import sys
 import tempfile
@@ -8,9 +9,15 @@ from pathlib import Path
 import pytest
 
 TOOLS_DIR = Path(__file__).resolve().parents[1] / "tools"
-sys.path.insert(0, str(TOOLS_DIR))
 
-import validate_skill_package as vsp
+# Loaded by path under a name of its own: other skills ship a validate_skill_package
+# module too, and a shared pytest process would otherwise hand them this one.
+_spec = importlib.util.spec_from_file_location(
+    "openshift_rook_validate_skill_package", TOOLS_DIR / "validate_skill_package.py"
+)
+vsp = importlib.util.module_from_spec(_spec)
+sys.modules[_spec.name] = vsp
+_spec.loader.exec_module(vsp)
 
 
 @pytest.fixture
@@ -84,6 +91,8 @@ Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder man
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
 Run `bash scripts/post_uninstall_audit.sh` after uninstall.
+
+Gate the uninstall with `scripts/classify_ceph_ownership.sh`; follow **Orphans After An Interrupted Uninstall** (restart the kubelet on that node, never delete the volume directory under a running kubelet) and **Cluster RBAC left by Rook**.
 
 Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, and `oc get csidriver`.
 
@@ -193,6 +202,8 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts").mkdir()
         (root / "scripts" / "patch_rook_ceph_manifest.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
+        (root / "scripts" / "classify_ceph_ownership.sh").write_text("", encoding="utf-8")
+        (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")

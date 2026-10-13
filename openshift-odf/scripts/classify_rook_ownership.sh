@@ -59,7 +59,8 @@ oc() { command oc "${OC_GLOBAL_ARGS[@]}" "$@"; }
 run_split oc whoami
 [ "$RUN_RC" -eq 0 ] || stop "cannot reach the cluster: $RUN_ERR"
 run_split oc whoami --show-server
-echo "classifying ${RUN_OUT:-unknown server}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" >&2
+[ "$RUN_RC" -eq 0 ] && [ -n "$RUN_OUT" ] || stop "cannot read the API server URL: ${RUN_ERR:-empty output}"
+echo "classifying ${RUN_OUT}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" >&2
 
 # Fetch a list as JSON into LIST_JSON. With "missing-type-is-empty", only "the
 # server doesn't have a resource type" reads as an empty list; every other

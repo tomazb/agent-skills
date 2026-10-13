@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 
 def test_valid_package_passes_cleanly(validator, package_factory):
     root = package_factory()
@@ -178,6 +180,59 @@ def test_missing_stale_krbd_postcheck_fails(validator, package_factory, referenc
     )
     issues = validator.validate_root(root)
     assert any("stale krbd post-check" in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "needle",
+    ["scripts/classify_ceph_ownership.sh", "Orphans After An Interrupted Uninstall", "Cluster RBAC left by Rook"],
+)
+def test_missing_uninstall_ownership_and_orphan_guidance_fails(validator, package_factory, reference_text, needle):
+    root = package_factory(reference_content=reference_text())
+    uninstall = root / "references" / "maintenance-uninstall.md"
+    uninstall.write_text(uninstall.read_text(encoding="utf-8").replace(needle, "something"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("interrupted-uninstall orphan guidance" in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "oc delete -f /tmp/rook-ceph-crds.yaml",
+        "oc delete -f /tmp/rook-ceph-csi-operator.yaml --wait=false",
+        "kubectl delete -f /tmp/rook-ceph-common.yaml",
+        "oc delete --filename=/tmp/rook-ceph-operator.yaml",
+        "oc delete --filename /tmp/operator-openshift.yaml",
+        "oc -n rook-ceph delete -f=/tmp/rook-ceph-crds.yaml",
+        "true && oc delete -f /tmp/rook-ceph-csi-operator.yaml",
+        "kubectl delete -f deploy/examples/crds.yaml",
+    ],
+    ids=["crds", "csi-operator", "kubectl-common", "filename-equals", "filename-space", "f-equals",
+         "mid-line", "kubectl-crds"],
+)
+def test_manifest_delete_by_file_fails(validator, package_factory, reference_text, line):
+    root = package_factory(reference_content=reference_text())
+    upgrade = root / "references" / "upgrade.md"
+    upgrade.write_text(upgrade.read_text(encoding="utf-8") + f"\n```bash\n{line}\n```\n", encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("references/upgrade.md" in issue and "forbidden manifest delete by file" in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "oc apply -f /tmp/rook-ceph-crds.yaml",
+        "oc delete crd cephclusters.ceph.rook.io --wait=false",
+        "Never `oc delete -f` the install manifests.",
+        "oc -n rook-ceph delete deployments --all --force",
+    ],
+    ids=["apply", "delete-by-name", "prose", "force-flag"],
+)
+def test_other_deletes_and_applies_pass_the_manifest_check(validator, package_factory, reference_text, line):
+    root = package_factory(reference_content=reference_text())
+    upgrade = root / "references" / "upgrade.md"
+    upgrade.write_text(upgrade.read_text(encoding="utf-8") + f"\n{line}\n", encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert not any("forbidden manifest delete" in issue for issue in issues)
 
 
 def test_missing_ownership_gate_fails(validator, package_factory, make_skill_text):

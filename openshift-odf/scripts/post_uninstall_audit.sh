@@ -142,6 +142,12 @@ query_json() {
     fail "$label query failed: $RUN_ERR"
     return 1
   fi
+  # `-o json` always prints a document: a success that printed nothing must not
+  # read as "none found".
+  if [ -z "$RUN_OUT" ]; then
+    fail "$label query returned nothing"
+    return 1
+  fi
 
   if ! output=$(jq -r "$jq_filter" <<<"$RUN_OUT" 2>&1); then
     fail "$label jq filter failed: $output"
@@ -767,8 +773,9 @@ check_sccs() {
 # - a ClusterRole is dead when no live ClusterRoleBinding or RoleBinding references
 #   it (a dead binding does not keep its role alive) and no other ClusterRole's
 #   aggregationRule selects it. A selector is evaluated in full, matchLabels and
-#   matchExpressions (In, NotIn, Exists, DoesNotExist); an empty one selects
-#   nothing; one that cannot be evaluated keeps the role, never kills it.
+#   matchExpressions (In, NotIn, Exists, DoesNotExist). An empty one ({}) selects
+#   every ClusterRole: Kubernetes reads a non-nil empty label selector as
+#   "everything". One that cannot be evaluated keeps the role, never kills it.
 # RoleBindings are judged by the same subject rule.
 ODF_RBAC_JQ="
 def expr_result(\$labels):
@@ -784,7 +791,7 @@ def selector_result(\$labels):
   if type != \"object\" then \"error\"
   else (.matchLabels // {}) as \$ml | (.matchExpressions // []) as \$me
     | if (\$ml | type) != \"object\" or (\$me | type) != \"array\" then \"error\"
-      elif (\$ml | length) == 0 and (\$me | length) == 0 then false
+      elif (\$ml | length) == 0 and (\$me | length) == 0 then \"all\"
       else [(\$ml | to_entries[] | \$labels[.key] == .value), (\$me[] | expr_result(\$labels))]
         | if any(.[]; . == \"error\") then \"error\" else all(.[]; . == true) end
       end
@@ -816,10 +823,13 @@ def verdict(\$roles; \$sas; \$rook_up):
   (\$crs[] | select(odf_owned([\"ocs-metrics-exporter\", \"ocs-metrics-reader\"])) | . as \$role
    | [\$bindings[] | select(.role == \$role.name)] as \$refs
    | [\$refs[] | select(.live) | .ref] as \$live_refs
-   | [\$crs[] | select(.name != \$role.name) | .selectors[] | selector_result(\$role.labels)] as \$selected
+   | [\$crs[] | select(.name != \$role.name) | .name as \$into | .selectors[]
+      | {into: \$into, result: selector_result(\$role.labels)}] as \$selected
+   | [\$selected[] | select(.result == \"all\") | .into] as \$all_rules
    | if (\$live_refs | length) > 0 then [\"kept\", \"ClusterRole/\(.name)\", \"referenced by live \(\$live_refs | join(\", \"))\"]
-     elif any(\$selected[]; . == true) then [\"kept\", \"ClusterRole/\(.name)\", \"aggregated into another ClusterRole\"]
-     elif any(\$selected[]; . == \"error\") then [\"kept\", \"ClusterRole/\(.name)\", \"aggregation selector could not be evaluated\"]
+     elif (\$all_rules | length) > 0 then [\"kept\", \"ClusterRole/\(.name)\", \"aggregated by a select-all rule into \(\$all_rules | join(\", \"))\"]
+     elif any(\$selected[]; .result == true) then [\"kept\", \"ClusterRole/\(.name)\", \"aggregated into another ClusterRole\"]
+     elif any(\$selected[]; .result == \"error\") then [\"kept\", \"ClusterRole/\(.name)\", \"aggregation selector could not be evaluated\"]
      elif (\$refs | length) > 0 then [\"dead\", \"ClusterRole/\(.name)\", \"referenced only by dead \([\$refs[].ref] | join(\", \"))\"]
      else [\"dead\", \"ClusterRole/\(.name)\", \"no binding references it\"] end
    | @tsv)
@@ -954,7 +964,12 @@ fi
 if [ -z "$OC_CONTEXT_LABEL" ]; then
   OC_CONTEXT_LABEL=$(oc config current-context 2>/dev/null || echo unknown)
 fi
-echo "auditing $(oc whoami --show-server 2>/dev/null || echo unknown)" \
+# An audit that cannot name its cluster is not a clean audit.
+if ! AUDIT_SERVER=$(oc whoami --show-server 2>/dev/null) || [ -z "$AUDIT_SERVER" ]; then
+  fail "could not read the API server URL with oc whoami --show-server"
+  exit 1
+fi
+echo "auditing $AUDIT_SERVER" \
   "(context: ${OC_CONTEXT_LABEL:-unknown})"
 
 detect_upstream_rook

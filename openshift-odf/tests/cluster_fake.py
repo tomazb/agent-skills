@@ -86,9 +86,9 @@ FINALIZER_JSONPATH = 'jsonpath={range .items[*]}{.metadata.name}{"\\t"}{.metadat
 SHOW_SERVER = "https://api.cluster.example.com:6443"
 
 # "unserved" resources fail like an unknown type; "errors" maps a resource (or
-# "whoami") to the stderr of a real failure; "noise" prints a client warning (or
-# the given text) on every call, as client-side throttling does; "log" records
-# every argv. `delete` only records.
+# "whoami", "show-server", or "api-resources:<group>") to the stderr of a real
+# failure; "noise" prints a client warning (or the given text) on every call, as
+# client-side throttling does; "log" records every argv. `delete` only records.
 _CLUSTER_OC = """\
 WORLD = json.loads(__WORLD__)
 args = sys.argv[1:]
@@ -101,12 +101,20 @@ if WORLD["noise"]:
         "I1007 10:00:00.000000 request.go:700 Waited for 1.0s due to client-side throttling")
     sys.stderr.write(noise + chr(10))
 if args[:1] == ["whoami"]:
+    if "--show-server" in args and "show-server" in WORLD["errors"]:
+        print(WORLD["errors"]["show-server"], file=sys.stderr)
+        raise SystemExit(1)
     if "whoami" in WORLD["errors"]:
         print(WORLD["errors"]["whoami"], file=sys.stderr)
         raise SystemExit(1)
     print(WORLD["server"] if "--show-server" in args else "admin")
     raise SystemExit(0)
 if "delete" in args[:3]:
+    # "errors" may also hold "delete <resource>": that delete fails with the text.
+    target = args[args.index("delete") + 1] if len(args) > args.index("delete") + 1 else ""
+    if "delete " + target in WORLD["errors"]:
+        print(WORLD["errors"]["delete " + target], file=sys.stderr)
+        raise SystemExit(1)
     # A waiting delete of an object held by a finalizer never returns while no
     # controller removes the finalizer; with "blocking_deletes" the fake fails
     # such a delete instead of hanging.
@@ -124,6 +132,9 @@ if "delete" in args[:3]:
     raise SystemExit(0)
 if args[:1] == ["api-resources"]:
     group = next((a.split("=", 1)[1] for a in args if a.startswith("--api-group=")), "")
+    if "api-resources:" + group in WORLD["errors"]:
+        print(WORLD["errors"]["api-resources:" + group], file=sys.stderr)
+        raise SystemExit(1)
     for name, namespaced in WORLD["groups"].get(group, []):
         if "--namespaced=true" in args and not namespaced:
             continue
@@ -137,6 +148,8 @@ if args[:2] == ["get", "namespace"] and len(args) == 3:
     raise SystemExit(1)
 if args[:1] == ["get"]:
     res = args[1]
+    if res in WORLD["empty"]:
+        raise SystemExit(0)
     if res in WORLD["errors"]:
         print(WORLD["errors"][res], file=sys.stderr)
         raise SystemExit(1)
@@ -202,6 +215,7 @@ def write_cluster_oc(
     console_plugins: tuple = (),
     blocking_deletes: bool = False,
     storage_classes: list | None = None,
+    empty: tuple = (),
 ) -> None:
     world_objects = {"sc": [DEFAULT_SC] if storage_classes is None else list(storage_classes)}
     for res, items in (objects or {}).items():
@@ -219,6 +233,7 @@ def write_cluster_oc(
         "finalizer_jsonpath": FINALIZER_JSONPATH,
         "server": SHOW_SERVER,
         "blocking_deletes": blocking_deletes,
+        "empty": list(empty),
     }
     write_oc(bin_dir, _CLUSTER_OC.replace("__WORLD__", repr(json.dumps(world))))
 
