@@ -96,7 +96,7 @@ Gate the uninstall with `scripts/classify_ceph_ownership.sh`; follow **Orphans A
 
 Run `Leftover Install Detection` for both `ocs.openshift.io` and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, and `oc get csidriver`.
 
-Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`.
+Follow `Ceph Version And ceph-csi Compatibility`: Tentacle keys can fail with `failed to decode key` and `rados: ret=-22` because ceph-csi cannot decode `AES256K`. Move the image-set to `quay.io/cephcsi/cephcsi:v3.17.1`, set `keyType: aes256k`, probe namespace `rook-rbd-aes256k-probe`, and Keep AES256K when that volume write succeeds.
 
 During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers (`csi.ceph.com/cleanup`), then `oc delete csidriver` orphans and clear the `dataDirHostPath` on each node. Record `PRIOR_DEFAULT_STORAGE_CLASS`. Delete `rook-ceph-metrics` when its only subject is `openshift-monitoring/prometheus-k8s` and both operator namespaces are gone.
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.10.0
+
+Installs probe AES256K and keep it when a real RBD volume mounts. The previous guidance pinned Squid `v19.2.2` for every Rook v1.20 / ceph-csi v3.17 cluster.
+
+- **The cipher follows a volume probe, not the kernel release string.** `references/install-and-preflight.md` creates the cluster on Ceph `v20.2.4` with `keyType: aes256k` after moving the CSI image-set from ceph-csi `v3.17.0` to `quay.io/cephcsi/cephcsi:v3.17.1`. Namespace `rook-rbd-aes256k-probe` must write `ok` through a `/dev/rbd` mount. That result keeps AES256K.
+- **Two fallbacks stay on the path that matches the failure.** A claim still `Pending` with `failed to decode key` / `rados: ret=-22` after `v3.17.1` is running is wiped and reinstalled on Squid `v19.2.2`. A claim that binds while the pod never mounts keeps the Ceph image and rotates only the CSI key to classic AES. A `v20` store is not downgraded in place.
+- Observed on OpenShift 4.20 with RHCOS kernel `5.14.0-570.134.1.el9_6`: `v3.17.0` failed the claim, and `v3.17.1` mounted `/dev/rbd0`.
+
 ## 1.9.0
 
 BlueStore OSD labels survive `wipefs -af` and `sgdisk --zap-all`. The label is stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit, and `lsblk -f` stays empty while `ceph-volume raw list` still reports the old OSD. The next prepare then fails with a foreign-cluster label.
