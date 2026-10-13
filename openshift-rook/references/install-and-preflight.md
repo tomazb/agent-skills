@@ -183,11 +183,12 @@ oc delete namespace rook-rbd-aes256k-probe --wait=true
 
 When the PVC stays `Pending` with `rados: ret=-22` and the plugin image is still older than `v3.17.1`, apply the image-set patch above, wait for the plugin rollout, and run the probe once more.
 
-When the pod does not become `Ready`, read the pod events and the RBD node plugin log before changing ciphers. A `Pending` pod, `ImagePullBackOff`, or `CrashLoopBackOff` is not a cipher result. Fix that and run the probe again.
+When the pod does not become `Ready`, read the pod events and the RBD node plugin log from the probe node before changing ciphers. The node plugin is a DaemonSet, so a DaemonSet-wide log can come from a different node. A `Pending` pod, `ImagePullBackOff`, or `CrashLoopBackOff` is not a cipher result. Fix that and run the probe again.
 
 ```bash
 oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
-oc -n rook-ceph logs ds/rook-ceph.rbd.csi.ceph.com-nodeplugin -c csi-rbdplugin --tail=80
+oc -n rook-ceph logs -c csi-rbdplugin --tail=80 \
+  "$(oc -n rook-ceph get pod --field-selector spec.nodeName=<node> -o name | grep 'rbd.csi.ceph.com-nodeplugin')"
 ```
 
 Rotate the CSI key only when a `FailedMount` event or that node plugin log reports a key or mapping failure (`failed to decode key`, `rados: ret=-22`, or the kernel rejecting the key). One confirmed mapping failure means a later volume can land on that node, so the cluster cannot stay on `aes256k` alone. Keep the Ceph image. Read `status.cephx.csi.keyGeneration` first. A fresh cluster reports `1` or an empty generation; the first rotation uses `2`. A later rotation uses one more than the current generation. `keepPriorKeyCountMax: 1` leaves the previous CSI key in place so the bound probe volume can still unmap.
