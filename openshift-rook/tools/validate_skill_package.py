@@ -403,6 +403,14 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "failed to decode key",
             "rados: ret=-22",
             "AES256K",
+            "quay.io/cephcsi/cephcsi:v3.17.1",
+            "keyType: aes256k",
+            "Keep AES256K",
+            "rook-rbd-aes256k-probe",
+            "allowedCiphers",
+            "AUTH_INSECURE_KEYS_ALLOWED",
+            "FailedMount",
+            "keepPriorKeyCountMax",
         ],
     )
     require(

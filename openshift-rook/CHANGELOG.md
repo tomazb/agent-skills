@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.10.0
+
+Installs probe AES256K and keep it when a real RBD volume mounts. The previous guidance pinned Squid `v19.2.2` for every Rook v1.20 / ceph-csi v3.17 cluster.
+
+- **The cipher follows a volume probe, not the kernel release string.** `references/install-and-preflight.md` creates the cluster on Ceph `v20.2.4` with `keyType: aes256k` after moving the CSI image-set from ceph-csi `v3.17.0` to `quay.io/cephcsi/cephcsi:v3.17.1`. Namespace `rook-rbd-aes256k-probe` must write `ok` through a `/dev/rbd` mount. That result keeps AES256K.
+- **Two fallbacks stay on the path that matches the failure.** A claim still `Pending` with `failed to decode key` / `rados: ret=-22` after `v3.17.1` is running is wiped and reinstalled on Squid `v19.2.2`. A `FailedMount` that names a key or mapping failure keeps the Ceph image, widens `allowedCiphers` to `aes` and `aes256k`, and rotates the CSI key to classic AES with `keepPriorKeyCountMax: 1`. Scheduling, image-pull, and startup failures do not rotate the key. A `v20` store is not downgraded in place.
+- **The probe runs on every schedulable node.** One pod only proves the node where it lands. The mount check uses the shell in `ubi9/ubi-minimal`, which does not include `awk`. The RBD node plugin log is read from the probe node, because that plugin is a DaemonSet.
+- **Insecure CephX ciphers are off unless requested.** `allowedCiphers` defaults to `aes256k` alone, which clears `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE`. `daemon.keyType` stays unset so the monitors do not run with `--mon-auth-emergency-allowed-ciphers` (`AUTH_EMERGENCY_CIPHERS_SET`). Classic AES is added only when the user asks for it, or when the volume probe cannot mount an AES256K key. Restrict the list only after every existing key prefix is `Ag`.
+- Observed on OpenShift 4.20 with RHCOS kernel `5.14.0-570.134.1.el9_6`: `v3.17.0` failed the claim, and `v3.17.1` mounted `/dev/rbd0`.
+
 ## 1.9.0
 
 BlueStore OSD labels survive `wipefs -af` and `sgdisk --zap-all`. The label is stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit, and `lsblk -f` stays empty while `ceph-volume raw list` still reports the old OSD. The next prepare then fails with a foreign-cluster label.

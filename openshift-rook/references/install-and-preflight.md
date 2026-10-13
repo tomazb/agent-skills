@@ -81,33 +81,128 @@ If any of these exist and the target node is not running an intended storage sys
 
 ## Ceph Version And ceph-csi Compatibility
 
-Pin the `CephCluster` `cephVersion.image` to a Ceph release whose cephx key cipher the deployed **ceph-csi** can decode. Discover the ceph-csi build Rook will deploy and match it — do not blindly accept the newest `quay.io/ceph/ceph` tag from the upstream `cluster.yaml`.
+Use AES256K when every schedulable node mounts a volume created with an AES256K CSI key and a write succeeds. Keep AES256K after that probe. Classic AES is the cipher when a probe node reports that it cannot map the key.
 
-**Discover the ceph-csi version *before* creating the CephCluster** — the running CSI Deployment does not exist yet on a fresh install. Read the pinned image from the operator's CSI image-set instead of a live pod:
+AES256K keys use key byte `0x02` and the base64 prefix `Ag`. Classic AES keys use key byte `0x01` and the prefix `AQ`. A fresh Ceph Tentacle `v20.2.4` (and later) or Squid `v19.2.6` (and later) issues AES256K. Pin `cephVersion.image` to `quay.io/ceph/ceph:v20.2.4` for that probe. Read the ceph-csi image Rook will deploy before creating the CephCluster. Leave the newest `quay.io/ceph/ceph` tag in upstream `cluster.yaml` unused until the probe passes.
+
+The secure default is `spec.security.cephx.allowedCiphers: [aes256k]` plus `spec.security.cephx.csi.keyType: aes256k`. Leave `spec.security.cephx.daemon.keyType` unset. Setting it adds `--mon-auth-emergency-allowed-ciphers` to the monitors and raises `AUTH_EMERGENCY_CIPHERS_SET`. Rook selects the daemon key type itself. An empty `allowedCiphers` list allows every cipher, which raises `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE`. Allow `aes` only when the user asks for classic AES, or when the volume probe cannot mount an AES256K key.
+
+A kernel release string below 7.0 does not choose the cipher. OpenShift 4.20 on RHCOS kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. The volume probe is the decision.
+
+**Discover the ceph-csi image before the CephCluster.** The CSI Deployment may not exist yet. Read the operator image-set, or the manifest about to be applied:
 
 ```bash
-# Pre-install: the ceph-csi image Rook will deploy is pinned in the operator config.
-# For the OLM/csi-operator path it is the rook-csi-operator-image-set-configmap; for a
-# manifest install grep the operator manifest you are about to apply.
 oc -n rook-ceph get cm rook-csi-operator-image-set-configmap -o jsonpath='{.data.plugin}{"\n"}' 2>/dev/null \
   || grep -E 'cephcsi/cephcsi:|ROOK_CSI_CEPH_IMAGE' /tmp/rook-ceph-operator.yaml
 ```
 
-The ceph-csi release notes state the Ceph version its bundled librados targets. After the operator is running you can confirm from the live plugin (this is **post-install verification**, not the pre-install gate):
+ceph-csi **v3.17.0** bundles a librados that cannot decode AES256K. Claims stay `Pending` with `failed to decode key` and `rados: ret=-22, Invalid argument`. ceph-csi **v3.17.1** bundles Ceph `v20.2.4` and decodes those keys. RGW and ObjectBucketClaim provisioning skip this librados path, so an object-store check can succeed while every RBD, CephFS, and NFS claim fails.
+
+When the image-set pins `quay.io/cephcsi/cephcsi:v3.17.0`, move it to `quay.io/cephcsi/cephcsi:v3.17.1` and let the CSI operator roll the plugins before the CephCluster is created:
+
+```bash
+oc -n rook-ceph patch cm rook-csi-operator-image-set-configmap --type=merge \
+  -p '{"data":{"plugin":"quay.io/cephcsi/cephcsi:v3.17.1"}}'
+oc -n rook-ceph rollout restart deploy/ceph-csi-controller-manager
+oc -n rook-ceph rollout status deploy/ceph-csi-controller-manager --timeout=3m
+```
+
+After the RBD, CephFS, and NFS plugin Deployments exist, each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` and the RBD plugin reports Ceph `v20.2.4` or newer:
 
 ```bash
 oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
 ```
 
-**Known incompatibility:** Ceph **Tentacle** (`v20.2.4`) creates cephx keys with the new **AES256K** cipher (key byte `0x02`, base64 prefix `Ag`). ceph-csi **v3.17** bundles librados **20.2.1**, which cannot decode AES256K keys. Every RBD/CephFS/NFS `PersistentVolumeClaim` then stays `Pending` with `rados: ret=-22, Invalid argument`, and the CSI provisioner logs `failed to decode key`. RGW/OBC provisioning is unaffected because it does not use the CSI librados auth path, which makes the failure easy to misdiagnose. Classic AES keys (byte `0x01`, base64 prefix `AQ`) decode correctly.
+When the image-set cannot move to a ceph-csi build that decodes AES256K, install Squid `v19.2.2` and omit `security.cephx`. A `v20` mon and OSD store cannot be downgraded onto `v19` (`unsupported features: ...aes256k`). Wipe and redeploy to change major versions.
 
-Prefer a Ceph release that uses classic AES keys and is supported by the deployed ceph-csi — for Rook v1.20 with ceph-csi v3.17, pin **Squid `v19.2.2`** (or another Reef/Squid build) rather than Tentacle `v20.2.4`. Verify the cipher after the cluster is `Ready`:
+**Create the cluster with AES256K keys** once the CSI image can decode them:
 
-```bash
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth get-key client.admin | head -c 2  # expect 'AQ', not 'Ag'
+```yaml
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v20.2.4
+  security:
+    cephx:
+      allowedCiphers:
+      - aes256k
+      csi:
+        keyType: aes256k
 ```
 
-Do not downgrade a running cluster to fix this — a `v20`-formatted mon/OSD store is incompatible with `v19` (`unsupported features: ...aes256k`). Wipe and redeploy on the compatible version instead.
+When the user requests classic AES, set `allowedCiphers` to `aes` and `aes256k` and set `csi.keyType` to `aes` instead of the block above.
+
+After the cluster is `Ready`, `status.cephx.csi.keyType` is `aes256k`, the admin key prefix is `Ag`, and `ceph health detail` does not contain `AUTH_INSECURE_KEYS_ALLOWED`, `AUTH_INSECURE_KEYS_CREATABLE`, or `AUTH_EMERGENCY_CIPHERS_SET`:
+
+```bash
+oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.cephx.csi.keyType}{"\n"}{.spec.security.cephx.allowedCiphers}{"\n"}'
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth get-key client.admin | head -c 2; echo
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
+oc -n rook-ceph get pod -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{.spec.containers[0].args}{"\n"}{end}'
+```
+
+The mon arguments do not include `--mon-auth-emergency-allowed-ciphers`. On a cluster that already has keys, list every entity with `ceph auth ls` and read only the key prefix. Every prefix is `Ag` before `allowedCiphers` stays `aes256k` alone. A prefix of `AQ` means that entity still uses classic AES, so leave `aes` in `allowedCiphers` until that key is rotated. Restricting the list while a daemon key is still classic AES returns `RADOS permission denied` and can make the cluster unavailable.
+
+**Probe one RBD volume on every schedulable node** after the block pool and StorageClass from `references/rbd-block-pools.md` exist. Substitute the class this install uses. A passing probe is the RBD smoke for `references/validation-hardening.md`. One scheduler-placed pod proves the cipher only on the node where it lands. The smoke image is `ubi9/ubi-minimal`, which has a shell and does not have `awk`, so the mount check stays inside `sh -c`.
+
+A schedulable node is `Ready`, is not cordoned, and has no `NoSchedule` or `NoExecute` taint. The probe pod has no tolerations. An empty list means no node can run the probe; stop and fix scheduling before choosing a cipher.
+
+```bash
+oc get nodes -o json | python3 -c '
+import json, sys
+for node in json.load(sys.stdin)["items"]:
+    spec = node["spec"]
+    if spec.get("unschedulable"):
+        continue
+    taints = spec.get("taints") or []
+    if any(taint.get("effect") in ("NoSchedule", "NoExecute") for taint in taints):
+        continue
+    ready = any(
+        cond.get("type") == "Ready" and cond.get("status") == "True"
+        for cond in (node.get("status") or {}).get("conditions") or []
+    )
+    if ready:
+        print(node["metadata"]["name"])
+'
+```
+
+Run the probe on each printed node. Stop at the first command that fails, and leave the namespace in place so the pod events are still available. Delete it only after that node's write and `/dev/rbd` mount are recorded, then start the next node. The RWO claim must not stay pinned to the previous node. Keep AES256K only when every node prints `ok` and a mount device that starts with `/dev/rbd`.
+
+```bash
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace rook-rbd-aes256k-probe \
+  --storage-class rook-ceph-block \
+  --node-name "<node>" \
+  --output /tmp/rook-rbd-aes256k-probe.yaml
+oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
+oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
+oc delete namespace rook-rbd-aes256k-probe --wait=true
+```
+
+When the PVC stays `Pending` with `rados: ret=-22` and the plugin image is still older than `v3.17.1`, apply the image-set patch above, wait for the plugin rollout, and run the probe once more.
+
+When the pod does not become `Ready`, read the pod events and the RBD node plugin log from the probe node before changing ciphers. The node plugin is a DaemonSet, so a DaemonSet-wide log can come from a different node. A `Pending` pod, `ImagePullBackOff`, or `CrashLoopBackOff` is not a cipher result. Fix that and run the probe again.
+
+```bash
+oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
+oc -n rook-ceph logs -c csi-rbdplugin --tail=80 \
+  "$(oc -n rook-ceph get pod --field-selector spec.nodeName=<node> -o name | grep 'rbd.csi.ceph.com-nodeplugin')"
+```
+
+Rotate the CSI key only when a `FailedMount` event or that node plugin log reports a key or mapping failure (`failed to decode key`, `rados: ret=-22`, or the kernel rejecting the key). One confirmed mapping failure means a later volume can land on that node, so the cluster cannot stay on `aes256k` alone. Keep the Ceph image. Read `status.cephx.csi.keyGeneration` first. A fresh cluster reports `1` or an empty generation; the first rotation uses `2`. A later rotation uses one more than the current generation. `keepPriorKeyCountMax: 1` leaves the previous CSI key in place so the bound probe volume can still unmap.
+
+```bash
+CURRENT=$(oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.cephx.csi.keyGeneration}')
+if [ -z "$CURRENT" ]; then NEXT=2; else NEXT=$((CURRENT + 1)); fi
+oc -n rook-ceph patch cephcluster rook-ceph --type=merge -p \
+  "{\"spec\":{\"security\":{\"cephx\":{\"allowedCiphers\":[\"aes\",\"aes256k\"],\"csi\":{\"keyRotationPolicy\":\"KeyGeneration\",\"keyGeneration\":${NEXT},\"keepPriorKeyCountMax\":1,\"keyType\":\"aes\"}}}}}"
+```
+
+Wait until `status.cephx.csi.keyGeneration` equals `NEXT`, `status.cephx.csi.priorKeyCount` is at least `1`, `status.cephx.csi.keyType` is `aes`, and `userKey` in `rook-csi-rbd-provisioner` starts with `AQ`. Then delete the probe namespace and repeat the probe in a new namespace. New PVCs use the classic AES key. The prior key remains for volumes that mounted with it. Daemon keys stay AES256K. `AUTH_INSECURE_KEYS_ALLOWED` returns for this exception. Do not set `daemon.keyType`.
+
+When `quay.io/cephcsi/cephcsi:v3.17.1` is running and the probe still fails with `rados: ret=-22`, wipe the cluster with `references/maintenance-uninstall.md` and install Squid `v19.2.2` without `security.cephx`. Do not downgrade the existing `v20` store in place.
 
 ## Node and Disk Discovery
 
@@ -222,6 +317,13 @@ spec:
   cephVersion:
     image: quay.io/ceph/ceph:v<ceph-version>
     allowUnsupported: false
+  # Default. Add aes to allowedCiphers only when the user requests classic AES or a probe node reports a key-mapping failure.
+  security:
+    cephx:
+      allowedCiphers:
+      - aes256k
+      csi:
+        keyType: aes256k
   dataDirHostPath: /var/lib/rook
   mon:
     count: 1
@@ -300,6 +402,13 @@ metadata:
 spec:
   cephVersion:
     image: quay.io/ceph/ceph:v<ceph-version>
+  # Default. Add aes to allowedCiphers only when the user requests classic AES or a probe node reports a key-mapping failure.
+  security:
+    cephx:
+      allowedCiphers:
+      - aes256k
+      csi:
+        keyType: aes256k
   dataDirHostPath: /var/lib/rook
   mon:
     count: 3
@@ -378,7 +487,8 @@ Before declaring success, verify:
 
 - All mons are in quorum.
 - All OSDs are `up` and `in`.
-- Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
+- Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings. `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE` are absent unless the user requested classic AES or the volume probe had to allow it.
+- The AES256K probe in **Ceph Version And ceph-csi Compatibility** has finished: either `allowedCiphers` is `aes256k` alone because every schedulable node wrote through `/dev/rbd`, or CSI keys are classic AES after a confirmed key-mapping `FailedMount`.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - Exactly one default StorageClass exists when defaulting is expected.
 

@@ -34,6 +34,26 @@ def test_smoke_manifest_cephfs_renders(tmp_path):
     assert "ReadWriteMany" in text
 
 
+def test_smoke_manifest_pins_node(tmp_path):
+    pinned = tmp_path / "pinned.yaml"
+    unpinned = tmp_path / "unpinned.yaml"
+    render_smoke_manifest(
+        "rbd", "rook-rbd-smoke", "rook-ceph-block", str(pinned), node_name="worker-a"
+    )
+    render_smoke_manifest("rbd", "rook-rbd-smoke", "rook-ceph-block", str(unpinned))
+    assert "nodeName: worker-a" in pinned.read_text(encoding="utf-8")
+    assert "nodeName" not in unpinned.read_text(encoding="utf-8")
+
+
+def test_smoke_manifest_rejects_unsafe_node_name(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError):
+        render_smoke_manifest(
+            "rbd", "rook-rbd-smoke", "rook-ceph-block", str(tmp_path / "bad.yaml"), node_name="node: bad"
+        )
+
+
 def test_smoke_manifest_invalid_mode_raises(tmp_path):
     import pytest
     with pytest.raises(ValueError):

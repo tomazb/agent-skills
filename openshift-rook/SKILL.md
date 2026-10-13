@@ -54,6 +54,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - For Rook operator updates, prefer the Operator Lifecycle Manager (OLM) path when the cluster uses OLM. For direct manifest installs, use version-pinned manifests and never apply a newer Rook manifest without reading the release notes and upgrade guide.
 - Do not downgrade Rook operator or Ceph versions. For major version upgrades, verify all PGs are active+clean and OSDs are up before proceeding.
 - Document the difference between Rook (operator) version and Ceph (cluster image) version. They can be upgraded independently, but each has documented compatibility.
+- Choose the Ceph image and CSI key type with the AES256K probe in `references/install-and-preflight.md`. The default `allowedCiphers` list is `aes256k` alone, so `AUTH_INSECURE_KEYS_ALLOWED` stays clear. Keep that restriction when every schedulable node writes through a `/dev/rbd` mount. Allow classic AES only when the user requests it or a probe node reports a key-mapping failure.
 
 ## Required Source Checks
 
