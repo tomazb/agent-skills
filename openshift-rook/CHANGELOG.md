@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.15.0
+
+- The smoke cleanup script polls the PV claim check for `CLEANUP_PV_WAIT_SECONDS` (default 120) instead of reading once, because the PV check has to wait out Delete reclaim after the namespace is gone. It fails only when a claiming PV is still present at the deadline and names a `Retain` reclaim policy when that is the cause. `0` means one check.
+- The RGW smoke runbook now includes the restricted-profile pod in `rook-rgw-smoke` that runs the S3 PUT/GET, with `envFrom` on `rook-ceph-obc`.
+- The AES256K probe lists its three outcomes (success, scheduling or startup failure, key or mapping failure), and success-path cleanup is a separate step after the write and `/dev/rbd` mount are recorded.
+
 ## 1.14.0
 
 - The VM default verification namespace is `rook-vm-smoke` and is deleted with `scripts/cleanup_smoke_namespace.sh`.

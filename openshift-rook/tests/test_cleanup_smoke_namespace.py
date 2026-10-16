@@ -32,6 +32,16 @@ if args[:2] == ["get", "pv"]:
     if fail == "pv":
         sys.stderr.write("error: pv\\n")
         raise SystemExit(1)
+    count_file = (log or "oc") + ".pvcount"
+    seen = 0
+    if os.path.exists(count_file):
+        with open(count_file, encoding="utf-8") as fh:
+            seen = int(fh.read() or "0")
+    with open(count_file, "w", encoding="utf-8") as fh:
+        fh.write(str(seen + 1))
+    if seen >= 1 and "OC_PV_JSON_AFTER" in os.environ:
+        sys.stdout.write(os.environ["OC_PV_JSON_AFTER"])
+        raise SystemExit(0)
     sys.stdout.write(os.environ.get("OC_PV_JSON", '{"items":[]}'))
     raise SystemExit(0)
 if args[:1] == ["get"] and args[1] in ("objectbucket", "objectbuckets"):
@@ -132,11 +142,19 @@ def test_leftover_pv_fails(tmp_path):
         '{"items":[{"metadata":{"name":"pvc-left"},'
         '"spec":{"claimRef":{"namespace":"rook-rbd-smoke","name":"rbd-smoke-pvc"}}}]}'
     )
-    result = _run(tmp_path, "--namespace", "rook-rbd-smoke", OC_PV_JSON=pv_json)
+    result = _run(
+        tmp_path,
+        "--namespace",
+        "rook-rbd-smoke",
+        OC_PV_JSON=pv_json,
+        CLEANUP_PV_WAIT_SECONDS="0",
+    )
     assert result.returncode == 1
     assert "leftover PVs still claim rook-rbd-smoke" in result.stderr
     assert "pvc-left" in result.stderr
+    assert "Retain" not in result.stderr
     assert "deleted smoke namespace" not in result.stdout
+    assert _log(tmp_path).count("get pv -o json") == 1
 
 
 def test_pv_in_another_namespace_is_kept(tmp_path):
@@ -178,3 +196,71 @@ def test_unparsed_pv_list_is_unverified(tmp_path):
     result = _run(tmp_path, "--namespace", "rook-rbd-smoke", OC_PV_JSON="not-json")
     assert result.returncode == 1
     assert "could not inspect PVs - cleanup unverified" in result.stderr
+
+
+LEFT_PV = (
+    '{"items":[{"metadata":{"name":"pvc-left"},'
+    '"spec":{"claimRef":{"namespace":"rook-rbd-smoke","name":"rbd-smoke-pvc"},'
+    '"persistentVolumeReclaimPolicy":"{policy}"}}]}'
+)
+
+
+def test_pv_that_clears_during_the_wait_passes(tmp_path):
+    result = _run(
+        tmp_path,
+        "--namespace",
+        "rook-rbd-smoke",
+        OC_PV_JSON=LEFT_PV.replace("{policy}", "Delete"),
+        OC_PV_JSON_AFTER='{"items":[]}',
+        CLEANUP_PV_WAIT_SECONDS="2",
+    )
+    assert result.returncode == 0, result.stderr
+    assert "deleted smoke namespace rook-rbd-smoke" in result.stdout
+    assert _log(tmp_path).count("get pv -o json") == 2
+
+
+def test_retained_leftover_pv_is_named_in_the_error(tmp_path):
+    result = _run(
+        tmp_path,
+        "--namespace",
+        "rook-rbd-smoke",
+        OC_PV_JSON=LEFT_PV.replace("{policy}", "Retain"),
+        CLEANUP_PV_WAIT_SECONDS="0",
+    )
+    assert result.returncode == 1
+    assert "leftover PVs still claim rook-rbd-smoke" in result.stderr
+    assert "persistentVolumeReclaimPolicy is Retain" in result.stderr
+    assert "pvc-left" in result.stderr
+
+
+def test_invalid_pv_wait_exits_2_before_deleting(tmp_path):
+    result = _run(
+        tmp_path,
+        "--namespace",
+        "rook-rbd-smoke",
+        CLEANUP_PV_WAIT_SECONDS="soon",
+    )
+    assert result.returncode == 2
+    assert "invalid CLEANUP_PV_WAIT_SECONDS" in result.stderr
+    assert _log(tmp_path) == ""
+
+
+def test_failed_namespace_list_is_unverified(tmp_path):
+    result = _run(tmp_path, "--namespace", "rook-rbd-smoke", OC_FAIL="namespaces")
+    assert result.returncode == 1
+    assert "could not list namespaces - cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+def test_empty_namespace_list_is_unverified(tmp_path):
+    result = _run(tmp_path, "--namespace", "rook-rbd-smoke", OC_NAMESPACES="")
+    assert result.returncode == 1
+    assert "could not list namespaces - cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+def test_failed_objectbucket_query_is_unverified(tmp_path):
+    result = _run(tmp_path, "--namespace", "rook-rgw-smoke", "--object", OC_FAIL="objectbucket")
+    assert result.returncode == 1
+    assert "could not inspect ObjectBuckets - cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout

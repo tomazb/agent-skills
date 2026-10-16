@@ -165,7 +165,13 @@ for node in json.load(sys.stdin)["items"]:
 '
 ```
 
-Run the probe on each printed node. Stop at the first command that fails. On success, delete the namespace after that node's write and `/dev/rbd` mount are recorded, then start the next node. The RWO claim must not stay pinned to the previous node. Keep AES256K only when every node prints `ok` and a mount device that starts with `/dev/rbd`.
+Run the probe on each printed node. Stop at the first command that fails. The RWO claim must not stay pinned to the previous node, so each node ends in one of three outcomes:
+
+- Success: the write prints `ok` and the mount device starts with `/dev/rbd`. Record both, then delete the namespace and start the next node.
+- Scheduling or startup failure (`Pending`, `ImagePullBackOff`, `CrashLoopBackOff`): record the pod events, then delete the namespace, fix it, and run the probe again.
+- Key or mapping failure: keep the namespace until the key rotation below has finished, then delete it.
+
+Keep AES256K only when every node prints `ok` and a mount device that starts with `/dev/rbd`.
 
 ```bash
 python3 scripts/render_smoke_manifest.py \
@@ -178,6 +184,11 @@ oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
 oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
+```
+
+Only after the `ok` write and the `/dev/rbd` mount device are recorded for this node, delete the probe namespace:
+
+```bash
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
 ```
 

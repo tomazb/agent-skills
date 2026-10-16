@@ -170,6 +170,42 @@ curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.
 
 A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. Use `https` and the pod's projected `service-ca.crt` only for `443` and `8443`.
 
+Create the pod in `rook-rgw-smoke`. It runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rgw-smoke
+  namespace: rook-rgw-smoke
+spec:
+  containers:
+  - name: s3
+    image: registry.access.redhat.com/ubi9/python-311
+    command: ["sleep", "3600"]
+    env:
+    - name: HOME
+      value: /tmp
+    envFrom:
+    - configMapRef:
+        name: rook-ceph-obc
+    - secretRef:
+        name: rook-ceph-obc
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+EOF
+oc -n rook-rgw-smoke wait pod/rgw-smoke --for=condition=Ready --timeout=5m
+oc -n rook-rgw-smoke exec rgw-smoke -- pip install --user boto3
+```
+
+`registry.access.redhat.com/ubi9/python-311` needs `pip install boto3`, which needs egress. A disconnected cluster needs a mirrored image that already has an S3 client; replace `image` and skip the `pip install` line. Save the script below as `smoke.py` and run it with `oc -n rook-rgw-smoke exec -i rgw-smoke -- python3 - < smoke.py`.
+
 ```python
 import boto3, os
 host = os.environ["BUCKET_HOST"].rstrip("/")
@@ -192,7 +228,7 @@ assert s3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"rook-rgw-s
 s3.delete_object(Bucket=b, Key="smoke-probe")
 ```
 
-Any S3 client is enough; the check is that the PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which needs egress. On a disconnected cluster, use a mirrored image that already ships an S3 client. Then run the existing cleanup:
+Any S3 client is enough; the check is that the PUT is readable back by GET. After the GET matches, run the existing cleanup:
 
 ```bash
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
