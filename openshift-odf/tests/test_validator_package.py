@@ -24,6 +24,15 @@ def test_missing_lifecycle_reference_fails(validator, package_factory):
     assert any(str(missing.relative_to(root)) in issue for issue in issues)
 
 
+def test_vm_storage_profile_reference_is_required(validator, package_factory):
+    root = package_factory()
+    missing = root / "references" / "vm-storage-profiles.md"
+    if missing.exists():
+        missing.unlink()
+    issues = validator.validate_root(root)
+    assert any("vm-storage-profiles.md" in issue for issue in issues)
+
+
 def test_missing_required_helper_file_fails(validator, package_factory):
     root = package_factory()
     missing = root / "scripts" / "render_storagecluster.py"

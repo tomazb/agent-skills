@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.25.0
+
+- Add a VM StorageProfile runbook for `ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs`, including the virt-class annotation, block-first claim property sets, and the LVMS re-pin. Verification uses `odf-vm-smoke` and the smoke cleanup script.
+
 ## 1.24.0
 
 - The RGW page's ObjectBucket listing now fails when the query fails or the smoke bucket is missing. `grep || true` was hiding both.

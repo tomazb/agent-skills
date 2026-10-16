@@ -108,6 +108,16 @@ Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 `python3 scripts/render_console_plugin_patch.py`
 Data Foundation
 
+## VM StorageProfile
+`storageclass.kubernetes.io/is-default-class`
+`storageclass.kubevirt.io/is-default-virt-class`
+`ocs-storagecluster-ceph-rbd`
+`volumeMode: Block`
+`openshift-storage.rbd.csi.ceph.com`
+`ocs-storagecluster-cephfs`
+`LVMCluster.spec.storage.deviceClasses[].default`
+`odf-vm-smoke`
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-vm-smoke
 
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
@@ -157,6 +167,7 @@ Rook owns the cluster, hand off to `openshift-rook`.
 
 Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
 Use `references/console-plugin.md` for ODF console plugin enablement.
+Use `references/vm-storage-profiles.md` for CDI/KubeVirt VM storage defaults.
 
 ## Core Safety Rules
 

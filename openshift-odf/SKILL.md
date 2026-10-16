@@ -1,6 +1,6 @@
 ---
 name: openshift-odf
-description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Red Hat OpenShift Data Foundation (ODF) on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, internal mode with Local Storage Operator disks, StorageCluster sizing, ceph-rbd block, cephfs shared filesystem, Multicloud Object Gateway (MCG/NooBaa) and RGW object storage, OLM operator lifecycle, default StorageClass safety, and the ODF console plugin / Data Foundation UI.
+description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Red Hat OpenShift Data Foundation (ODF) on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, internal mode with Local Storage Operator disks, StorageCluster sizing, ceph-rbd block, cephfs shared filesystem, Multicloud Object Gateway (MCG/NooBaa) and RGW object storage, OLM operator lifecycle, default StorageClass safety, the ODF console plugin / Data Foundation UI, and CDI/KubeVirt VM storage defaults and StorageProfile configuration.
 ---
 
 # OpenShift Data Foundation Lifecycle
@@ -36,6 +36,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`. For leftovers of an interrupted or out-of-order uninstall (PVCs, PVs, or namespaces stuck deleting, a Pod the kubelet cannot release, stale ODF RBAC), or an uninstall next to an upstream Rook cluster, use its **Orphans After An Interrupted Uninstall** section and re-run the ownership gate before the CRD sweep.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md` (on SNO, run the SNO readiness gate before declaring ODF fully ready).
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
+- **CDI/KubeVirt VM storage defaults or StorageProfile configuration**: use `references/vm-storage-profiles.md`.
 - **Observed SNO configurations or ODF 4.16, 4.20, and 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.
 - **Not enough vCPUs, workloads Pending on `Insufficient cpu`, or a lab SNO that should run ODF more modestly**: run the CPU Request Budget check in `references/install-and-preflight.md`, then the CPU-request floor in `references/validated-odf-sno.md` (`render_sno_remediation.py --lab-resources`). Lab/non-production only; never `resourceProfile: lean` on 4.20/4.22 SNO.
 

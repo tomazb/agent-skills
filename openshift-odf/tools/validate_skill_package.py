@@ -22,6 +22,7 @@ EXPECTED_REFERENCES = [
     "references/validation-hardening.md",
     "references/validated-odf-sno.md",
     "references/console-plugin.md",
+    "references/vm-storage-profiles.md",
 ]
 
 REQUIRED_FILES = [
@@ -667,6 +668,21 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object",
         ],
     )
+    require_order(
+        "references/vm-storage-profiles.md",
+        "VM StorageProfile guidance",
+        [
+            "storageclass.kubernetes.io/is-default-class",
+            "storageclass.kubevirt.io/is-default-virt-class",
+            "ocs-storagecluster-ceph-rbd",
+            "volumeMode: Block",
+            "openshift-storage.rbd.csi.ceph.com",
+            "ocs-storagecluster-cephfs",
+            "LVMCluster.spec.storage.deviceClasses[].default",
+            "odf-vm-smoke",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-vm-smoke",
+        ],
+    )
     require(
         "SKILL.md",
         "smoke namespace cleanup",
@@ -825,6 +841,8 @@ def check_skill_file(root: Path) -> list[str]:
         issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
     if "references/console-plugin.md" not in skill_text:
         issues.append("SKILL.md: missing console plugin routing guidance.")
+    if "references/vm-storage-profiles.md" not in skill_text:
+        issues.append("SKILL.md: missing VM StorageProfile routing guidance.")
     return issues
 
 
