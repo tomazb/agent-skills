@@ -136,7 +136,7 @@ If an OpenShift Route was deployed (see the TLS and Ingress section below), also
 oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
-Create a test OBC, verify:
+Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that namespace. Verify:
 
 - OBC is `Bound`.
 - Secret with S3 credentials is created.
@@ -145,15 +145,31 @@ Create a test OBC, verify:
 - The RGW Route returns an HTTP response from `Ceph Object Gateway`
   (for example `200`, `403`, or `405`) instead of a TLS or connection failure.
 
-Example checks:
-
 ```bash
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rook-rgw-smoke
+---
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: rook-ceph-obc
+  namespace: rook-rgw-smoke
+spec:
+  generateBucketName: my-bucket
+  storageClassName: rook-ceph-rgw-obc
+EOF
 oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc -o wide
 oc -n rook-rgw-smoke get secret rook-ceph-obc
 oc -n rook-rgw-smoke get configmap rook-ceph-obc
 oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
 curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
 ```
+
+`--object` fails the cleanup when an ObjectBucket still names `rook-rgw-smoke`. Deleting the namespace does not by itself prove the bucket object is gone.
 
 ## TLS and Ingress
 

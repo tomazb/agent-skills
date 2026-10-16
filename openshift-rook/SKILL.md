@@ -78,4 +78,5 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Separate read-only discovery from mutating or destructive actions.
 - Show commands with placeholders for cluster-specific values instead of fabricating node, disk, or version identifiers.
 - Include post-change validation and rollback or stop conditions.
+- After a smoke test or the AES256K probe is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`. A passing check left in place is not finished.
 - For production work, include backup, monitoring, and restore validation guidance.

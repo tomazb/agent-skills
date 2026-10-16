@@ -90,6 +90,17 @@ Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder man
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
+oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
+oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+Then delete the probe namespace
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+
 Run `bash scripts/post_uninstall_audit.sh` after uninstall.
 
 Gate the uninstall with `scripts/classify_ceph_ownership.sh`; follow **Orphans After An Interrupted Uninstall** (restart the kubelet on that node, never delete the volume directory under a running kubelet) and **Cluster RBAC left by Rook**.
@@ -147,7 +158,7 @@ Input guidance.
 
 ## Output Expectations
 
-Output guidance.
+Output guidance. After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`.
 """
 
 
@@ -207,6 +218,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "classify_ceph_ownership.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")

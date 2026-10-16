@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.11.0
+
+Smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. The AES256K probe deleted its namespace only on the success path, and the key-rotation path said to delete the probe without a command.
+
+- **A finished smoke namespace is deleted.** `scripts/cleanup_smoke_namespace.sh` deletes a `*-smoke` namespace or `rook-rbd-aes256k-probe`, waits, and fails if the namespace remains or a PV still claims it. With `--object`, it also fails when an ObjectBucket still names that namespace. Any other namespace is refused.
+- Block and file validation, the RBD pool smoke, and the CephFS validation pointer run that cleanup after the write. The RGW test claim is created in `rook-rgw-smoke` and deleted with `--object`.
+- The AES256K probe uses the same cleanup after a recorded success. A startup failure deletes the probe once its events are recorded. A key-mapping failure keeps the probe until the CSI key rotation finishes, then deletes it.
+
 ## 1.10.0
 
 Installs probe AES256K and keep it when a real RBD volume mounts. The previous guidance pinned Squid `v19.2.2` for every Rook v1.20 / ceph-csi v3.17 cluster.

@@ -36,6 +36,7 @@ REQUIRED_FILES = [
     "scripts/post_uninstall_audit.sh",
     "scripts/rook_common.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
@@ -490,6 +491,57 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "ceph mgr module enable rook",
             "ceph orch set backend rook",
             "python3 scripts/render_smoke_manifest.py",
+        ],
+    )
+    require_order(
+        "references/validation-hardening.md",
+        "smoke namespace cleanup",
+        [
+            "python3 scripts/render_smoke_manifest.py",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke",
+        ],
+    )
+    require_order(
+        "references/rbd-block-pools.md",
+        "RBD smoke cleanup",
+        [
+            "oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
+        ],
+    )
+    require(
+        "references/cephfs-filesystem.md",
+        "CephFS smoke cleanup",
+        [
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke",
+        ],
+    )
+    require_order(
+        "references/rgw-object-store.md",
+        "RGW smoke cleanup",
+        [
+            "oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object",
+        ],
+    )
+    require_order(
+        "references/install-and-preflight.md",
+        "probe namespace cleanup",
+        [
+            "echo ok > /data/probe && cat /data/probe",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe",
+            "oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe",
+            "Then delete the probe namespace",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "smoke namespace cleanup",
+        [
+            "scripts/cleanup_smoke_namespace.sh",
         ],
     )
     require(

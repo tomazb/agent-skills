@@ -51,6 +51,20 @@ def test_missing_patch_helper_invocation_fails(validator, package_factory, refer
     assert any("patch_rook_ceph_manifest.py" in issue for issue in issues)
 
 
+def test_missing_smoke_namespace_cleanup_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace(
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
+            "leave the smoke namespace",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("smoke namespace cleanup" in issue for issue in issues)
+
+
 def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     validation = root / "references" / "validation-hardening.md"

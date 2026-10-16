@@ -142,7 +142,10 @@ Minimum smoke flow:
 oc apply -f /tmp/rook-rbd-smoke.yaml
 oc -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
 ```
+
+The cleanup command is the end of the smoke. It deletes `rook-rbd-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 
