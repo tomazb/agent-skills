@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.26.0
+
+- The smoke cleanup script polls the PV claim check for `CLEANUP_PV_WAIT_SECONDS` (default 120) instead of reading once, because the PV check has to wait out Delete reclaim after the namespace is gone. It fails only when a claiming PV is still present at the deadline and names a `Retain` reclaim policy when that is the cause. `0` means one check.
+
 ## 1.25.0
 
 - Add a VM StorageProfile runbook for `ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs`, including the virt-class annotation, block-first claim property sets, and the LVMS re-pin. Verification uses `odf-vm-smoke` and the smoke cleanup script.
