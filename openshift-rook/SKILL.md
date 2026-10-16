@@ -1,6 +1,6 @@
 ---
 name: openshift-rook
-description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, host networking, device discovery, stretch clusters, PG/PGP tuning, CDI/KubeVirt VM storage defaults and StorageProfile configuration, and operator lifecycle safety.
+description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, device discovery, PG/PGP tuning, CDI/KubeVirt VM storage defaults and StorageProfile configuration, and operator lifecycle safety.
 ---
 
 # OpenShift Rook Ceph Lifecycle

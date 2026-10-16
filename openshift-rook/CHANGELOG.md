@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.12.0
+
+- Scope the smoke checklist and the post-reboot list so "one default StorageClass" applies only when defaulting is expected. Zero defaults stay a valid policy.
+- Stop listing host networking and stretch clusters in the skill description until a runbook exists.
+
 ## 1.11.0
 
 Smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. The AES256K probe deleted its namespace only on the success path, and the key-rotation path said to delete the probe without a command.

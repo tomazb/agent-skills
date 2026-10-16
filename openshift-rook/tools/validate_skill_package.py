@@ -503,6 +503,16 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require_order(
+        "references/validation-hardening.md",
+        "scoped default StorageClass",
+        [
+            "## Smoke Test",
+            "`oc get sc` shows exactly one default StorageClass when defaulting is expected.",
+            "## Post-Reboot Drift",
+            "one default if defaulting is expected",
+        ],
+    )
+    require_order(
         "references/rbd-block-pools.md",
         "RBD smoke cleanup",
         [

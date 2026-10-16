@@ -706,3 +706,18 @@ def test_missing_lvms_default_false_guidance_fails(validator, package_factory, r
         "references/vm-storage-profiles.md" in issue and "default: false" in issue
         for issue in issues
     )
+
+
+def test_smoke_checklist_scopes_the_default_storageclass(validator, package_factory):
+    root = package_factory()
+    path = root / "references" / "validation-hardening.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "`oc get sc` shows exactly one default StorageClass when defaulting is expected.",
+            "`oc get sc` shows exactly one default StorageClass.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("scoped default StorageClass" in issue for issue in issues)

@@ -36,7 +36,7 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 - write/read succeeds.
 - RBD/CephFS volume is healthy.
 - replica count matches SNO or multi-node policy.
-- `oc get sc` shows exactly one default StorageClass.
+- `oc get sc` shows exactly one default StorageClass when defaulting is expected. Zero defaults are legitimate when that is the cluster policy; a PVC that omits `storageClassName` then stays Pending.
 
 Use unique smoke namespaces per mode, for example `rook-rbd-smoke` and `rook-cephfs-smoke`, so cleanup and audit commands are unambiguous.
 
@@ -104,7 +104,7 @@ After a node reboot, check:
 - RGW gateways are running (if object store is used).
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
-- One default StorageClass remains.
+- The default-StorageClass situation is unchanged from before the reboot — one default if defaulting is expected, still none if that was the intended policy.
 - MachineConfigs have been applied and MCP is `Updated`.
 
 ## Hardening
