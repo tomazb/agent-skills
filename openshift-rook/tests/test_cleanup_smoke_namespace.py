@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -166,8 +167,25 @@ def test_pv_in_another_namespace_is_kept(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def _bucket(namespace: str, claim: str, ob_name: str) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {"name": ob_name},
+                    "spec": {"claimRef": {"namespace": namespace, "name": claim}},
+                }
+            ]
+        }
+    )
+
+
 def test_object_bucket_leftover_fails_only_with_object_flag(tmp_path):
-    buckets = "objectbucket.objectbucket.io/obc-rook-rgw-smoke-rook-ceph-obc\n"
+    buckets = _bucket(
+        "rook-rgw-smoke",
+        "rook-ceph-obc",
+        "obc-rook-rgw-smoke-rook-ceph-obc",
+    )
     without = _run(tmp_path, "--namespace", "rook-rgw-smoke", OC_BUCKETS=buckets)
     assert without.returncode == 0, without.stderr
     assert "objectbucket" not in _log(tmp_path)
@@ -175,7 +193,19 @@ def test_object_bucket_leftover_fails_only_with_object_flag(tmp_path):
     with_flag = _run(tmp_path, "--namespace", "rook-rgw-smoke", "--object", OC_BUCKETS=buckets)
     assert with_flag.returncode == 1
     assert "leftover ObjectBuckets" in with_flag.stderr
+    assert "obc-rook-rgw-smoke-rook-ceph-obc" in with_flag.stderr
     assert "deleted smoke namespace" not in with_flag.stdout
+
+
+def test_object_bucket_whose_name_contains_the_namespace_is_kept(tmp_path):
+    buckets = _bucket(
+        "team-rook-rgw-smoke",
+        "obc",
+        "obc-team-rook-rgw-smoke-obc",
+    )
+    result = _run(tmp_path, "--namespace", "rook-rgw-smoke", "--object", OC_BUCKETS=buckets)
+    assert result.returncode == 0, result.stderr
+    assert "deleted smoke namespace rook-rgw-smoke" in result.stdout
 
 
 def test_failed_delete_is_not_success(tmp_path):

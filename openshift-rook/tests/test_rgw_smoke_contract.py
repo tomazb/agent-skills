@@ -8,12 +8,20 @@ REFERENCE = (
 def test_rgw_smoke_puts_an_object_before_cleanup():
     text = REFERENCE.read_text()
     put_at = text.index("s3.put_object")
+    get_at = text.index(
+        's3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"rook-rgw-smoke-ok"'
+    )
     marker_at = text.index("rook-rgw-smoke-ok")
     cleanup_at = text.index(
         "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object"
     )
-    assert put_at < marker_at < cleanup_at
+    assert put_at < get_at < cleanup_at
+    assert marker_at < cleanup_at
     assert 'scheme = "https" if port in ("443", "8443") else "http"' in text
+    assert 'ca = os.environ.get("RGW_TLS_CA", "")' in text
+    assert 'ca == "service-ca"' in text
+    assert 'ca == "public"' in text
+    assert "verify=False" not in text
     assert "odf-object-smoke-ok" not in text
     assert "https://https://" not in text
 

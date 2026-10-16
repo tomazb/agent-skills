@@ -168,7 +168,7 @@ oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
 curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
 ```
 
-A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. Use `https` and the pod's projected `service-ca.crt` only for `443` and `8443`.
+A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
 
 Create the pod in `rook-rgw-smoke`. It runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
 
@@ -220,7 +220,15 @@ kwargs = dict(
     aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
 )
 if host.startswith("https://"):
-    kwargs["verify"] = "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+    ca = os.environ.get("RGW_TLS_CA", "")
+    if ca == "service-ca":
+        kwargs["verify"] = "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+    elif ca == "public":
+        pass
+    elif ca.startswith("/"):
+        kwargs["verify"] = ca
+    else:
+        raise SystemExit("set RGW_TLS_CA to service-ca, public, or a mounted CA bundle path")
 s3 = boto3.client("s3", **kwargs)
 b = os.environ["BUCKET_NAME"]
 s3.put_object(Bucket=b, Key="smoke-probe", Body=b"rook-rgw-smoke-ok")
@@ -234,7 +242,7 @@ Any S3 client is enough; the check is that the PUT is readable back by GET. Afte
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
 ```
 
-`--object` fails the cleanup when an ObjectBucket still names `rook-rgw-smoke`. Deleting the namespace does not by itself prove the bucket object is gone.
+`--object` fails the cleanup when an ObjectBucket `claimRef` still names `rook-rgw-smoke`. Deleting the namespace does not by itself prove the bucket object is gone.
 
 ## TLS and Ingress
 
