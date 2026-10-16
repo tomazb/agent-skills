@@ -166,6 +166,35 @@ oc -n rook-rgw-smoke get secret rook-ceph-obc
 oc -n rook-rgw-smoke get configmap rook-ceph-obc
 oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
 curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
+```
+
+A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. Use `https` and the pod's projected `service-ca.crt` only for `443` and `8443`.
+
+```python
+import boto3, os
+host = os.environ["BUCKET_HOST"].rstrip("/")
+port = os.environ["BUCKET_PORT"]
+if "://" not in host:
+    scheme = "https" if port in ("443", "8443") else "http"
+    host = scheme + "://" + host
+ep = "%s:%s" % (host, port)
+kwargs = dict(
+    endpoint_url=ep,
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+)
+if host.startswith("https://"):
+    kwargs["verify"] = "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+s3 = boto3.client("s3", **kwargs)
+b = os.environ["BUCKET_NAME"]
+s3.put_object(Bucket=b, Key="smoke-probe", Body=b"rook-rgw-smoke-ok")
+assert s3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"rook-rgw-smoke-ok"
+s3.delete_object(Bucket=b, Key="smoke-probe")
+```
+
+Any S3 client is enough; the check is that the PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which needs egress. On a disconnected cluster, use a mirrored image that already ships an S3 client. Then run the existing cleanup:
+
+```bash
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
 ```
 

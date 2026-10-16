@@ -532,6 +532,9 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "RGW smoke cleanup",
         [
             "oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc",
+            'scheme = "https" if port in ("443", "8443") else "http"',
+            "s3.put_object",
+            "rook-rgw-smoke-ok",
             "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object",
         ],
     )

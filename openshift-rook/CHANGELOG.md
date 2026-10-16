@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.13.0
+
+- Rook RGW smoke now PUTs and GETs an object before deleting `rook-rgw-smoke`. A Bound claim is provisioning only. HTTP port 8080 stays plain HTTP; `service-ca.crt` is used only for 443 and 8443.
+
 ## 1.12.0
 
 - Scope the smoke checklist and the post-reboot list so "one default StorageClass" applies only when defaulting is expected. Zero defaults stay a valid policy.

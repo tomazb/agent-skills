@@ -94,6 +94,9 @@ oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && ca
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
 oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc
+scheme = "https" if port in ("443", "8443") else "http"
+s3.put_object
+rook-rgw-smoke-ok
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
 oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
