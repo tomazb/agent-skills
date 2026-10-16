@@ -179,9 +179,47 @@ Prove provisioning only when a default is expected and a bound volume is require
 
 If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
 
+The DataVolume wait always runs. The plain-PVC wait runs only when a general default was selected. `WaitForFirstConsumer` needs a pod that mounts `default-sc-test-pvc`; the test VM does not.
+
 ```bash
-oc wait -n rook-vm-smoke pvc/default-sc-test-pvc \
-  --for=jsonpath='{.status.phase}'=Bound --timeout=120s
+sc=$(oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.spec.storageClassName}')
+phase=$(oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.status.phase}')
+if [ -z "$sc" ]; then
+  printf 'plain PVC has no storageClassName and is %s; Pending is expected when no general default exists\n' "$phase"
+else
+  mode=$(oc -n rook-vm-smoke get sc "$sc" -o jsonpath='{.volumeBindingMode}')
+  if [ "$mode" = "WaitForFirstConsumer" ]; then
+    oc apply -n rook-vm-smoke -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: default-sc-test-consumer
+  namespace: rook-vm-smoke
+spec:
+  restartPolicy: Never
+  containers:
+  - name: consumer
+    image: registry.access.redhat.com/ubi9/ubi
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: default-sc-test-pvc
+EOF
+  fi
+  oc wait -n rook-vm-smoke pvc/default-sc-test-pvc \
+    --for=jsonpath='{.status.phase}'=Bound --timeout=120s
+fi
 oc wait -n rook-vm-smoke datavolume/default-sc-test-dv \
   --for=condition=Ready --timeout=300s
 ```

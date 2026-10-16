@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.0
+
+- The VM provisioning example waits for the plain PVC only when a general default was selected. With no default it reports `Pending` and continues. `WaitForFirstConsumer` applies a pod that mounts `default-sc-test-pvc` before that wait. The DataVolume readiness check still runs.
+
 ## 1.17.0
 
 - VM verification reads the selected StorageClass without waiting for a plain PVC to bind. Zero general defaults stay a valid policy. A `WaitForFirstConsumer` plain PVC needs its own pod; starting the test VM does not consume it.
