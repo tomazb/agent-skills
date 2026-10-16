@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.24.0
+
+- The RGW page's ObjectBucket listing now fails when the query fails or the smoke bucket is missing. `grep || true` was hiding both.
+
 ## 1.23.0
 
 Block and file smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. Object smoke already deleted its namespace; the RGW check in `references/object-mcg-rgw.md` did not.

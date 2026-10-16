@@ -76,7 +76,8 @@ Create a test OBC in the `odf-rgw-smoke` namespace and verify:
 oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o wide
 oc -n odf-rgw-smoke get secret odf-obc
 oc -n odf-rgw-smoke get configmap odf-obc
-oc get objectbucket -o wide | grep odf-rgw-smoke || true
+buckets="$(oc get objectbucket -o name)" || exit 1
+printf '%s\n' "$buckets" | grep -F odf-rgw-smoke
 bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object
 ```
 

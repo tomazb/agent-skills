@@ -233,3 +233,17 @@ def test_object_cleanup_check_can_actually_fail(tmp_path):
     assert "odf-object-smoke-abc123" in leftover.stderr + leftover.stdout, (
         "name the leftover so the operator knows what to remove"
     )
+
+
+def test_rgw_page_bucket_check_can_fail():
+    text = (
+        REPO_ROOT / "openshift-odf" / "references" / "object-mcg-rgw.md"
+    ).read_text()
+    assert "|| true" not in text
+    assert "|| echo ok" not in text
+    query_at = text.index('buckets="$(oc get objectbucket -o name)"')
+    grep_at = text.index("grep -F odf-rgw-smoke")
+    cleanup_at = text.index(
+        "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object"
+    )
+    assert query_at < grep_at < cleanup_at
