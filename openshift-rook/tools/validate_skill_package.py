@@ -735,6 +735,11 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "default: false",
         ],
     )
+    require(
+        "references/vm-storage-profiles.md",
+        "VM smoke cleanup",
+        ["bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke"],
+    )
     forbid_pattern(
         "references/install-and-preflight.md",
         re.compile(

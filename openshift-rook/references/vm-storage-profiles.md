@@ -107,7 +107,7 @@ Generalize: before fighting a re-pinning controller, check the StorageClass `met
 Create a throwaway namespace:
 
 ```bash
-oc create ns storage-default-test
+oc create ns rook-vm-smoke
 ```
 
 Plain PVC (omits `storageClassName`) should bind on the general-purpose default:
@@ -117,7 +117,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: default-sc-test-pvc
-  namespace: storage-default-test
+  namespace: rook-vm-smoke
 spec:
   accessModes: ["ReadWriteOnce"]
   resources:
@@ -132,7 +132,7 @@ apiVersion: kubevirt.io/v1
 kind: VirtualMachine
 metadata:
   name: default-sc-test-vm
-  namespace: storage-default-test
+  namespace: rook-vm-smoke
 spec:
   running: false
   template:
@@ -165,16 +165,16 @@ spec:
 Apply both manifests, then check which StorageClass was selected. The `spec.storageClassName` is populated immediately on create, before the PVC is bound:
 
 ```bash
-oc apply -n storage-default-test -f <pvc-manifest.yaml>
-oc apply -n storage-default-test -f <vm-manifest.yaml>
+oc apply -n rook-vm-smoke -f <pvc-manifest.yaml>
+oc apply -n rook-vm-smoke -f <vm-manifest.yaml>
 ```
 
 Confirm StorageClass selection (no wait required for this check):
 
 ```bash
-oc -n storage-default-test get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} phase={.status.phase}{"\n"}'
-oc -n storage-default-test get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes} phase={.status.phase}{"\n"}'
-oc -n storage-default-test get dv default-sc-test-dv -o jsonpath='phase={.status.phase} progress={.status.progress}{"\n"}'
+oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} phase={.status.phase}{"\n"}'
+oc -n rook-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes} phase={.status.phase}{"\n"}'
+oc -n rook-vm-smoke get dv default-sc-test-dv -o jsonpath='phase={.status.phase} progress={.status.progress}{"\n"}'
 ```
 
 Expect the plain PVC on the general default (`Filesystem`) and the DataVolume PVC on the VM default with the StorageProfile's first set (for example `rook-ceph-block`, `Block`, `ReadWriteMany`).
@@ -184,14 +184,14 @@ To also confirm provisioning completes, wait for binding. This requires the Stor
 If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
 
 ```bash
-oc wait -n storage-default-test pvc/default-sc-test-pvc \
+oc wait -n rook-vm-smoke pvc/default-sc-test-pvc \
   --for=jsonpath='{.status.phase}'=Bound --timeout=120s
-oc wait -n storage-default-test datavolume/default-sc-test-dv \
+oc wait -n rook-vm-smoke datavolume/default-sc-test-dv \
   --for=condition=Ready --timeout=300s
 ```
 
 Clean up:
 
 ```bash
-oc delete ns storage-default-test --wait
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke
 ```

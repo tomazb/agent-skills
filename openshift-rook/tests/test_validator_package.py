@@ -708,6 +708,21 @@ def test_missing_lvms_default_false_guidance_fails(validator, package_factory, r
     )
 
 
+def test_vm_verification_uses_the_smoke_cleanup_script(validator, package_factory):
+    root = package_factory()
+    path = root / "references" / "vm-storage-profiles.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke",
+            "oc delete ns storage-default-test --wait",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("VM smoke cleanup" in issue for issue in issues)
+
+
 def test_smoke_checklist_scopes_the_default_storageclass(validator, package_factory):
     root = package_factory()
     path = root / "references" / "validation-hardening.md"

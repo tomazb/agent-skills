@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.14.0
+
+- The VM default verification namespace is `rook-vm-smoke` and is deleted with `scripts/cleanup_smoke_namespace.sh`.
+
 ## 1.13.0
 
 - Rook RGW smoke now PUTs and GETs an object before deleting `rook-rgw-smoke`. A Bound claim is provisioning only. HTTP port 8080 stays plain HTTP; `service-ca.crt` is used only for 443 and 8443.
