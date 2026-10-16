@@ -108,7 +108,10 @@ Minimum smoke flow (pod name `rbd-smoke-writer` matches `scripts/render_smoke_ma
 oc apply -f /tmp/odf-rbd-smoke.yaml
 oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
 ```
+
+The cleanup command is the end of the smoke. It deletes `odf-rbd-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 

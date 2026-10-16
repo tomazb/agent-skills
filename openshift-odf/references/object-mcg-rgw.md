@@ -77,7 +77,10 @@ oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o wide
 oc -n odf-rgw-smoke get secret odf-obc
 oc -n odf-rgw-smoke get configmap odf-obc
 oc get objectbucket -o wide | grep odf-rgw-smoke || true
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object
 ```
+
+Create that test claim in `odf-rgw-smoke` only. The cleanup command deletes that namespace and fails if an ObjectBucket still names it.
 
 ## S3 Route And TLS
 

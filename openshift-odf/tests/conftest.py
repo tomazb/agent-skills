@@ -113,6 +113,14 @@ Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
+oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
+oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
+oc -n odf-rgw-smoke get objectbucketclaim odf-obc
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object
+
 Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, `oc get csidriver`, and `/sys/bus/rbd/devices`.
 
 Teardown may block on frozen dependents: delete `CephObjectStoreUser`, clear the NooBaa `graceful_finalizer`, watch the `cluster-cleanup-job` hang on `ceph-volume raw list`, and check `/sys/bus/rbd/devices` for stale krbd. Also delete the CrashLooping `StorageClient` `status-reporter` CronJob; if host `sgdisk`/`lvs` are in `D-state`, delete stuck `rook-ceph-osd-prepare` before reboot — on SNO a soft reboot can enter a `reboot loop`.
@@ -165,7 +173,7 @@ Input guidance.
 
 ## Output Expectations
 
-Output guidance.
+Output guidance. After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`.
 """
 
 
@@ -223,6 +231,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "render_storagecluster.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()

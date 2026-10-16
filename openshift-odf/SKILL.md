@@ -81,4 +81,5 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Show commands with placeholders for cluster-specific values instead of fabricating node, disk, or version identifiers.
 - Drive changes through the `StorageCluster` CR and OLM Subscription; never hand-edit the ODF-owned Rook CRs except for the version-scoped ODF 4.20 and 4.22 SNO pool, `topologyKey`, and resource workarounds in Core Safety Rules and `references/validated-odf-sno.md`.
 - Include post-change validation and rollback or stop conditions.
+- After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`. A passing check left in place is not finished.
 - For production work, include backup, monitoring, and restore validation guidance.

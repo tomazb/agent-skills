@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.23.0
+
+Block and file smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. Object smoke already deleted its namespace; the RGW check in `references/object-mcg-rgw.md` did not.
+
+- **A finished smoke namespace is deleted.** `scripts/cleanup_smoke_namespace.sh` deletes a `*-smoke` namespace, waits, and fails if the namespace remains or a PV still claims it. With `--object`, it also fails when an ObjectBucket still names that namespace. Any other namespace, including `openshift-storage`, is refused.
+- Block and file validation, the RBD and CephFS pool smokes, and the RGW test namespace `odf-rgw-smoke` run that cleanup after the check. The object smoke uses the same script with `--object`.
+
 ## 1.22.0
 
 SSDs and NVMe devices often support a media-key change, a sanitize block erase, or neither. ODF's `cleanup-policy=delete` job only wipes OSD metadata, so it does not replace a controller erase.
