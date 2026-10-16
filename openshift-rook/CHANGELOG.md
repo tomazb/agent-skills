@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.17.0
+
+- VM verification reads the selected StorageClass without waiting for a plain PVC to bind. Zero general defaults stay a valid policy. A `WaitForFirstConsumer` plain PVC needs its own pod; starting the test VM does not consume it.
+
 ## 1.16.0
 
 - Smoke cleanup with `--object` matches ObjectBucket `claimRef.namespace` exactly. A bucket whose name only contains the namespace string is not a leftover.

@@ -6,7 +6,7 @@ Use this runbook when configuring which StorageClass OpenShift Virtualization (C
 
 Kubernetes and CDI use two independent default mechanisms:
 
-- General-purpose default: `storageclass.kubernetes.io/is-default-class: "true"` on the StorageClass. Applied when any PVC (including non-VM workloads) omits `spec.storageClassName`. Keep exactly one of these cluster-wide.
+- General-purpose default: `storageclass.kubernetes.io/is-default-class: "true"` on the StorageClass. Applied when any PVC (including non-VM workloads) omits `spec.storageClassName`. Keep exactly one when defaulting is expected. Zero general defaults is a valid policy: a PVC that omits `storageClassName` then stays Pending.
 - VM/virtualization default: `storageclass.kubevirt.io/is-default-virt-class: "true"` on the StorageClass. When a DataVolume omits `spec.storage.storageClassName`, CDI prioritizes this over the general-purpose default. At most one class should carry it.
 
 The two can coexist on different classes without conflict. A common layout is a general-purpose default on `rook-nfs` or `rook-cephfs` and a VM default on `rook-ceph-block`.
@@ -110,7 +110,9 @@ Create a throwaway namespace:
 oc create ns rook-vm-smoke
 ```
 
-Plain PVC (omits `storageClassName`) should bind on the general-purpose default:
+Default-class selection and provisioning are separate checks. Selection is complete when `spec.storageClassName` is set. Binding is optional, and only when that binding is the intended policy.
+
+A plain PVC omits `storageClassName`. It records which general default the cluster selected:
 
 ```yaml
 apiVersion: v1
@@ -125,7 +127,7 @@ spec:
       storage: 1Gi
 ```
 
-VM with a blank DataVolume (omits `storageClassName`, `volumeMode`, `accessModes`) should bind on the VM default with `volumeMode`/`accessModes` inferred from the StorageProfile:
+A VM with a blank DataVolume omits `storageClassName`, `volumeMode`, and `accessModes`. It records which virt default CDI selected, and the StorageProfile's first claim property set:
 
 ```yaml
 apiVersion: kubevirt.io/v1
@@ -162,24 +164,18 @@ spec:
           blank: {}
 ```
 
-Apply both manifests, then check which StorageClass was selected. The `spec.storageClassName` is populated immediately on create, before the PVC is bound:
+Apply both manifests, then read the selected class. `spec.storageClassName` is set on create, before the PVC binds:
 
 ```bash
 oc apply -n rook-vm-smoke -f <pvc-manifest.yaml>
 oc apply -n rook-vm-smoke -f <vm-manifest.yaml>
+oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName}{"\n"}'
+oc -n rook-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes}{"\n"}'
 ```
 
-Confirm StorageClass selection (no wait required for this check):
+When a general default exists, the plain PVC's `storageClassName` is that class. Skip the plain PVC bind wait when no general default is expected: `storageClassName` stays empty and the phase stays `Pending`, which is that policy. Expect the DataVolume PVC on the virt default with the StorageProfile's first set (for example `rook-ceph-block`, `Block`, `ReadWriteMany`).
 
-```bash
-oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} phase={.status.phase}{"\n"}'
-oc -n rook-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes} phase={.status.phase}{"\n"}'
-oc -n rook-vm-smoke get dv default-sc-test-dv -o jsonpath='phase={.status.phase} progress={.status.progress}{"\n"}'
-```
-
-Expect the plain PVC on the general default (`Filesystem`) and the DataVolume PVC on the VM default with the StorageProfile's first set (for example `rook-ceph-block`, `Block`, `ReadWriteMany`).
-
-To also confirm provisioning completes, wait for binding. This requires the StorageClass to use `volumeBindingMode: Immediate` (the Rook Ceph default). If the default class uses `WaitForFirstConsumer` (the LVMS default), the plain PVC stays Pending until a Pod is scheduled, and the DataVolume stays in `WaitForFirstConsumer` phase until the VM runs. In that case either set `running: true` on the test VM or force immediate binding on the DataVolume with the annotation `cdi.kubevirt.io/storage.bind.immediate.requested: "true"`:
+Prove provisioning only when a default is expected and a bound volume is required. `volumeBindingMode: Immediate` is the Rook Ceph default. `WaitForFirstConsumer` (the LVMS default) leaves a PVC Pending until a pod is scheduled. The test VM uses its DataVolume, not `default-sc-test-pvc`, so starting the VM or setting `cdi.kubevirt.io/storage.bind.immediate.requested` on the DataVolume does not consume the plain PVC. For the plain PVC, add a pod that mounts `default-sc-test-pvc` before waiting. For the DataVolume, either set `running: true` on the test VM or set that annotation, then wait.
 
 If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
 
