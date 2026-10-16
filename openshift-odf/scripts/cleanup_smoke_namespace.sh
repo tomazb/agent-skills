@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Delete one finished ODF smoke namespace and fail if any of it remains: the
 # namespace itself, a PV that still claims it, or (with --object) an
-# ObjectBucket whose name contains it. The PV check polls for
+# ObjectBucket whose claimRef.namespace is exactly that namespace. The PV check polls for
 # CLEANUP_PV_WAIT_SECONDS (default 120) because a Delete reclaim can lag.
 set -euo pipefail
 
@@ -13,7 +13,7 @@ usage() {
     'finish. NAME must be a *-smoke namespace.' \
     '' \
     '  --namespace NAME  namespace to delete' \
-    '  --object          also fail if an ObjectBucket name contains NAME' \
+    '  --object          also fail if an ObjectBucket claimRef.namespace is NAME' \
     '  -h, --help        show this help' \
     '' \
     'Environment:' \
@@ -145,11 +145,29 @@ for item in items:
 done
 
 if [ "$check_object" -eq 1 ]; then
-  if ! buckets=$(oc get objectbucket -o name); then
+  if ! bucket_json=$(oc get objectbucket -o json); then
     echo "could not inspect ObjectBuckets - cleanup unverified" >&2
     exit 1
   fi
-  leftovers=$(printf '%s\n' "$buckets" | grep -F "$namespace" || true)
+  if ! leftovers=$(printf '%s' "$bucket_json" | python3 -c '
+import json, sys
+ns = sys.argv[1]
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.stderr.write("could not parse ObjectBucket list - cleanup unverified\n")
+    sys.exit(1)
+items = data.get("items")
+if items is None:
+    items = [data] if data.get("kind") == "ObjectBucket" else []
+for item in items:
+    claim = (item.get("spec") or {}).get("claimRef") or {}
+    if claim.get("namespace") == ns:
+        print((item.get("metadata") or {}).get("name") or "unnamed")
+' "$namespace"); then
+    echo "could not inspect ObjectBuckets - cleanup unverified" >&2
+    exit 1
+  fi
   if [ -n "$leftovers" ]; then
     printf 'leftover ObjectBuckets after deleting the claim:\n%s\n' "$leftovers" >&2
     exit 1

@@ -101,7 +101,9 @@ Use the throwaway namespace `odf-vm-smoke`:
 oc create ns odf-vm-smoke
 ```
 
-A plain PVC (omits `storageClassName`) should bind on the general default:
+Default-class selection and provisioning are separate checks. Selection is complete when `spec.storageClassName` is set. Binding is optional, and only when that binding is the intended policy.
+
+A plain PVC omits `storageClassName`. It records which general default the cluster selected:
 
 ```yaml
 apiVersion: v1
@@ -158,14 +160,13 @@ Apply both, then read the selected class. `spec.storageClassName` is set on crea
 ```bash
 oc apply -n odf-vm-smoke -f <pvc-manifest.yaml>
 oc apply -n odf-vm-smoke -f <vm-manifest.yaml>
-oc -n odf-vm-smoke get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} phase={.status.phase}{"\n"}'
-oc -n odf-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes} phase={.status.phase}{"\n"}'
-oc -n odf-vm-smoke get dv default-sc-test-dv -o jsonpath='phase={.status.phase} progress={.status.progress}{"\n"}'
+oc -n odf-vm-smoke get pvc default-sc-test-pvc -o jsonpath='sc={.spec.storageClassName}{"\n"}'
+oc -n odf-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClassName} mode={.spec.volumeMode} ams={.spec.accessModes}{"\n"}'
 ```
 
-Expect the plain PVC on the general default and the DataVolume PVC on the virt default with the StorageProfile's first set: `ocs-storagecluster-ceph-rbd`, `Block`, `ReadWriteMany` when RBD is the VM default.
+When a general default exists, the plain PVC's `storageClassName` is that class. Skip the plain PVC bind wait when no general default is expected: `storageClassName` stays empty and the phase stays `Pending`, which is that policy. Expect the DataVolume PVC on the virt default with the StorageProfile's first set: `ocs-storagecluster-ceph-rbd`, `Block`, `ReadWriteMany` when RBD is the VM default.
 
-`volumeBindingMode: WaitForFirstConsumer` leaves a PVC Pending until a pod or VM is scheduled, and the DataVolume waits in `WaitForFirstConsumer`. Either set `running: true` on the test VM or force immediate binding with the DataVolume annotation `cdi.kubevirt.io/storage.bind.immediate.requested: "true"`.
+Prove provisioning only when a default is expected and a bound volume is required. `volumeBindingMode: WaitForFirstConsumer` leaves a PVC Pending until a pod is scheduled. The test VM uses its DataVolume, not `default-sc-test-pvc`, so starting the VM or setting `cdi.kubevirt.io/storage.bind.immediate.requested` on the DataVolume does not consume the plain PVC. For the plain PVC, add a pod that mounts `default-sc-test-pvc` before waiting. For the DataVolume, either set `running: true` on the test VM or set that annotation, then wait.
 
 If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, poll `.status.phase` until it is `Bound`:
 

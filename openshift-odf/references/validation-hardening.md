@@ -293,7 +293,7 @@ s3.delete_object(Bucket=b, Key="smoke-probe")
 
 Any S3 client works; the check is that a PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which requires egress — on a disconnected cluster use a mirrored image that already ships an S3 client instead.
 
-Clean up by deleting only the smoke namespace. The script waits for the namespace to disappear, fails if a PV still claims it, and with `--object` fails if an ObjectBucket still names it. A failed query is not treated as a clean result.
+Clean up by deleting only the smoke namespace. The script waits for the namespace to disappear, fails if a PV still claims it, and with `--object` fails if an ObjectBucket `claimRef` still names that namespace. A failed query is not treated as a clean result.
 
 ```bash
 bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object

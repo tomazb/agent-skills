@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -166,8 +167,25 @@ def test_pv_in_another_namespace_is_kept(tmp_path):
     assert result.returncode == 0, result.stderr
 
 
+def _bucket(namespace: str, claim: str, ob_name: str) -> str:
+    return json.dumps(
+        {
+            "items": [
+                {
+                    "metadata": {"name": ob_name},
+                    "spec": {"claimRef": {"namespace": namespace, "name": claim}},
+                }
+            ]
+        }
+    )
+
+
 def test_object_bucket_leftover_fails_only_with_object_flag(tmp_path):
-    buckets = "objectbucket.objectbucket.io/obc-odf-object-smoke-object-smoke-obc\n"
+    buckets = _bucket(
+        "odf-object-smoke",
+        "object-smoke-obc",
+        "obc-odf-object-smoke-object-smoke-obc",
+    )
     without = _run(tmp_path, "--namespace", "odf-object-smoke", OC_BUCKETS=buckets)
     assert without.returncode == 0, without.stderr
     assert "objectbucket" not in _log(tmp_path)
@@ -177,6 +195,17 @@ def test_object_bucket_leftover_fails_only_with_object_flag(tmp_path):
     assert "leftover ObjectBuckets" in with_flag.stderr
     assert "obc-odf-object-smoke-object-smoke-obc" in with_flag.stderr
     assert "deleted smoke namespace" not in with_flag.stdout
+
+
+def test_object_bucket_whose_name_contains_the_namespace_is_kept(tmp_path):
+    buckets = _bucket(
+        "team-odf-rgw-smoke",
+        "obc",
+        "obc-team-odf-rgw-smoke-obc",
+    )
+    result = _run(tmp_path, "--namespace", "odf-rgw-smoke", "--object", OC_BUCKETS=buckets)
+    assert result.returncode == 0, result.stderr
+    assert "deleted smoke namespace odf-rgw-smoke" in result.stdout
 
 
 def test_failed_objectbucket_query_is_unverified(tmp_path):

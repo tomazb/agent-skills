@@ -76,12 +76,25 @@ Create a test OBC in the `odf-rgw-smoke` namespace and verify:
 oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o wide
 oc -n odf-rgw-smoke get secret odf-obc
 oc -n odf-rgw-smoke get configmap odf-obc
-buckets="$(oc get objectbucket -o name)" || exit 1
-printf '%s\n' "$buckets" | grep -F odf-rgw-smoke
+buckets="$(oc get objectbucket -o json)" || exit 1
+printf '%s' "$buckets" | python3 -c '
+import json, sys
+data = json.load(sys.stdin)
+items = data.get("items") or []
+found = False
+for item in items:
+    claim = (item.get("spec") or {}).get("claimRef") or {}
+    if claim.get("namespace") == "odf-rgw-smoke" and claim.get("name") == "odf-obc":
+        found = True
+        break
+if not found:
+    sys.stderr.write("no ObjectBucket claims odf-rgw-smoke/odf-obc\n")
+    sys.exit(1)
+' || exit 1
 bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object
 ```
 
-Create that test claim in `odf-rgw-smoke` only. The cleanup command deletes that namespace and fails if an ObjectBucket still names it.
+Create that test claim in `odf-rgw-smoke` only. The check above exits before cleanup unless an ObjectBucket `claimRef` is exactly namespace `odf-rgw-smoke` and name `odf-obc`. The cleanup command then deletes that namespace and fails if an ObjectBucket still claims it. A bucket whose name merely contains `odf-rgw-smoke` belongs to whatever namespace its `claimRef` names.
 
 ## S3 Route And TLS
 
