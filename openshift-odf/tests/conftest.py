@@ -108,10 +108,28 @@ Evidence includes `ocs-storagecluster-ceph-rbd`, `openshift-storage.noobaa.io`,
 `python3 scripts/render_console_plugin_patch.py`
 Data Foundation
 
+## VM StorageProfile
+`storageclass.kubernetes.io/is-default-class`
+`storageclass.kubevirt.io/is-default-virt-class`
+`ocs-storagecluster-ceph-rbd`
+`volumeMode: Block`
+`openshift-storage.rbd.csi.ceph.com`
+`ocs-storagecluster-cephfs`
+`LVMCluster.spec.storage.deviceClasses[].default`
+`odf-vm-smoke`
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-vm-smoke
 
 Use `python3 scripts/render_storagecluster.py` when generating a StorageCluster.
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+
+oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
+oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
+oc -n odf-rgw-smoke get objectbucketclaim odf-obc
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object
 
 Run `Leftover Install Detection` for both ODF and Rook, checking `/var/lib/rook/mon-` dirs, a `Has BlueStore device label` disk, `oc get csidriver`, and `/sys/bus/rbd/devices`.
 
@@ -149,6 +167,7 @@ Rook owns the cluster, hand off to `openshift-rook`.
 
 Use `references/validated-odf-sno.md` for version-scoped SNO evidence.
 Use `references/console-plugin.md` for ODF console plugin enablement.
+Use `references/vm-storage-profiles.md` for CDI/KubeVirt VM storage defaults.
 
 ## Core Safety Rules
 
@@ -165,7 +184,7 @@ Input guidance.
 
 ## Output Expectations
 
-Output guidance.
+Output guidance. After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`.
 """
 
 
@@ -223,6 +242,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "render_storagecluster.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()

@@ -1,6 +1,6 @@
 ---
 name: openshift-rook
-description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, host networking, device discovery, stretch clusters, PG/PGP tuning, CDI/KubeVirt VM storage defaults and StorageProfile configuration, and operator lifecycle safety.
+description: Use when planning, installing, configuring, validating, upgrading, expanding, shrinking, backing up, restoring, maintaining, or troubleshooting Rook Ceph on OpenShift/OKD — including Single Node OpenShift, multi-node clusters, dedicated block disks for OSDs, CephBlockPool RBD, CephFS filesystem, CephObjectStore RGW/S3, device discovery, PG/PGP tuning, CDI/KubeVirt VM storage defaults and StorageProfile configuration, and operator lifecycle safety.
 ---
 
 # OpenShift Rook Ceph Lifecycle
@@ -78,4 +78,5 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Separate read-only discovery from mutating or destructive actions.
 - Show commands with placeholders for cluster-specific values instead of fabricating node, disk, or version identifiers.
 - Include post-change validation and rollback or stop conditions.
+- After a smoke test or the AES256K probe is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`. A passing check left in place is not finished.
 - For production work, include backup, monitoring, and restore validation guidance.

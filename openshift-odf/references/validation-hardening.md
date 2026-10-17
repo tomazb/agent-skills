@@ -209,6 +209,8 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 
 Use unique smoke namespaces per mode, for example `odf-rbd-smoke` and `odf-cephfs-smoke`, so cleanup and audit commands are unambiguous.
 
+After the write is recorded, delete that namespace with `scripts/cleanup_smoke_namespace.sh`. The writer command includes `sleep 3600` and the pod restarts, so a passing test keeps its volume until this command runs. The script waits for the namespace to disappear and fails if a PV still claims it. It only deletes a `*-smoke` namespace. If a step fails, record the pod events, then run the same cleanup. A finished smoke does not stay on the cluster.
+
 Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py` output):
 
 ```bash
@@ -221,6 +223,7 @@ python3 scripts/render_smoke_manifest.py \
 oc apply -f /tmp/odf-rbd-smoke.yaml
 oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-rbd-smoke exec rbd-smoke-writer -- cat /data/smoke-probe
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
 ```
 
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
@@ -235,9 +238,10 @@ python3 scripts/render_smoke_manifest.py \
 oc apply -f /tmp/odf-cephfs-smoke.yaml
 oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- cat /data/smoke-probe
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
 ```
 
-If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`.
+If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`. Delete that namespace with `bash scripts/cleanup_smoke_namespace.sh --namespace odf-smoke`.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
@@ -289,24 +293,10 @@ s3.delete_object(Bucket=b, Key="smoke-probe")
 
 Any S3 client works; the check is that a PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which requires egress — on a disconnected cluster use a mirrored image that already ships an S3 client instead.
 
-Clean up by deleting only the smoke namespace, then confirm the bucket object is gone:
+Clean up by deleting only the smoke namespace. The script waits for the namespace to disappear, fails if a PV still claims it, and with `--object` fails if an ObjectBucket `claimRef` still names that namespace. A failed query is not treated as a clean result.
 
 ```bash
-oc delete namespace odf-object-smoke --wait=true --timeout=5m
-
-# Fail closed: `oc get ... | grep X || echo ok` exits 0 whether or not X is
-# found, and hides a failed query behind the pipe, so it can never report a
-# leftover bucket.
-if ! buckets=$(oc get objectbucket -o name); then
-  echo "could not inspect ObjectBuckets - cleanup unverified" >&2
-  exit 1
-fi
-leftovers=$(printf '%s\n' "$buckets" | grep -F 'odf-object-smoke' || true)
-if [ -n "$leftovers" ]; then
-  printf 'leftover ObjectBuckets after deleting the claim:\n%s\n' "$leftovers" >&2
-  exit 1
-fi
-echo "no leftover ObjectBuckets"
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object
 ```
 
 ## Dashboard And Monitoring

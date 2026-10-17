@@ -24,6 +24,15 @@ def test_missing_lifecycle_reference_fails(validator, package_factory):
     assert any(str(missing.relative_to(root)) in issue for issue in issues)
 
 
+def test_vm_storage_profile_reference_is_required(validator, package_factory):
+    root = package_factory()
+    missing = root / "references" / "vm-storage-profiles.md"
+    if missing.exists():
+        missing.unlink()
+    issues = validator.validate_root(root)
+    assert any("vm-storage-profiles.md" in issue for issue in issues)
+
+
 def test_missing_required_helper_file_fails(validator, package_factory):
     root = package_factory()
     missing = root / "scripts" / "render_storagecluster.py"
@@ -51,6 +60,20 @@ def test_missing_storagecluster_helper_invocation_fails(
     )
     issues = validator.validate_root(root)
     assert any("render_storagecluster.py" in issue for issue in issues)
+
+
+def test_missing_smoke_namespace_cleanup_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace(
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke",
+            "leave the smoke namespace",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("smoke namespace cleanup" in issue for issue in issues)
 
 
 def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):

@@ -51,6 +51,20 @@ def test_missing_patch_helper_invocation_fails(validator, package_factory, refer
     assert any("patch_rook_ceph_manifest.py" in issue for issue in issues)
 
 
+def test_missing_smoke_namespace_cleanup_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    validation = root / "references" / "validation-hardening.md"
+    validation.write_text(
+        validation.read_text(encoding="utf-8").replace(
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
+            "leave the smoke namespace",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("smoke namespace cleanup" in issue for issue in issues)
+
+
 def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     validation = root / "references" / "validation-hardening.md"
@@ -692,3 +706,33 @@ def test_missing_lvms_default_false_guidance_fails(validator, package_factory, r
         "references/vm-storage-profiles.md" in issue and "default: false" in issue
         for issue in issues
     )
+
+
+def test_vm_verification_uses_the_smoke_cleanup_script(validator, package_factory):
+    root = package_factory()
+    path = root / "references" / "vm-storage-profiles.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke",
+            "oc delete ns storage-default-test --wait",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("VM smoke cleanup" in issue for issue in issues)
+
+
+def test_smoke_checklist_scopes_the_default_storageclass(validator, package_factory):
+    root = package_factory()
+    path = root / "references" / "validation-hardening.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "`oc get sc` shows exactly one default StorageClass when defaulting is expected.",
+            "`oc get sc` shows exactly one default StorageClass.",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("scoped default StorageClass" in issue for issue in issues)

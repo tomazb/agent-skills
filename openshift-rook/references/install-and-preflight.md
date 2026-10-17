@@ -165,7 +165,13 @@ for node in json.load(sys.stdin)["items"]:
 '
 ```
 
-Run the probe on each printed node. Stop at the first command that fails, and leave the namespace in place so the pod events are still available. Delete it only after that node's write and `/dev/rbd` mount are recorded, then start the next node. The RWO claim must not stay pinned to the previous node. Keep AES256K only when every node prints `ok` and a mount device that starts with `/dev/rbd`.
+Run the probe on each printed node. Stop at the first command that fails. The RWO claim must not stay pinned to the previous node, so each node ends in one of three outcomes:
+
+- Success: the write prints `ok` and the mount device starts with `/dev/rbd`. Record both, then delete the namespace and start the next node.
+- Scheduling or startup failure (`Pending`, `ImagePullBackOff`, `CrashLoopBackOff`): record the pod events, then delete the namespace, fix it, and run the probe again.
+- Key or mapping failure: keep the namespace until the key rotation below has finished, then delete it.
+
+Keep AES256K only when every node prints `ok` and a mount device that starts with `/dev/rbd`.
 
 ```bash
 python3 scripts/render_smoke_manifest.py \
@@ -178,12 +184,17 @@ oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
 oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
-oc delete namespace rook-rbd-aes256k-probe --wait=true
+```
+
+Only after the `ok` write and the `/dev/rbd` mount device are recorded for this node, delete the probe namespace:
+
+```bash
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
 ```
 
 When the PVC stays `Pending` with `rados: ret=-22` and the plugin image is still older than `v3.17.1`, apply the image-set patch above, wait for the plugin rollout, and run the probe once more.
 
-When the pod does not become `Ready`, read the pod events and the RBD node plugin log from the probe node before changing ciphers. The node plugin is a DaemonSet, so a DaemonSet-wide log can come from a different node. A `Pending` pod, `ImagePullBackOff`, or `CrashLoopBackOff` is not a cipher result. Fix that and run the probe again.
+When the pod does not become `Ready`, read the pod events and the RBD node plugin log from the probe node before changing ciphers. The node plugin is a DaemonSet, so a DaemonSet-wide log can come from a different node.
 
 ```bash
 oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
@@ -191,7 +202,13 @@ oc -n rook-ceph logs -c csi-rbdplugin --tail=80 \
   "$(oc -n rook-ceph get pod --field-selector spec.nodeName=<node> -o name | grep 'rbd.csi.ceph.com-nodeplugin')"
 ```
 
-Rotate the CSI key only when a `FailedMount` event or that node plugin log reports a key or mapping failure (`failed to decode key`, `rados: ret=-22`, or the kernel rejecting the key). One confirmed mapping failure means a later volume can land on that node, so the cluster cannot stay on `aes256k` alone. Keep the Ceph image. Read `status.cephx.csi.keyGeneration` first. A fresh cluster reports `1` or an empty generation; the first rotation uses `2`. A later rotation uses one more than the current generation. `keepPriorKeyCountMax: 1` leaves the previous CSI key in place so the bound probe volume can still unmap.
+A `Pending` pod, `ImagePullBackOff`, or `CrashLoopBackOff` is not a cipher result. Leave the namespace only while those events and the plugin log are still being read, then delete it, fix scheduling or startup, and run the probe again. Skip this delete when the events are a key or mapping failure; that namespace stays until the rotation below has finished:
+
+```bash
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+```
+
+Rotate the CSI key only when a `FailedMount` event or that node plugin log reports a key or mapping failure (`failed to decode key`, `rados: ret=-22`, or the kernel rejecting the key). One confirmed mapping failure means a later volume can land on that node, so the cluster cannot stay on `aes256k` alone. Keep the Ceph image. Do not delete the probe namespace before this rotation. Read `status.cephx.csi.keyGeneration` first. A fresh cluster reports `1` or an empty generation; the first rotation uses `2`. A later rotation uses one more than the current generation. `keepPriorKeyCountMax: 1` leaves the previous CSI key in place so the bound probe volume can still unmap.
 
 ```bash
 CURRENT=$(oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.cephx.csi.keyGeneration}')
@@ -200,7 +217,13 @@ oc -n rook-ceph patch cephcluster rook-ceph --type=merge -p \
   "{\"spec\":{\"security\":{\"cephx\":{\"allowedCiphers\":[\"aes\",\"aes256k\"],\"csi\":{\"keyRotationPolicy\":\"KeyGeneration\",\"keyGeneration\":${NEXT},\"keepPriorKeyCountMax\":1,\"keyType\":\"aes\"}}}}}"
 ```
 
-Wait until `status.cephx.csi.keyGeneration` equals `NEXT`, `status.cephx.csi.priorKeyCount` is at least `1`, `status.cephx.csi.keyType` is `aes`, and `userKey` in `rook-csi-rbd-provisioner` starts with `AQ`. Then delete the probe namespace and repeat the probe in a new namespace. New PVCs use the classic AES key. The prior key remains for volumes that mounted with it. Daemon keys stay AES256K. `AUTH_INSECURE_KEYS_ALLOWED` returns for this exception. Do not set `daemon.keyType`.
+Wait until `status.cephx.csi.keyGeneration` equals `NEXT`, `status.cephx.csi.priorKeyCount` is at least `1`, `status.cephx.csi.keyType` is `aes`, and `userKey` in `rook-csi-rbd-provisioner` starts with `AQ`. Then delete the probe namespace and repeat the probe in a new namespace:
+
+```bash
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+```
+
+New PVCs use the classic AES key. The prior key remains for volumes that mounted with it. Daemon keys stay AES256K. `AUTH_INSECURE_KEYS_ALLOWED` returns for this exception. Do not set `daemon.keyType`.
 
 When `quay.io/cephcsi/cephcsi:v3.17.1` is running and the probe still fails with `rados: ret=-22`, wipe the cluster with `references/maintenance-uninstall.md` and install Squid `v19.2.2` without `security.cephx`. Do not downgrade the existing `v20` store in place.
 

@@ -1,5 +1,40 @@
 # Changelog
 
+## 1.27.2
+
+- Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.
+
+## 1.27.1
+
+- VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.
+- Plain-PVC provisioning stays independent: skip its bind wait with zero general defaults, and create its own consumer Pod for `WaitForFirstConsumer`. Verification stops on failed queries, consumer creation, VM patches, or waits.
+- Wait for CDI to create the DataVolume PVC before querying its selected class. Execute the documented Bash block against a mocked `oc` to cover mixed binding modes, zero general defaults, delayed PVC creation, consumer-before-wait ordering, and failure propagation.
+
+## 1.27.0
+
+- The RGW page's ObjectBucket check requires `claimRef.namespace` `odf-rgw-smoke` and `claimRef.name` `odf-obc`, and exits before cleanup when that claim is missing.
+- Smoke cleanup with `--object` matches ObjectBucket `claimRef.namespace` exactly. A bucket whose name only contains the namespace string is not a leftover.
+- VM verification reads the selected StorageClass without waiting for a plain PVC to bind. The bind wait is only for a provisioning check, and a `WaitForFirstConsumer` plain PVC needs its own pod.
+
+## 1.26.0
+
+- The smoke cleanup script polls the PV claim check for `CLEANUP_PV_WAIT_SECONDS` (default 120) instead of reading once, because the PV check has to wait out Delete reclaim after the namespace is gone. It fails only when a claiming PV is still present at the deadline and names a `Retain` reclaim policy when that is the cause. `0` means one check.
+
+## 1.25.0
+
+- Add a VM StorageProfile runbook for `ocs-storagecluster-ceph-rbd` and `ocs-storagecluster-cephfs`, including the virt-class annotation, block-first claim property sets, and the LVMS re-pin. Verification uses `odf-vm-smoke` and the smoke cleanup script.
+
+## 1.24.0
+
+- The RGW page's ObjectBucket listing now fails when the query fails or the smoke bucket is missing. `grep || true` was hiding both.
+
+## 1.23.0
+
+Block and file smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. Object smoke already deleted its namespace; the RGW check in `references/object-mcg-rgw.md` did not.
+
+- **A finished smoke namespace is deleted.** `scripts/cleanup_smoke_namespace.sh` deletes a `*-smoke` namespace, waits, and fails if the namespace remains or a PV still claims it. With `--object`, it also fails when an ObjectBucket still names that namespace. Any other namespace, including `openshift-storage`, is refused.
+- Block and file validation, the RBD and CephFS pool smokes, and the RGW test namespace `odf-rgw-smoke` run that cleanup after the check. The object smoke uses the same script with `--object`.
+
 ## 1.22.0
 
 SSDs and NVMe devices often support a media-key change, a sanitize block erase, or neither. ODF's `cleanup-policy=delete` job only wipes OSD metadata, so it does not replace a controller erase.

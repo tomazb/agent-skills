@@ -1,5 +1,77 @@
 # Changelog
 
+## 1.18.7
+
+- Keep private CA bundles in a separate `rgw-smoke-private-ca` ConfigMap and select the Pod's CA source with `RGW_TLS_CA_CONFIGMAP`. The private flow no longer deletes or edits the service-CA-injected ConfigMap, including when input or apply fails. Stateful execution tests verify both ConfigMaps and the Pod's selected source.
+
+## 1.18.6
+
+- Render the private-CA ConfigMap with a client dry run before deleting the existing smoke ConfigMap. Missing or unreadable input now preserves the working trust configuration. Execute the documented sequence for successful replacement, failed deletion, and both file-read failures.
+
+## 1.18.5
+
+- Replace the throwaway CA ConfigMap before creating a private bundle, removing any service-CA injection annotation when switching trust sources. Stop if replacement fails, and require recreating the smoke Pod. Execute the private-CA block against a stateful mocked `oc` for successful replacement and deletion failure.
+
+## 1.18.4
+
+- Pass the selected `RGW_TLS_CA` into the RGW smoke Pod, defaulting to public trust. Mount an optional CA ConfigMap and provide preparation commands for injected service CAs and private CA bundles. The service-CA client path now matches that mount.
+- Execute the Pod creation block and S3 script against mocked external boundaries for public HTTPS, service-CA HTTPS, private-CA HTTPS, and HTTP. Check the emitted trust configuration and S3 client verification arguments.
+
+## 1.18.3
+
+- Limit direct RGW HTTP smoke traffic to trusted in-cluster pod-to-gateway networks. Require HTTPS for untrusted paths, document pod TLS with `securePort: 8443` and `gateway.sslCertificateRef`, and retain edge termination when its backend HTTP hop is trusted.
+
+## 1.18.2
+
+- Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.
+- Wait for the RGW OBC to bind, then validate the ObjectBucket's exact smoke namespace and claim name before continuing to the route and S3 checks. Stop on a failed query or mismatched claim reference; execute the documented block against a mocked `oc` and `curl` to cover both.
+
+## 1.18.1
+
+- VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.
+- Plain-PVC provisioning stays independent: skip its bind wait with zero general defaults, and create its own consumer Pod for `WaitForFirstConsumer`. Verification stops on failed queries, consumer creation, VM patches, or waits.
+- Wait for CDI to create the DataVolume PVC before querying its selected class. Execute the documented Bash block against a mocked `oc` to cover mixed binding modes, zero general defaults, delayed PVC creation, consumer-before-wait ordering, and failure propagation.
+
+## 1.18.0
+
+- The VM provisioning example waits for the plain PVC only when a general default was selected. With no default it reports `Pending` and continues. `WaitForFirstConsumer` applies a pod that mounts `default-sc-test-pvc` before that wait. The DataVolume readiness check still runs.
+
+## 1.17.0
+
+- VM verification reads the selected StorageClass without waiting for a plain PVC to bind. Zero general defaults stay a valid policy. A `WaitForFirstConsumer` plain PVC needs its own pod; starting the test VM does not consume it.
+
+## 1.16.0
+
+- Smoke cleanup with `--object` matches ObjectBucket `claimRef.namespace` exactly. A bucket whose name only contains the namespace string is not a leftover.
+- RGW HTTPS smoke selects trust with `RGW_TLS_CA`: `service-ca` for an OpenShift serving certificate, `public` for a publicly trusted certificate, or a mounted bundle path for a private CA. Verification stays enabled.
+
+## 1.15.0
+
+- The smoke cleanup script polls the PV claim check for `CLEANUP_PV_WAIT_SECONDS` (default 120) instead of reading once, because the PV check has to wait out Delete reclaim after the namespace is gone. It fails only when a claiming PV is still present at the deadline and names a `Retain` reclaim policy when that is the cause. `0` means one check.
+- The RGW smoke runbook now includes the restricted-profile pod in `rook-rgw-smoke` that runs the S3 PUT/GET, with `envFrom` on `rook-ceph-obc`.
+- The AES256K probe lists its three outcomes (success, scheduling or startup failure, key or mapping failure), and success-path cleanup is a separate step after the write and `/dev/rbd` mount are recorded.
+
+## 1.14.0
+
+- The VM default verification namespace is `rook-vm-smoke` and is deleted with `scripts/cleanup_smoke_namespace.sh`.
+
+## 1.13.0
+
+- Rook RGW smoke now PUTs and GETs an object before deleting `rook-rgw-smoke`. A Bound claim is provisioning only. HTTP port 8080 stays plain HTTP; `service-ca.crt` is used only for 443 and 8443.
+
+## 1.12.0
+
+- Scope the smoke checklist and the post-reboot list so "one default StorageClass" applies only when defaulting is expected. Zero defaults stay a valid policy.
+- Stop listing host networking and stretch clusters in the skill description until a runbook exists.
+
+## 1.11.0
+
+Smoke flows created a namespace and stopped after the write. The writer restarts after `sleep 3600`, so a passing test kept its volume. The AES256K probe deleted its namespace only on the success path, and the key-rotation path said to delete the probe without a command.
+
+- **A finished smoke namespace is deleted.** `scripts/cleanup_smoke_namespace.sh` deletes a `*-smoke` namespace or `rook-rbd-aes256k-probe`, waits, and fails if the namespace remains or a PV still claims it. With `--object`, it also fails when an ObjectBucket still names that namespace. Any other namespace is refused.
+- Block and file validation, the RBD pool smoke, and the CephFS validation pointer run that cleanup after the write. The RGW test claim is created in `rook-rgw-smoke` and deleted with `--object`.
+- The AES256K probe uses the same cleanup after a recorded success. A startup failure deletes the probe once its events are recorded. A key-mapping failure keeps the probe until the CSI key rotation finishes, then deletes it.
+
 ## 1.10.0
 
 Installs probe AES256K and keep it when a real RBD volume mounts. The previous guidance pinned Squid `v19.2.2` for every Rook v1.20 / ceph-csi v3.17 cluster.

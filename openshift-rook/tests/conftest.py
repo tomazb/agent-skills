@@ -90,6 +90,20 @@ Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder man
 
 Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
 
+oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
+oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc
+scheme = "https" if port in ("443", "8443") else "http"
+s3.put_object
+rook-rgw-smoke-ok
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+oc -n rook-rbd-aes256k-probe describe pod rbd-smoke-writer
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+Then delete the probe namespace
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-aes256k-probe
+
 Run `bash scripts/post_uninstall_audit.sh` after uninstall.
 
 Gate the uninstall with `scripts/classify_ceph_ownership.sh`; follow **Orphans After An Interrupted Uninstall** (restart the kubelet on that node, never delete the volume directory under a running kubelet) and **Cluster RBAC left by Rook**.
@@ -107,6 +121,13 @@ BlueStore label cleanup: `wipefs -af` and `sgdisk --zap-all` are not sufficient.
 If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 
 VM storage defaults: set `storageclass.kubevirt.io/is-default-virt-class` for the CDI/KubeVirt virtualization default, keep `storageclass.kubernetes.io/is-default-class` for the general default, and configure StorageProfile `claimPropertySets` (`ReadWriteMany` + `volumeMode: Block` for RBD, `Filesystem` for CephFS/NFS). Resolve `CDIStorageProfilesIncomplete` for an `UnrecognizedProvisioner` by setting `spec.claimPropertySets`. When moving a default off an LVMS class, set `LVMCluster.spec.storage.deviceClasses[].default: false` because the operator re-pins the annotation.
+
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke
+
+## Smoke Test
+`oc get sc` shows exactly one default StorageClass when defaulting is expected.
+## Post-Reboot Drift
+one default if defaulting is expected
 """
 
 SKILL_TEMPLATE = """\
@@ -147,7 +168,7 @@ Input guidance.
 
 ## Output Expectations
 
-Output guidance.
+Output guidance. After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`.
 """
 
 
@@ -207,6 +228,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "classify_ceph_ownership.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")

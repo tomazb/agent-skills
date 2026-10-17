@@ -36,9 +36,11 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 - write/read succeeds.
 - RBD/CephFS volume is healthy.
 - replica count matches SNO or multi-node policy.
-- `oc get sc` shows exactly one default StorageClass.
+- `oc get sc` shows exactly one default StorageClass when defaulting is expected. Zero defaults are legitimate when that is the cluster policy; a PVC that omits `storageClassName` then stays Pending.
 
 Use unique smoke namespaces per mode, for example `rook-rbd-smoke` and `rook-cephfs-smoke`, so cleanup and audit commands are unambiguous.
+
+After the write is recorded, delete that namespace with `scripts/cleanup_smoke_namespace.sh`. The writer command is `sleep 3600` and the pod restarts, so a passing test keeps its volume until this command runs. The script waits for the namespace to disappear and fails if a PV still claims it. It only deletes a `*-smoke` namespace or `rook-rbd-aes256k-probe`. If a step fails, record the pod events, then run the same cleanup. A finished smoke does not stay on the cluster.
 
 Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py` output):
 
@@ -52,6 +54,7 @@ python3 scripts/render_smoke_manifest.py \
 oc apply -f /tmp/rook-rbd-smoke.yaml
 oc -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
 ```
 
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
@@ -66,9 +69,10 @@ python3 scripts/render_smoke_manifest.py \
 oc apply -f /tmp/rook-cephfs-smoke.yaml
 oc -n rook-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
 ```
 
-If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it.
+If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it. That asset uses namespace `rook-smoke`. Delete it with `bash scripts/cleanup_smoke_namespace.sh --namespace rook-smoke`.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
@@ -100,7 +104,7 @@ After a node reboot, check:
 - RGW gateways are running (if object store is used).
 - Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
-- One default StorageClass remains.
+- The default-StorageClass situation is unchanged from before the reboot — one default if defaulting is expected, still none if that was the intended policy.
 - MachineConfigs have been applied and MCP is `Updated`.
 
 ## Hardening

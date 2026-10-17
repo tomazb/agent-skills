@@ -136,7 +136,7 @@ If an OpenShift Route was deployed (see the TLS and Ingress section below), also
 oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
-Create a test OBC, verify:
+Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that namespace. Verify:
 
 - OBC is `Bound`.
 - Secret with S3 credentials is created.
@@ -145,15 +145,167 @@ Create a test OBC, verify:
 - The RGW Route returns an HTTP response from `Ceph Object Gateway`
   (for example `200`, `403`, or `405`) instead of a TLS or connection failure.
 
-Example checks:
-
 ```bash
+(
+set -euo pipefail
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rook-rgw-smoke
+---
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: rook-ceph-obc
+  namespace: rook-rgw-smoke
+spec:
+  generateBucketName: my-bucket
+  storageClassName: rook-ceph-rgw-obc
+EOF
+oc wait -n rook-rgw-smoke objectbucketclaim/rook-ceph-obc \
+  --for=jsonpath='{.status.phase}'=Bound --timeout=300s
 oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc -o wide
 oc -n rook-rgw-smoke get secret rook-ceph-obc
 oc -n rook-rgw-smoke get configmap rook-ceph-obc
-oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
+claim_ref=$(oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc \
+  -o jsonpath='{.spec.claimRef.namespace}/{.spec.claimRef.name}')
+if [ "$claim_ref" != "rook-rgw-smoke/rook-ceph-obc" ]; then
+  printf 'ObjectBucket claims %s; expected rook-rgw-smoke/rook-ceph-obc\n' "$claim_ref" >&2
+  exit 1
+fi
 curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
+)
 ```
+
+Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The default gateway listens on HTTP port 8080. Use `http` for `80` and `8080` only when pod-to-gateway traffic stays on a trusted in-cluster network. For an untrusted path, require an HTTPS endpoint. RGW pod termination needs `securePort: 8443` and `gateway.sslCertificateRef`, as shown in the TLS section below. An edge-terminated HTTPS Route remains valid when its router-to-RGW HTTP hop is trusted. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses an injected service CA mounted into the pod, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
+
+Choose one trust source before creating the pod. The Pod block below expands `RGW_TLS_CA` and `RGW_TLS_CA_CONFIGMAP` from your shell. It defaults to public trust and the optional `rgw-smoke-ca` ConfigMap, mounted at `/etc/rgw-ca`. Private CAs use the separate `rgw-smoke-private-ca` ConfigMap.
+
+For HTTP on a trusted network or HTTPS with a publicly trusted certificate, use the image trust store. No CA ConfigMap is needed:
+
+```bash
+export RGW_TLS_CA=public
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-ca
+```
+
+For an OpenShift service serving certificate, inject the service CA and wait for its key before creating the pod ([OpenShift service CA injection](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/security_and_compliance/configuring-certificates)):
+
+```bash
+export RGW_TLS_CA=service-ca
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-ca
+(
+set -euo pipefail
+oc apply -n rook-rgw-smoke -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rgw-smoke-ca
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+EOF
+oc wait -n rook-rgw-smoke configmap/rgw-smoke-ca \
+  --for=jsonpath='{.data.service-ca\.crt}' --timeout=120s
+)
+```
+
+For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use the separate private-CA ConfigMap below rather than changing the service-CA-injected ConfigMap. The block reads and renders the private bundle locally before applying it. File-read or private-apply failures leave `rgw-smoke-ca` untouched, and the private flow does not enable service-CA injection. Recreate the smoke Pod afterward so it mounts the selected ConfigMap:
+
+```bash
+export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-private-ca
+(
+set -euo pipefail
+private_ca_manifest=$(oc create configmap rgw-smoke-private-ca -n rook-rgw-smoke \
+  --from-file=ca-bundle.crt=/path/to/ca-bundle.pem --dry-run=client -o yaml)
+printf '%s\n' "$private_ca_manifest" | oc apply -n rook-rgw-smoke -f -
+)
+```
+
+Proceed only after the chosen preparation succeeds. Recreate the throwaway Pod after changing its environment or mounts. Create it in `rook-rgw-smoke`; it runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
+
+```bash
+oc apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: rgw-smoke
+  namespace: rook-rgw-smoke
+spec:
+  containers:
+  - name: s3
+    image: registry.access.redhat.com/ubi9/python-311
+    command: ["sleep", "3600"]
+    env:
+    - name: HOME
+      value: /tmp
+    - name: RGW_TLS_CA
+      value: "${RGW_TLS_CA:-public}"
+    envFrom:
+    - configMapRef:
+        name: rook-ceph-obc
+    - secretRef:
+        name: rook-ceph-obc
+    volumeMounts:
+    - name: rgw-ca
+      mountPath: /etc/rgw-ca
+      readOnly: true
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+  volumes:
+  - name: rgw-ca
+    configMap:
+      name: "${RGW_TLS_CA_CONFIGMAP:-rgw-smoke-ca}"
+      optional: true
+EOF
+oc -n rook-rgw-smoke wait pod/rgw-smoke --for=condition=Ready --timeout=5m
+oc -n rook-rgw-smoke exec rgw-smoke -- pip install --user boto3
+```
+
+`registry.access.redhat.com/ubi9/python-311` needs `pip install boto3`, which needs egress. A disconnected cluster needs a mirrored image that already has an S3 client; replace `image` and skip the `pip install` line. Save the script below as `smoke.py` and run it with `oc -n rook-rgw-smoke exec -i rgw-smoke -- python3 - < smoke.py`.
+
+```python
+import boto3, os
+host = os.environ["BUCKET_HOST"].rstrip("/")
+port = os.environ["BUCKET_PORT"]
+if "://" not in host:
+    scheme = "https" if port in ("443", "8443") else "http"
+    host = scheme + "://" + host
+ep = "%s:%s" % (host, port)
+kwargs = dict(
+    endpoint_url=ep,
+    aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+    aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+)
+if host.startswith("https://"):
+    ca = os.environ.get("RGW_TLS_CA", "")
+    if ca == "service-ca":
+        kwargs["verify"] = "/etc/rgw-ca/service-ca.crt"
+    elif ca == "public":
+        pass
+    elif ca.startswith("/"):
+        kwargs["verify"] = ca
+    else:
+        raise SystemExit("set RGW_TLS_CA to service-ca, public, or a mounted CA bundle path")
+s3 = boto3.client("s3", **kwargs)
+b = os.environ["BUCKET_NAME"]
+s3.put_object(Bucket=b, Key="smoke-probe", Body=b"rook-rgw-smoke-ok")
+assert s3.get_object(Bucket=b, Key="smoke-probe")["Body"].read() == b"rook-rgw-smoke-ok"
+s3.delete_object(Bucket=b, Key="smoke-probe")
+```
+
+Any S3 client is enough; the check is that the PUT is readable back by GET. After the GET matches, run the existing cleanup:
+
+```bash
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-rgw-smoke --object
+```
+
+`--object` fails the cleanup when an ObjectBucket `claimRef` still names `rook-rgw-smoke`. Deleting the namespace does not by itself prove the bucket object is gone.
 
 ## TLS and Ingress
 
@@ -163,7 +315,9 @@ On OpenShift, expose RGW through a Route. The RGW service exposes a port named
 ### Edge termination (simplest — RGW stays HTTP)
 
 The Route terminates TLS at the edge and talks plain HTTP (`port: 8080`) to the
-RGW service. No certificate or `securePort` is needed on the RGW pod.
+RGW service. No certificate or `securePort` is needed on the RGW pod. Use this
+pattern only when the router-to-RGW network is trusted; an untrusted backend
+path needs pod TLS with passthrough or reencrypt termination.
 
 ```yaml
 apiVersion: route.openshift.io/v1

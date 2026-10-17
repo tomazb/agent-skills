@@ -22,6 +22,7 @@ EXPECTED_REFERENCES = [
     "references/validation-hardening.md",
     "references/validated-odf-sno.md",
     "references/console-plugin.md",
+    "references/vm-storage-profiles.md",
 ]
 
 REQUIRED_FILES = [
@@ -34,6 +35,7 @@ REQUIRED_FILES = [
     "scripts/render_storagecluster.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
     "scripts/render_console_plugin_patch.py",
     "tools/validate_skill_package.py",
@@ -632,6 +634,62 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "python3 scripts/render_smoke_manifest.py",
         ],
     )
+    require_order(
+        "references/validation-hardening.md",
+        "smoke namespace cleanup",
+        [
+            "python3 scripts/render_smoke_manifest.py",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object",
+        ],
+    )
+    require_order(
+        "references/block-rbd.md",
+        "RBD smoke cleanup",
+        [
+            "oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke",
+        ],
+    )
+    require_order(
+        "references/cephfs-filesystem.md",
+        "CephFS smoke cleanup",
+        [
+            "oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke",
+        ],
+    )
+    require_order(
+        "references/object-mcg-rgw.md",
+        "RGW smoke cleanup",
+        [
+            "oc -n odf-rgw-smoke get objectbucketclaim odf-obc",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object",
+        ],
+    )
+    require_order(
+        "references/vm-storage-profiles.md",
+        "VM StorageProfile guidance",
+        [
+            "storageclass.kubernetes.io/is-default-class",
+            "storageclass.kubevirt.io/is-default-virt-class",
+            "ocs-storagecluster-ceph-rbd",
+            "volumeMode: Block",
+            "openshift-storage.rbd.csi.ceph.com",
+            "ocs-storagecluster-cephfs",
+            "LVMCluster.spec.storage.deviceClasses[].default",
+            "odf-vm-smoke",
+            "bash scripts/cleanup_smoke_namespace.sh --namespace odf-vm-smoke",
+        ],
+    )
+    require(
+        "SKILL.md",
+        "smoke namespace cleanup",
+        [
+            "scripts/cleanup_smoke_namespace.sh",
+        ],
+    )
     require(
         "references/validated-odf-sno.md",
         "validated SNO evidence",
@@ -783,6 +841,8 @@ def check_skill_file(root: Path) -> list[str]:
         issues.append("SKILL.md: missing validated ODF SNO routing guidance.")
     if "references/console-plugin.md" not in skill_text:
         issues.append("SKILL.md: missing console plugin routing guidance.")
+    if "references/vm-storage-profiles.md" not in skill_text:
+        issues.append("SKILL.md: missing VM StorageProfile routing guidance.")
     return issues
 
 

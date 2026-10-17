@@ -75,7 +75,10 @@ Minimum smoke flow (pod name `cephfs-smoke-writer` matches `scripts/render_smoke
 oc apply -f /tmp/odf-cephfs-smoke.yaml
 oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
 oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
 ```
+
+The cleanup command is the end of the smoke. It deletes `odf-cephfs-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 

@@ -12,12 +12,10 @@ Guards three things the run surfaced:
 
 from __future__ import annotations
 
+import os
 import re
-import shutil
 import subprocess
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 REFERENCES = REPO_ROOT / "openshift-odf" / "references"
@@ -129,14 +127,15 @@ def test_object_smoke_uses_a_dedicated_disposable_namespace():
         "a placeholder namespace plus a namespace delete is a footgun: the "
         "reader can point it at a live application namespace"
     )
-    delete_lines = [
-        line for line in section.splitlines() if "delete namespace" in line
+    cleanup_lines = [
+        line
+        for line in section.splitlines()
+        if "cleanup_smoke_namespace.sh" in line and "odf-object-smoke" in line
     ]
-    assert delete_lines, "the object smoke flow must clean up after itself"
-    for line in delete_lines:
-        assert "odf-object-smoke" in line, (
-            f"cleanup must delete only the dedicated smoke namespace: {line.strip()}"
-        )
+    assert cleanup_lines, "the object smoke flow must delete odf-object-smoke"
+    assert any("--object" in line for line in cleanup_lines), (
+        "object cleanup must also fail when an ObjectBucket still names the namespace"
+    )
 
 
 def test_object_smoke_exercises_the_s3_data_path():
@@ -175,52 +174,66 @@ def test_object_smoke_exercises_the_s3_data_path():
     )
 
 
-def test_object_cleanup_check_can_actually_fail():
-    """`... | grep X || echo ok` reports success whether or not X is found.
+def test_object_cleanup_check_can_actually_fail(tmp_path):
+    """The object smoke must call the cleanup script, which can fail.
 
-    grep exits 0 when it finds a leftover, so the leftover path and the clean
-    path both look like success, and a failing `oc get` is masked by the pipe.
-    A verification step that cannot fail is not a verification step.
+    `... | grep X || echo ok` reports success whether or not X is found, and a
+    failing `oc get` is masked by the pipe. The runbook's cleanup command is
+    the script, so this runs that command against a stub `oc`.
     """
-    bash_path = shutil.which("bash")
-    if bash_path is None:
-        pytest.skip("bash not available")
-
     section = _object_section(_validation_text())
-    blocks = [
-        b for b in re.findall(r"```bash\n(.*?)```", section, flags=re.DOTALL)
-        if "objectbucket" in b
-    ]
-    assert blocks, "expected a fenced cleanup block querying objectbucket"
-    cleanup = blocks[-1]
+    command = "bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object"
+    assert command in section, "object smoke must delete odf-object-smoke with --object"
+    assert "|| echo ok" not in section
 
-    def run(stub: str) -> subprocess.CompletedProcess[str]:
+    script = REPO_ROOT / "openshift-odf" / "scripts" / "cleanup_smoke_namespace.sh"
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    oc = bindir / "oc"
+    oc.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *"get objectbucket"*) printf %s "$OC_BUCKETS"; exit "${OC_BUCKET_RC:-0}" ;;\n'
+        '  *"get namespaces"*) printf %s\\n namespace/default; exit 0 ;;\n'
+        '  *"get pv"*) printf %s \'{"items":[]}\'; exit 0 ;;\n'
+        '  "delete namespace "*) exit 0 ;;\n'
+        '  *) echo "unexpected oc $*" >&2; exit 99 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    oc.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = str(bindir) + os.pathsep + env.get("PATH", "")
+
+    def run(**extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            [bash_path, "-c", stub + "\n" + cleanup],
-            capture_output=True, text=True, check=False,
+            ["/bin/bash", str(script), "--namespace", "odf-object-smoke", "--object"],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**env, **extra},
         )
 
-    # Clean cluster: the query succeeds and nothing matches.
     clean = run(
-        'oc() { case "$*" in *"get objectbucket"*) '
-        "printf '%s\\n' objectbucket/unrelated ;; *) : ;; esac; }"
+        OC_BUCKETS=(
+            '{"items":[{"metadata":{"name":"obc-unrelated"},'
+            '"spec":{"claimRef":{"namespace":"other","name":"c"}}}]}'
+        )
     )
     assert clean.returncode == 0, clean.stderr
-    assert "no leftover ObjectBuckets" in clean.stdout
+    assert "deleted smoke namespace odf-object-smoke" in clean.stdout
 
-    # The query itself fails: cleanup is unverified, so this must not pass.
-    failed_query = run(
-        'oc() { case "$*" in *"get objectbucket"*) return 1 ;; *) : ;; esac; }'
-    )
+    failed_query = run(OC_BUCKET_RC="1")
     assert failed_query.returncode != 0, (
         "a failed objectbucket query leaves cleanup unverified and must not "
         "report success"
     )
 
-    # A leftover bucket survived the claim.
     leftover = run(
-        'oc() { case "$*" in *"get objectbucket"*) '
-        "printf '%s\\n' objectbucket/odf-object-smoke-abc123 ;; *) : ;; esac; }"
+        OC_BUCKETS=(
+            '{"items":[{"metadata":{"name":"obc-odf-object-smoke-abc123"},'
+            '"spec":{"claimRef":{"namespace":"odf-object-smoke","name":"object-smoke-obc"}}}]}'
+        )
     )
     assert leftover.returncode != 0, (
         "a surviving ObjectBucket must fail the cleanup verification"
@@ -228,3 +241,83 @@ def test_object_cleanup_check_can_actually_fail():
     assert "odf-object-smoke-abc123" in leftover.stderr + leftover.stdout, (
         "name the leftover so the operator knows what to remove"
     )
+
+    collision = run(
+        OC_BUCKETS=(
+            '{"items":[{"metadata":{"name":"obc-team-odf-object-smoke-x"},'
+            '"spec":{"claimRef":{"namespace":"team-odf-object-smoke","name":"x"}}}]}'
+        )
+    )
+    assert collision.returncode == 0, collision.stderr
+
+
+def test_rgw_page_missing_bucket_stops_before_cleanup(tmp_path):
+    text = (
+        REPO_ROOT / "openshift-odf" / "references" / "object-mcg-rgw.md"
+    ).read_text()
+    assert "|| true" not in text
+    assert "|| echo ok" not in text
+    start = text.index('buckets="$(oc get objectbucket -o json)"')
+    cleanup = "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object"
+    cleanup_at = text.index(cleanup, start)
+    check = text[start:cleanup_at]
+    assert 'claim.get("namespace") == "odf-rgw-smoke"' in check
+    assert 'claim.get("name") == "odf-obc"' in check
+    assert "|| exit 1" in check
+
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    log = tmp_path / "oc.log"
+    oc = bindir / "oc"
+    oc.write_text(
+        "#!/bin/sh\n"
+        'printf "%s\\n" "$*" >> "$OC_LOG"\n'
+        'case "$*" in\n'
+        '  *"get objectbucket"*) printf %s "$OC_BUCKETS"; exit "${OC_BUCKET_RC:-0}" ;;\n'
+        '  *"get namespaces"*) printf %s\\n namespace/default; exit 0 ;;\n'
+        '  *"get pv"*) printf %s \'{"items":[]}\'; exit 0 ;;\n'
+        '  *"get objectbucketclaim"*|*"get secret"*|*"get configmap"*) exit 0 ;;\n'
+        '  "delete namespace "*) exit 0 ;;\n'
+        '  *) echo "unexpected oc $*" >&2; exit 99 ;;\n'
+        "esac\n",
+        encoding="utf-8",
+    )
+    oc.chmod(0o755)
+    script = REPO_ROOT / "openshift-odf" / "scripts" / "cleanup_smoke_namespace.sh"
+    env = os.environ.copy()
+    env["PATH"] = str(bindir) + os.pathsep + str(script.parent) + os.pathsep + env.get("PATH", "")
+    env["OC_LOG"] = str(log)
+    block = (
+        "cd " + str(script.parent.parent) + "\n"
+        + check
+        + cleanup
+        + "\n"
+    )
+
+    def run(buckets: str) -> subprocess.CompletedProcess[str]:
+        log.write_text("", encoding="utf-8")
+        return subprocess.run(
+            ["/bin/bash", "-c", block],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={**env, "OC_BUCKETS": buckets},
+        )
+
+    missing = run('{"items":[]}')
+    assert missing.returncode != 0, missing.stderr
+    assert "delete namespace" not in log.read_text(encoding="utf-8")
+
+    other_namespace = run(
+        '{"items":[{"metadata":{"name":"obc-team-odf-rgw-smoke-obc"},'
+        '"spec":{"claimRef":{"namespace":"team-odf-rgw-smoke","name":"odf-obc"}}}]}'
+    )
+    assert other_namespace.returncode != 0, other_namespace.stderr
+    assert "delete namespace" not in log.read_text(encoding="utf-8")
+
+    present = run(
+        '{"items":[{"metadata":{"name":"obc-odf-rgw-smoke-odf-obc"},'
+        '"spec":{"claimRef":{"namespace":"odf-rgw-smoke","name":"odf-obc"}}}]}'
+    )
+    assert "delete namespace" in log.read_text(encoding="utf-8")
+    assert present.returncode != 0

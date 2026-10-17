@@ -99,6 +99,12 @@ Create a test PVC and pod. Confirm:
 - MDS is in `active` state.
 - `oc get sc` shows exactly one default StorageClass when defaulting is expected.
 
+Use the CephFS smoke flow in `references/validation-hardening.md`. After the write is recorded, that flow deletes the smoke namespace:
+
+```bash
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
+```
+
 ## Snapshot Support
 
 Enable CephFS snapshot support by creating a `VolumeSnapshotClass`:
