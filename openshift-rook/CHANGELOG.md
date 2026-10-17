@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18.1
+
+- VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.
+- Plain-PVC provisioning stays independent: skip its bind wait with zero general defaults, and create its own consumer Pod for `WaitForFirstConsumer`. Verification stops on failed queries, consumer creation, VM patches, or waits.
+- Wait for CDI to create the DataVolume PVC before querying its selected class. Execute the documented Bash block against a mocked `oc` to cover mixed binding modes, zero general defaults, delayed PVC creation, consumer-before-wait ordering, and failure propagation.
+
 ## 1.18.0
 
 - The VM provisioning example waits for the plain PVC only when a general default was selected. With no default it reports `Pending` and continues. `WaitForFirstConsumer` applies a pod that mounts `default-sc-test-pvc` before that wait. The DataVolume readiness check still runs.

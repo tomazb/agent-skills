@@ -166,13 +166,60 @@ oc -n odf-vm-smoke get pvc default-sc-test-dv -o jsonpath='sc={.spec.storageClas
 
 When a general default exists, the plain PVC's `storageClassName` is that class. Skip the plain PVC bind wait when no general default is expected: `storageClassName` stays empty and the phase stays `Pending`, which is that policy. Expect the DataVolume PVC on the virt default with the StorageProfile's first set: `ocs-storagecluster-ceph-rbd`, `Block`, `ReadWriteMany` when RBD is the VM default.
 
-Prove provisioning only when a default is expected and a bound volume is required. `volumeBindingMode: WaitForFirstConsumer` leaves a PVC Pending until a pod is scheduled. The test VM uses its DataVolume, not `default-sc-test-pvc`, so starting the VM or setting `cdi.kubevirt.io/storage.bind.immediate.requested` on the DataVolume does not consume the plain PVC. For the plain PVC, add a pod that mounts `default-sc-test-pvc` before waiting. For the DataVolume, either set `running: true` on the test VM or set that annotation, then wait.
+Prove provisioning only when a default is expected and a bound volume is required. `volumeBindingMode: Immediate` is the ODF Ceph default. `WaitForFirstConsumer` (the LVMS default) leaves a PVC Pending until a pod is scheduled. The test VM uses its DataVolume, not `default-sc-test-pvc`, so starting the VM or setting `cdi.kubevirt.io/storage.bind.immediate.requested` on the DataVolume does not consume the plain PVC. For the plain PVC, add a pod that mounts `default-sc-test-pvc` before waiting.
 
-If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, poll `.status.phase` until it is `Bound`:
+For the DataVolume, inspect its own selected class and start the test VM only for `WaitForFirstConsumer`, before waiting for CDI readiness. The block below patches the existing `kubevirt.io/v1` VM's `spec.running` field; do not add the mutually exclusive `runStrategy` field. KubeVirt creates a temporary first-consumer pod with the VM's placement constraints before launching the guest, as implemented in [KubeVirt 1.6](https://github.com/kubevirt/kubevirt/blob/v1.6.0/pkg/virt-controller/watch/vmi/lifecycle.go). `Immediate` leaves the VM stopped. The blank disk need not boot an OS for this storage check. See [KubeVirt running semantics](https://kubevirt.io/user-guide/compute/run_strategies/) and [CDI first-consumer handling](https://github.com/kubevirt/containerized-data-importer/blob/main/doc/waitforfirstconsumer-storage-handling.md).
+
+If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
+
+The DataVolume wait runs after its binding trigger when needed. The plain-PVC wait runs only when a general default was selected. Its `WaitForFirstConsumer` pod mounts only `default-sc-test-pvc`; the VM consumes only the DataVolume. Run this block in Bash with an [OpenShift 4.20 CLI](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/cli_tools/index) or another client supporting `oc wait --for=create`. CDI creates the DataVolume PVC asynchronously, so wait for it to exist before reading its class. A failed query, consumer creation, VM patch, or wait stops verification.
 
 ```bash
-oc wait -n odf-vm-smoke pvc/default-sc-test-pvc \
-  --for=jsonpath='{.status.phase}'=Bound --timeout=120s
+set -euo pipefail
+sc=$(oc -n odf-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.spec.storageClassName}')
+phase=$(oc -n odf-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.status.phase}')
+if [ -z "$sc" ]; then
+  printf 'plain PVC has no storageClassName and is %s; Pending is expected when no general default exists\n' "$phase"
+else
+  mode=$(oc -n odf-vm-smoke get sc "$sc" -o jsonpath='{.volumeBindingMode}')
+  if [ "$mode" = "WaitForFirstConsumer" ]; then
+    oc apply -n odf-vm-smoke -f - <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: default-sc-test-consumer
+  namespace: odf-vm-smoke
+spec:
+  restartPolicy: Never
+  containers:
+  - name: consumer
+    image: registry.access.redhat.com/ubi9/ubi
+    command: ["sleep", "3600"]
+    volumeMounts:
+    - name: data
+      mountPath: /data
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      capabilities:
+        drop: ["ALL"]
+      seccompProfile:
+        type: RuntimeDefault
+  volumes:
+  - name: data
+    persistentVolumeClaim:
+      claimName: default-sc-test-pvc
+EOF
+  fi
+  oc wait -n odf-vm-smoke pvc/default-sc-test-pvc \
+    --for=jsonpath='{.status.phase}'=Bound --timeout=120s
+fi
+oc wait -n odf-vm-smoke pvc/default-sc-test-dv --for=create --timeout=120s
+dv_sc=$(oc -n odf-vm-smoke get pvc default-sc-test-dv -o jsonpath='{.spec.storageClassName}')
+dv_mode=$(oc -n odf-vm-smoke get sc "$dv_sc" -o jsonpath='{.volumeBindingMode}')
+if [ "$dv_mode" = "WaitForFirstConsumer" ]; then
+  oc patch -n odf-vm-smoke vm default-sc-test-vm --type=merge -p '{"spec":{"running":true}}'
+fi
 oc wait -n odf-vm-smoke datavolume/default-sc-test-dv \
   --for=condition=Ready --timeout=300s
 ```

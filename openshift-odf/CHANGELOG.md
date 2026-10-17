@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.1
+
+- VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.
+- Plain-PVC provisioning stays independent: skip its bind wait with zero general defaults, and create its own consumer Pod for `WaitForFirstConsumer`. Verification stops on failed queries, consumer creation, VM patches, or waits.
+- Wait for CDI to create the DataVolume PVC before querying its selected class. Execute the documented Bash block against a mocked `oc` to cover mixed binding modes, zero general defaults, delayed PVC creation, consumer-before-wait ordering, and failure propagation.
+
 ## 1.27.0
 
 - The RGW page's ObjectBucket check requires `claimRef.namespace` `odf-rgw-smoke` and `claimRef.name` `odf-obc`, and exits before cleanup when that claim is missing.
