@@ -207,12 +207,16 @@ oc wait -n rook-rgw-smoke configmap/rgw-smoke-ca \
 )
 ```
 
-For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use this alternative instead of the injected ConfigMap:
+For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use this alternative instead of the injected ConfigMap. When switching from the service CA, delete the existing throwaway ConfigMap first so its injection annotation cannot overwrite the private bundle. The block below replaces that ConfigMap; recreate the smoke Pod afterward:
 
 ```bash
 export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt
+(
+set -euo pipefail
+oc delete configmap rgw-smoke-ca -n rook-rgw-smoke --ignore-not-found
 oc create configmap rgw-smoke-ca -n rook-rgw-smoke \
   --from-file=ca-bundle.crt=/path/to/ca-bundle.pem
+)
 ```
 
 Proceed only after the chosen preparation succeeds. Recreate the throwaway Pod after changing its environment or mounts. Create it in `rook-rgw-smoke`; it runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:

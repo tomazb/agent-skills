@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.5
+
+- Replace the throwaway CA ConfigMap before creating a private bundle, removing any service-CA injection annotation when switching trust sources. Stop if replacement fails, and require recreating the smoke Pod. Execute the private-CA block against a stateful mocked `oc` for successful replacement and deletion failure.
+
 ## 1.18.4
 
 - Pass the selected `RGW_TLS_CA` into the RGW smoke Pod, defaulting to public trust. Mount an optional CA ConfigMap and provide preparation commands for injected service CAs and private CA bundles. The service-CA client path now matches that mount.

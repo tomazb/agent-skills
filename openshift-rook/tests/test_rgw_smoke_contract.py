@@ -297,3 +297,77 @@ else:
         "service.beta.openshift.io/inject-cabundle": "true"
     }
     assert reached.exists()
+
+
+@pytest.mark.parametrize("fail_delete", [False, True])
+def test_private_ca_replaces_injected_configmap(tmp_path, fail_delete):
+    state = tmp_path / "configmap.json"
+    state.write_text(
+        json.dumps(
+            {
+                "metadata": {
+                    "annotations": {"service.beta.openshift.io/inject-cabundle": "true"}
+                },
+                "data": {"service-ca.crt": "FAKE_SERVICE_CA"},
+            }
+        )
+    )
+    log = tmp_path / "calls.log"
+    oc = tmp_path / "oc"
+    oc.write_text(r"""#!/usr/bin/env python3
+import json
+import os
+import sys
+from pathlib import Path
+args = sys.argv[1:]
+state = Path(os.environ["CM_STATE"])
+with open(os.environ["OC_LOG"], "a") as log:
+    log.write(args[0] + "\n")
+if args == ["delete", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--ignore-not-found"]:
+    if os.environ["FAIL_DELETE"] == "true":
+        raise SystemExit(42)
+    state.unlink(missing_ok=True)
+elif args == ["create", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--from-file=ca-bundle.crt=/path/to/ca-bundle.pem"]:
+    if state.exists():
+        sys.stderr.write("ConfigMap already exists\n")
+        raise SystemExit(1)
+    state.write_text(json.dumps({"metadata":{"annotations":{}}, "data":{"ca-bundle.crt":"FAKE_PRIVATE_CA"}}))
+else:
+    raise SystemExit(99)
+""")
+    oc.chmod(0o755)
+    script = next(
+        block
+        for block in re.findall(r"```bash\n(.*?)```", REFERENCE.read_text(), re.DOTALL)
+        if "export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt" in block
+    )
+    env = dict(
+        os.environ,
+        PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
+        CM_STATE=str(state),
+        OC_LOG=str(log),
+        FAIL_DELETE=str(fail_delete).lower(),
+    )
+    result = subprocess.run(
+        ["bash"],
+        input=script,
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=10,
+        check=False,
+    )
+    assert result.returncode == (42 if fail_delete else 0), result.stderr
+    configmap = json.loads(state.read_text())
+    if fail_delete:
+        assert log.read_text().splitlines() == ["delete"]
+        assert (
+            configmap["metadata"]["annotations"][
+                "service.beta.openshift.io/inject-cabundle"
+            ]
+            == "true"
+        )
+    else:
+        assert log.read_text().splitlines() == ["delete", "create"]
+        assert configmap["metadata"]["annotations"] == {}
+        assert configmap["data"] == {"ca-bundle.crt": "FAKE_PRIVATE_CA"}
