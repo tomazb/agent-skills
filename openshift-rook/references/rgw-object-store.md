@@ -180,18 +180,20 @@ curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.
 
 Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The default gateway listens on HTTP port 8080. Use `http` for `80` and `8080` only when pod-to-gateway traffic stays on a trusted in-cluster network. For an untrusted path, require an HTTPS endpoint. RGW pod termination needs `securePort: 8443` and `gateway.sslCertificateRef`, as shown in the TLS section below. An edge-terminated HTTPS Route remains valid when its router-to-RGW HTTP hop is trusted. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses an injected service CA mounted into the pod, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
 
-Choose one trust source before creating the pod. The Pod block below expands `RGW_TLS_CA` from your shell, defaults to `public`, and mounts the optional `rgw-smoke-ca` ConfigMap at `/etc/rgw-ca`.
+Choose one trust source before creating the pod. The Pod block below expands `RGW_TLS_CA` and `RGW_TLS_CA_CONFIGMAP` from your shell. It defaults to public trust and the optional `rgw-smoke-ca` ConfigMap, mounted at `/etc/rgw-ca`. Private CAs use the separate `rgw-smoke-private-ca` ConfigMap.
 
 For HTTP on a trusted network or HTTPS with a publicly trusted certificate, use the image trust store. No CA ConfigMap is needed:
 
 ```bash
 export RGW_TLS_CA=public
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-ca
 ```
 
 For an OpenShift service serving certificate, inject the service CA and wait for its key before creating the pod ([OpenShift service CA injection](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/security_and_compliance/configuring-certificates)):
 
 ```bash
 export RGW_TLS_CA=service-ca
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-ca
 (
 set -euo pipefail
 oc apply -n rook-rgw-smoke -f - <<'EOF'
@@ -207,15 +209,15 @@ oc wait -n rook-rgw-smoke configmap/rgw-smoke-ca \
 )
 ```
 
-For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use this alternative instead of the injected ConfigMap. The block below first reads the private CA file and renders a new ConfigMap locally. A missing or unreadable file stops the switch before changing the existing ConfigMap. It then replaces the throwaway ConfigMap so any old service-CA injection annotation cannot overwrite the private bundle. Recreate the smoke Pod afterward:
+For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use the separate private-CA ConfigMap below rather than changing the service-CA-injected ConfigMap. The block reads and renders the private bundle locally before applying it. File-read or private-apply failures leave `rgw-smoke-ca` untouched, and the private flow does not enable service-CA injection. Recreate the smoke Pod afterward so it mounts the selected ConfigMap:
 
 ```bash
 export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt
+export RGW_TLS_CA_CONFIGMAP=rgw-smoke-private-ca
 (
 set -euo pipefail
-private_ca_manifest=$(oc create configmap rgw-smoke-ca -n rook-rgw-smoke \
+private_ca_manifest=$(oc create configmap rgw-smoke-private-ca -n rook-rgw-smoke \
   --from-file=ca-bundle.crt=/path/to/ca-bundle.pem --dry-run=client -o yaml)
-oc delete configmap rgw-smoke-ca -n rook-rgw-smoke --ignore-not-found
 printf '%s\n' "$private_ca_manifest" | oc apply -n rook-rgw-smoke -f -
 )
 ```
@@ -258,7 +260,7 @@ spec:
   volumes:
   - name: rgw-ca
     configMap:
-      name: rgw-smoke-ca
+      name: "${RGW_TLS_CA_CONFIGMAP:-rgw-smoke-ca}"
       optional: true
 EOF
 oc -n rook-rgw-smoke wait pod/rgw-smoke --for=condition=Ready --timeout=5m

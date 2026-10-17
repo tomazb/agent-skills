@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.7
+
+- Keep private CA bundles in a separate `rgw-smoke-private-ca` ConfigMap and select the Pod's CA source with `RGW_TLS_CA_CONFIGMAP`. The private flow no longer deletes or edits the service-CA-injected ConfigMap, including when input or apply fails. Stateful execution tests verify both ConfigMaps and the Pod's selected source.
+
 ## 1.18.6
 
 - Render the private-CA ConfigMap with a client dry run before deleting the existing smoke ConfigMap. Missing or unreadable input now preserves the working trust configuration. Execute the documented sequence for successful replacement, failed deletion, and both file-read failures.

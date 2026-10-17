@@ -185,6 +185,9 @@ else:
         POD_MANIFEST=str(manifest),
     )
     env.pop("RGW_TLS_CA", None)
+    env.pop("RGW_TLS_CA_CONFIGMAP", None)
+    if selected_ca == "/etc/rgw-ca/ca-bundle.crt":
+        env["RGW_TLS_CA_CONFIGMAP"] = "rgw-smoke-private-ca"
     if selected_ca:
         env["RGW_TLS_CA"] = selected_ca
     result = subprocess.run(
@@ -242,7 +245,12 @@ else:
         )
         assert mount["readOnly"] is True
         volume = next(v for v in pod["spec"]["volumes"] if v["name"] == mount["name"])
-        assert volume["configMap"]["name"] == "rgw-smoke-ca"
+        expected_configmap = (
+            "rgw-smoke-private-ca"
+            if selected_ca == "/etc/rgw-ca/ca-bundle.crt"
+            else "rgw-smoke-ca"
+        )
+        assert volume["configMap"]["name"] == expected_configmap
     scheme = "http" if port == "8080" else "https"
     assert kwargs["endpoint_url"] == f"{scheme}://rgw.example.org:{port}"
     assert requests[0][0] == "put" and requests[-1][0] == "delete"
@@ -299,17 +307,25 @@ else:
     assert reached.exists()
 
 
-@pytest.mark.parametrize("failure", ["", "delete", "file_missing", "file_unreadable"])
-def test_private_ca_preflight_preserves_trust_on_failure(tmp_path, failure):
+@pytest.mark.parametrize("failure", ["", "apply", "file_missing", "file_unreadable"])
+def test_private_ca_does_not_mutate_injected_service_ca(tmp_path, failure):
     original = {
         "metadata": {
-            "annotations": {"service.beta.openshift.io/inject-cabundle": "true"}
+            "name": "rgw-smoke-ca",
+            "annotations": {"service.beta.openshift.io/inject-cabundle": "true"},
         },
         "data": {"service-ca.crt": "FAKE_SERVICE_CA"},
     }
-    state = tmp_path / "configmap.json"
-    state.write_text(json.dumps(original))
+    service_state = tmp_path / "service.json"
+    service_state.write_text(json.dumps(original))
+    original_private = {
+        "metadata": {"name": "rgw-smoke-private-ca", "annotations": {}},
+        "data": {"ca-bundle.crt": "OLD_PRIVATE_CA"},
+    }
+    private_state = tmp_path / "private.json"
+    private_state.write_text(json.dumps(original_private))
     log = tmp_path / "calls.log"
+    selected = tmp_path / "selected-cm"
     oc = tmp_path / "oc"
     oc.write_text(r"""#!/usr/bin/env python3
 import json
@@ -317,35 +333,33 @@ import os
 import sys
 from pathlib import Path
 args = sys.argv[1:]
-state = Path(os.environ["CM_STATE"])
 failure = os.environ["FAIL_STAGE"]
-phase = "render" if "--dry-run=client" in args else args[0]
-with open(os.environ["OC_LOG"], "a") as log:
-    log.write(phase + "\n")
-if args[:6] == ["create", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--from-file=ca-bundle.crt=/path/to/ca-bundle.pem"]:
-    if failure in ("file_missing", "file_unreadable"):
-        sys.stderr.write("CA input file could not be read\n")
-        raise SystemExit(42)
-    manifest = {"metadata":{"name":"rgw-smoke-ca", "namespace":"rook-rgw-smoke", "annotations":{}},
-                "data":{"ca-bundle.crt":"FAKE_PRIVATE_CA"}}
-    if args[6:] == ["--dry-run=client", "-o", "yaml"]:
-        print(json.dumps(manifest))
-    elif not args[6:]:
-        if state.exists():
-            raise SystemExit(1)
-        state.write_text(json.dumps(manifest))
-    else:
-        raise SystemExit(99)
-elif args == ["delete", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--ignore-not-found"]:
-    if failure == "delete":
-        raise SystemExit(42)
-    state.unlink(missing_ok=True)
+paths = {"rgw-smoke-ca": Path(os.environ["SERVICE_STATE"]),
+         "rgw-smoke-private-ca": Path(os.environ["PRIVATE_STATE"])}
+if args[:2] == ["create", "configmap"] and args[3:] == ["-n", "rook-rgw-smoke", "--from-file=ca-bundle.crt=/path/to/ca-bundle.pem", "--dry-run=client", "-o", "yaml"]:
+    phase, name = "render", args[2]
+    payload = {"metadata":{"name":name, "namespace":"rook-rgw-smoke", "annotations":{}},
+               "data":{"ca-bundle.crt":"FAKE_PRIVATE_CA"}}
 elif args == ["apply", "-n", "rook-rgw-smoke", "-f", "-"]:
-    manifest = json.load(sys.stdin)
-    assert manifest["metadata"]["namespace"] == "rook-rgw-smoke"
-    state.write_text(json.dumps(manifest))
+    payload = json.load(sys.stdin)
+    phase, name = "apply", payload["metadata"]["name"]
+    assert payload["metadata"]["namespace"] == "rook-rgw-smoke"
+elif args[:2] == ["delete", "configmap"] and args[3:] == ["-n", "rook-rgw-smoke", "--ignore-not-found"]:
+    phase, name = "delete", args[2]
 else:
     raise SystemExit(99)
+with open(os.environ["OC_LOG"], "a") as log:
+    log.write(phase + ":" + name + "\n")
+if phase == "render":
+    if failure in ("file_missing", "file_unreadable"):
+        raise SystemExit(42)
+    print(json.dumps(payload))
+elif phase == "delete":
+    paths[name].unlink(missing_ok=True)
+else:
+    if failure == "apply":
+        raise SystemExit(42)
+    paths[name].write_text(json.dumps(payload))
 """)
     oc.chmod(0o755)
     script = next(
@@ -353,12 +367,15 @@ else:
         for block in re.findall(r"```bash\n(.*?)```", REFERENCE.read_text(), re.DOTALL)
         if "export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt" in block
     )
+    script += '\nblock_status=$?\nprintf "%s" "${RGW_TLS_CA_CONFIGMAP:-}" > "$SELECTED_CM"\nexit "$block_status"\n'
     env = dict(
         os.environ,
         PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
-        CM_STATE=str(state),
+        SERVICE_STATE=str(service_state),
+        PRIVATE_STATE=str(private_state),
         OC_LOG=str(log),
         FAIL_STAGE=failure,
+        SELECTED_CM=str(selected),
     )
     result = subprocess.run(
         ["bash"],
@@ -370,14 +387,17 @@ else:
         check=False,
     )
     assert result.returncode == (42 if failure else 0), result.stderr
-    assert state.exists(), "failed switch deleted the working ConfigMap"
-    configmap = json.loads(state.read_text())
-    if failure:
-        assert configmap == original
-        assert log.read_text().splitlines() == (
-            ["render", "delete"] if failure == "delete" else ["render"]
-        )
+    assert service_state.exists(), "private CA switch deleted the service-CA ConfigMap"
+    assert json.loads(service_state.read_text()) == original
+    calls = log.read_text().splitlines()
+    if failure in ("file_missing", "file_unreadable"):
+        assert calls == ["render:rgw-smoke-private-ca"]
     else:
-        assert log.read_text().splitlines() == ["render", "delete", "apply"]
-        assert configmap["metadata"]["annotations"] == {}
-        assert configmap["data"] == {"ca-bundle.crt": "FAKE_PRIVATE_CA"}
+        assert calls == ["render:rgw-smoke-private-ca", "apply:rgw-smoke-private-ca"]
+    if failure:
+        assert json.loads(private_state.read_text()) == original_private
+    else:
+        assert selected.read_text() == "rgw-smoke-private-ca"
+        replacement = json.loads(private_state.read_text())
+        assert replacement["metadata"]["annotations"] == {}
+        assert replacement["data"] == {"ca-bundle.crt": "FAKE_PRIVATE_CA"}
