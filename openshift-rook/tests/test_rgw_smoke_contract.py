@@ -299,19 +299,16 @@ else:
     assert reached.exists()
 
 
-@pytest.mark.parametrize("fail_delete", [False, True])
-def test_private_ca_replaces_injected_configmap(tmp_path, fail_delete):
+@pytest.mark.parametrize("failure", ["", "delete", "file_missing", "file_unreadable"])
+def test_private_ca_preflight_preserves_trust_on_failure(tmp_path, failure):
+    original = {
+        "metadata": {
+            "annotations": {"service.beta.openshift.io/inject-cabundle": "true"}
+        },
+        "data": {"service-ca.crt": "FAKE_SERVICE_CA"},
+    }
     state = tmp_path / "configmap.json"
-    state.write_text(
-        json.dumps(
-            {
-                "metadata": {
-                    "annotations": {"service.beta.openshift.io/inject-cabundle": "true"}
-                },
-                "data": {"service-ca.crt": "FAKE_SERVICE_CA"},
-            }
-        )
-    )
+    state.write_text(json.dumps(original))
     log = tmp_path / "calls.log"
     oc = tmp_path / "oc"
     oc.write_text(r"""#!/usr/bin/env python3
@@ -321,17 +318,32 @@ import sys
 from pathlib import Path
 args = sys.argv[1:]
 state = Path(os.environ["CM_STATE"])
+failure = os.environ["FAIL_STAGE"]
+phase = "render" if "--dry-run=client" in args else args[0]
 with open(os.environ["OC_LOG"], "a") as log:
-    log.write(args[0] + "\n")
-if args == ["delete", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--ignore-not-found"]:
-    if os.environ["FAIL_DELETE"] == "true":
+    log.write(phase + "\n")
+if args[:6] == ["create", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--from-file=ca-bundle.crt=/path/to/ca-bundle.pem"]:
+    if failure in ("file_missing", "file_unreadable"):
+        sys.stderr.write("CA input file could not be read\n")
+        raise SystemExit(42)
+    manifest = {"metadata":{"name":"rgw-smoke-ca", "namespace":"rook-rgw-smoke", "annotations":{}},
+                "data":{"ca-bundle.crt":"FAKE_PRIVATE_CA"}}
+    if args[6:] == ["--dry-run=client", "-o", "yaml"]:
+        print(json.dumps(manifest))
+    elif not args[6:]:
+        if state.exists():
+            raise SystemExit(1)
+        state.write_text(json.dumps(manifest))
+    else:
+        raise SystemExit(99)
+elif args == ["delete", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--ignore-not-found"]:
+    if failure == "delete":
         raise SystemExit(42)
     state.unlink(missing_ok=True)
-elif args == ["create", "configmap", "rgw-smoke-ca", "-n", "rook-rgw-smoke", "--from-file=ca-bundle.crt=/path/to/ca-bundle.pem"]:
-    if state.exists():
-        sys.stderr.write("ConfigMap already exists\n")
-        raise SystemExit(1)
-    state.write_text(json.dumps({"metadata":{"annotations":{}}, "data":{"ca-bundle.crt":"FAKE_PRIVATE_CA"}}))
+elif args == ["apply", "-n", "rook-rgw-smoke", "-f", "-"]:
+    manifest = json.load(sys.stdin)
+    assert manifest["metadata"]["namespace"] == "rook-rgw-smoke"
+    state.write_text(json.dumps(manifest))
 else:
     raise SystemExit(99)
 """)
@@ -346,7 +358,7 @@ else:
         PATH=str(tmp_path) + os.pathsep + os.environ["PATH"],
         CM_STATE=str(state),
         OC_LOG=str(log),
-        FAIL_DELETE=str(fail_delete).lower(),
+        FAIL_STAGE=failure,
     )
     result = subprocess.run(
         ["bash"],
@@ -357,17 +369,15 @@ else:
         timeout=10,
         check=False,
     )
-    assert result.returncode == (42 if fail_delete else 0), result.stderr
+    assert result.returncode == (42 if failure else 0), result.stderr
+    assert state.exists(), "failed switch deleted the working ConfigMap"
     configmap = json.loads(state.read_text())
-    if fail_delete:
-        assert log.read_text().splitlines() == ["delete"]
-        assert (
-            configmap["metadata"]["annotations"][
-                "service.beta.openshift.io/inject-cabundle"
-            ]
-            == "true"
+    if failure:
+        assert configmap == original
+        assert log.read_text().splitlines() == (
+            ["render", "delete"] if failure == "delete" else ["render"]
         )
     else:
-        assert log.read_text().splitlines() == ["delete", "create"]
+        assert log.read_text().splitlines() == ["render", "delete", "apply"]
         assert configmap["metadata"]["annotations"] == {}
         assert configmap["data"] == {"ca-bundle.crt": "FAKE_PRIVATE_CA"}

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.6
+
+- Render the private-CA ConfigMap with a client dry run before deleting the existing smoke ConfigMap. Missing or unreadable input now preserves the working trust configuration. Execute the documented sequence for successful replacement, failed deletion, and both file-read failures.
+
 ## 1.18.5
 
 - Replace the throwaway CA ConfigMap before creating a private bundle, removing any service-CA injection annotation when switching trust sources. Stop if replacement fails, and require recreating the smoke Pod. Execute the private-CA block against a stateful mocked `oc` for successful replacement and deletion failure.
