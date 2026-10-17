@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.18.3
+
+- Limit direct RGW HTTP smoke traffic to trusted in-cluster pod-to-gateway networks. Require HTTPS for untrusted paths, document pod TLS with `securePort: 8443` and `gateway.sslCertificateRef`, and retain edge termination when its backend HTTP hop is trusted.
+
 ## 1.18.2
 
 - Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.

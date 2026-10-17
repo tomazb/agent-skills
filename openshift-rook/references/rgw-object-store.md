@@ -178,7 +178,7 @@ curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.
 )
 ```
 
-Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
+Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The default gateway listens on HTTP port 8080. Use `http` for `80` and `8080` only when pod-to-gateway traffic stays on a trusted in-cluster network. For an untrusted path, require an HTTPS endpoint. RGW pod termination needs `securePort: 8443` and `gateway.sslCertificateRef`, as shown in the TLS section below. An edge-terminated HTTPS Route remains valid when its router-to-RGW HTTP hop is trusted. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
 
 Create the pod in `rook-rgw-smoke`. It runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
 
@@ -262,7 +262,9 @@ On OpenShift, expose RGW through a Route. The RGW service exposes a port named
 ### Edge termination (simplest — RGW stays HTTP)
 
 The Route terminates TLS at the edge and talks plain HTTP (`port: 8080`) to the
-RGW service. No certificate or `securePort` is needed on the RGW pod.
+RGW service. No certificate or `securePort` is needed on the RGW pod. Use this
+pattern only when the router-to-RGW network is trusted; an untrusted backend
+path needs pod TLS with passthrough or reencrypt termination.
 
 ```yaml
 apiVersion: route.openshift.io/v1
