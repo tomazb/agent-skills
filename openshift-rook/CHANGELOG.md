@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.2
+
+- Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.
+- Wait for the RGW OBC to bind, then validate the ObjectBucket's exact smoke namespace and claim name before continuing to the route and S3 checks. Stop on a failed query or mismatched claim reference; execute the documented block against a mocked `oc` and `curl` to cover both.
+
 ## 1.18.1
 
 - VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.

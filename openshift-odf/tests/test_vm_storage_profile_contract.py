@@ -89,7 +89,7 @@ def test_plain_pvc_bind_wait_is_conditional():
     assert "oc wait" not in selection
 
 
-def _run(tmp_path: Path, **env_extra: str):
+def _run(tmp_path: Path, *, caller_probe=False, **env_extra: str):
     oc = tmp_path / "oc"
     oc.write_text(OC, encoding="utf-8")
     oc.chmod(0o755)
@@ -107,9 +107,20 @@ def _run(tmp_path: Path, **env_extra: str):
         OC_DV_DELAY="false",
     )
     env.update(env_extra)
+    script = _provisioning_script()
+    command = ["/bin/bash"]
+    if caller_probe:
+        command += ["--noprofile", "--norc", "-i"]
+        script = "set +e; set +u; set +o pipefail\n" + script + r"""
+block_status=$?
+case $- in *e*|*u*) exit 91;; esac
+if shopt -qo pipefail; then exit 92; fi
+printf 'caller survived with unchanged options\n'
+exit "$block_status"
+"""
     result = subprocess.run(
-        ["/bin/bash"],
-        input=_provisioning_script(),
+        command,
+        input=script,
         check=False,
         capture_output=True,
         text=True,
@@ -229,3 +240,17 @@ def test_failed_datavolume_creation_wait_stops_verification(tmp_path):
     assert not any(
         call["args"][:3] == ["get", "pvc", "default-sc-test-dv"] for call in calls
     )
+
+
+@pytest.mark.parametrize("fail_action,expected_status", [("", 0), ("patch", 42)])
+def test_interactive_caller_survives_with_unchanged_options(
+    tmp_path, fail_action, expected_status
+):
+    result, _ = _run(
+        tmp_path,
+        caller_probe=True,
+        OC_DV_MODE="WaitForFirstConsumer",
+        OC_FAIL_ACTION=fail_action,
+    )
+    assert result.returncode == expected_status, result.stderr
+    assert "caller survived with unchanged options" in result.stdout

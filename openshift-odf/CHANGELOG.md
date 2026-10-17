@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.27.2
+
+- Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.
+
 ## 1.27.1
 
 - VM storage verification reads the DataVolume PVC's selected StorageClass and starts the test VM with a KubeVirt `spec.running` patch only for `WaitForFirstConsumer`, before waiting for CDI readiness. `Immediate` leaves the VM stopped.

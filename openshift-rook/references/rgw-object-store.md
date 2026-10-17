@@ -146,6 +146,8 @@ Create the test claim in `rook-rgw-smoke`, not in an application namespace. Clea
   (for example `200`, `403`, or `405`) instead of a TLS or connection failure.
 
 ```bash
+(
+set -euo pipefail
 oc apply -f - <<'EOF'
 apiVersion: v1
 kind: Namespace
@@ -161,14 +163,22 @@ spec:
   generateBucketName: my-bucket
   storageClassName: rook-ceph-rgw-obc
 EOF
+oc wait -n rook-rgw-smoke objectbucketclaim/rook-ceph-obc \
+  --for=jsonpath='{.status.phase}'=Bound --timeout=300s
 oc -n rook-rgw-smoke get objectbucketclaim rook-ceph-obc -o wide
 oc -n rook-rgw-smoke get secret rook-ceph-obc
 oc -n rook-rgw-smoke get configmap rook-ceph-obc
-oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc -o wide
+claim_ref=$(oc get objectbucket obc-rook-rgw-smoke-rook-ceph-obc \
+  -o jsonpath='{.spec.claimRef.namespace}/{.spec.claimRef.name}')
+if [ "$claim_ref" != "rook-rgw-smoke/rook-ceph-obc" ]; then
+  printf 'ObjectBucket claims %s; expected rook-rgw-smoke/rook-ceph-obc\n' "$claim_ref" >&2
+  exit 1
+fi
 curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.host}')"
+)
 ```
 
-A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
+Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The gateway in this runbook listens on HTTP port 8080. Use `http` for `80` and `8080`. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
 
 Create the pod in `rook-rgw-smoke`. It runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
 

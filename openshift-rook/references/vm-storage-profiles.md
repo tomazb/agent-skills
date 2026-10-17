@@ -181,9 +181,10 @@ For the DataVolume, inspect its own selected class and start the test VM only fo
 
 If `oc wait --for=jsonpath=...` fails with `unrecognized condition`, the client is older than that condition. Poll `.status.phase` until it is `Bound`.
 
-The DataVolume wait runs after its binding trigger when needed. The plain-PVC wait runs only when a general default was selected. Its `WaitForFirstConsumer` pod mounts only `default-sc-test-pvc`; the VM consumes only the DataVolume. Run this block in Bash with an [OpenShift 4.20 CLI](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/cli_tools/index) or another client supporting `oc wait --for=create`. CDI creates the DataVolume PVC asynchronously, so wait for it to exist before reading its class. A failed query, consumer creation, VM patch, or wait stops verification.
+The DataVolume wait runs after its binding trigger when needed. The plain-PVC wait runs only when a general default was selected. Its `WaitForFirstConsumer` pod mounts only `default-sc-test-pvc`; the VM consumes only the DataVolume. Run this block in Bash with an [OpenShift 4.20 CLI](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html-single/cli_tools/index) or another client supporting `oc wait --for=create`. CDI creates the DataVolume PVC asynchronously, so wait for it to exist before reading its class. The block runs in a subshell so its shell options stay local. A failed query, consumer creation, VM patch, or wait stops verification and returns a nonzero status. It does not enable exit-on-error in the caller's shell.
 
 ```bash
+(
 set -euo pipefail
 sc=$(oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.spec.storageClassName}')
 phase=$(oc -n rook-vm-smoke get pvc default-sc-test-pvc -o jsonpath='{.status.phase}')
@@ -231,6 +232,7 @@ if [ "$dv_mode" = "WaitForFirstConsumer" ]; then
 fi
 oc wait -n rook-vm-smoke datavolume/default-sc-test-dv \
   --for=condition=Ready --timeout=300s
+)
 ```
 
 Clean up:
