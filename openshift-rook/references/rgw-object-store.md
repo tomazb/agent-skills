@@ -178,12 +178,47 @@ curl -kI "https://$(oc -n rook-ceph get route rook-ceph-rgw -o jsonpath='{.spec.
 )
 ```
 
-Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The default gateway listens on HTTP port 8080. Use `http` for `80` and `8080` only when pod-to-gateway traffic stays on a trusted in-cluster network. For an untrusted path, require an HTTPS endpoint. RGW pod termination needs `securePort: 8443` and `gateway.sslCertificateRef`, as shown in the TLS section below. An edge-terminated HTTPS Route remains valid when its router-to-RGW HTTP hop is trusted. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses the pod's projected service CA, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
+Proceed only if the block succeeds and the ObjectBucket claims exactly `rook-rgw-smoke/rook-ceph-obc`. The subshell returns query and claim-validation failures without changing the caller's shell options. A `Bound` OBC with a ConfigMap and a Secret proves provisioning only. Put an object and read it back from `rook-rgw-smoke` before deleting that namespace. The ConfigMap supplies `BUCKET_HOST`, `BUCKET_PORT`, and `BUCKET_NAME`; the Secret supplies `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY`. Wire both with `envFrom`. The default gateway listens on HTTP port 8080. Use `http` for `80` and `8080` only when pod-to-gateway traffic stays on a trusted in-cluster network. For an untrusted path, require an HTTPS endpoint. RGW pod termination needs `securePort: 8443` and `gateway.sslCertificateRef`, as shown in the TLS section below. An edge-terminated HTTPS Route remains valid when its router-to-RGW HTTP hop is trusted. For `443` and `8443`, use `https` and set `RGW_TLS_CA` from the certificate source. Keep verification enabled. `service-ca` uses an injected service CA mounted into the pod, and only when `gateway.sslCertificateRef` is an OpenShift serving certificate (`service.beta.openshift.io/serving-cert-secret-name`). `public` uses the image trust store for a publicly trusted certificate. A private CA is a bundle mounted into the pod, and `RGW_TLS_CA` is that path.
 
-Create the pod in `rook-rgw-smoke`. It runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
+Choose one trust source before creating the pod. The Pod block below expands `RGW_TLS_CA` from your shell, defaults to `public`, and mounts the optional `rgw-smoke-ca` ConfigMap at `/etc/rgw-ca`.
+
+For HTTP on a trusted network or HTTPS with a publicly trusted certificate, use the image trust store. No CA ConfigMap is needed:
 
 ```bash
-oc apply -f - <<'EOF'
+export RGW_TLS_CA=public
+```
+
+For an OpenShift service serving certificate, inject the service CA and wait for its key before creating the pod ([OpenShift service CA injection](https://docs.redhat.com/en/documentation/openshift_container_platform/4.20/html/security_and_compliance/configuring-certificates)):
+
+```bash
+export RGW_TLS_CA=service-ca
+(
+set -euo pipefail
+oc apply -n rook-rgw-smoke -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: rgw-smoke-ca
+  annotations:
+    service.beta.openshift.io/inject-cabundle: "true"
+EOF
+oc wait -n rook-rgw-smoke configmap/rgw-smoke-ca \
+  --for=jsonpath='{.data.service-ca\.crt}' --timeout=120s
+)
+```
+
+For a private CA, replace the file path with the CA bundle that issued the gateway certificate. Use this alternative instead of the injected ConfigMap:
+
+```bash
+export RGW_TLS_CA=/etc/rgw-ca/ca-bundle.crt
+oc create configmap rgw-smoke-ca -n rook-rgw-smoke \
+  --from-file=ca-bundle.crt=/path/to/ca-bundle.pem
+```
+
+Proceed only after the chosen preparation succeeds. Recreate the throwaway Pod after changing its environment or mounts. Create it in `rook-rgw-smoke`; it runs under the restricted pod security profile and idles so the check runs in it with `oc exec`:
+
+```bash
+oc apply -f - <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
@@ -197,11 +232,17 @@ spec:
     env:
     - name: HOME
       value: /tmp
+    - name: RGW_TLS_CA
+      value: "${RGW_TLS_CA:-public}"
     envFrom:
     - configMapRef:
         name: rook-ceph-obc
     - secretRef:
         name: rook-ceph-obc
+    volumeMounts:
+    - name: rgw-ca
+      mountPath: /etc/rgw-ca
+      readOnly: true
     securityContext:
       allowPrivilegeEscalation: false
       runAsNonRoot: true
@@ -209,6 +250,11 @@ spec:
         drop: ["ALL"]
       seccompProfile:
         type: RuntimeDefault
+  volumes:
+  - name: rgw-ca
+    configMap:
+      name: rgw-smoke-ca
+      optional: true
 EOF
 oc -n rook-rgw-smoke wait pod/rgw-smoke --for=condition=Ready --timeout=5m
 oc -n rook-rgw-smoke exec rgw-smoke -- pip install --user boto3
@@ -232,7 +278,7 @@ kwargs = dict(
 if host.startswith("https://"):
     ca = os.environ.get("RGW_TLS_CA", "")
     if ca == "service-ca":
-        kwargs["verify"] = "/var/run/secrets/kubernetes.io/serviceaccount/service-ca.crt"
+        kwargs["verify"] = "/etc/rgw-ca/service-ca.crt"
     elif ca == "public":
         pass
     elif ca.startswith("/"):

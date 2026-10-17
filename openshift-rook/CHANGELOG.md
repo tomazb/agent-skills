@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.4
+
+- Pass the selected `RGW_TLS_CA` into the RGW smoke Pod, defaulting to public trust. Mount an optional CA ConfigMap and provide preparation commands for injected service CAs and private CA bundles. The service-CA client path now matches that mount.
+- Execute the Pod creation block and S3 script against mocked external boundaries for public HTTPS, service-CA HTTPS, private-CA HTTPS, and HTTP. Check the emitted trust configuration and S3 client verification arguments.
+
 ## 1.18.3
 
 - Limit direct RGW HTTP smoke traffic to trusted in-cluster pod-to-gateway networks. Require HTTPS for untrusted paths, document pod TLS with `securePort: 8443` and `gateway.sslCertificateRef`, and retain edge termination when its backend HTTP hop is trusted.
