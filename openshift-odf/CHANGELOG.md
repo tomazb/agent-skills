@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.4
+
+- Resolve CSV deployment/container indexes by name, correct absent/false/indirect/duplicate flags with a guarded JSON Patch, and preserve sidecars and unrelated environment entries. Share the procedure between 4.20 and 4.22.
+- Verify OLM propagation, current Deployment generation and replicas, rollout completion, and exact runtime `printenv` output from `-c ocs-operator`. Pre-install configuration-only mode explicitly avoids a runtime readiness claim. Stateful command-execution tests cover patching, no-op checks, stale rollouts, runtime mismatches, and CLI failures.
+- Use portable env-based Python shebangs for mocked CLIs.
+
 ## 1.27.3
 
 - Diagnose SNO node-count errors with a read-only gate that verifies literal `SINGLE_NODE=true` in the named OCS operator container in both CSV and Deployment. Recheck after CSV replacement; do not classify blocked reconciliation or upgrades as cosmetic because Ceph and PVC I/O are healthy.

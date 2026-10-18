@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.18.9
+
+- Replace recursive key discovery with explicit Ceph 20.2.4 conventional/rotating record validation. Reject missing keys, empty required structures, malformed records, and unknown types even when mixed with valid AES256K keys or Python optimization is enabled.
+- Execute the documented audit against real-shaped fixtures, including every rotating key and explicit unused pending slots. Use a portable env-based Python shebang for mocked `oc`.
+
 ## 1.18.8
 
 - Add existing-cluster CephX warning diagnosis: distinguish emergency daemon overrides and MonMap cipher policy from key material and SNO redundancy. Audit all key types before a staged policy change, preserving active clients and CSI generations.

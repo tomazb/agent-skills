@@ -45,40 +45,14 @@ oc -n rook-ceph get pod -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{rang
 
 In the MonMap, inspect `auth_allowed_ciphers`, `auth_preferred_cipher`, and `auth_service_cipher`. Cipher policy lives in the MonMap; an empty `ceph config dump` cipher search does not prove the policy is restricted. Redact monitor addresses before recording output.
 
-The audit below prints only key-type counts, including pending, expiring, and rotating keys. It fails for empty, unknown, or classic-AES results and failed queries. Do not paste raw auth dumps or key values into evidence. If no toolbox is deployed, use an existing `rook-ceph-operator` Pod with `ceph -c /var/lib/rook/rook-ceph/rook-ceph.config` in place of the toolbox invocation; discovering a warning does not require creating a toolbox.
+The audit below prints only key-type counts, including pending, expiring, and rotating keys. The Ceph 20.2.4 schema check requires nonempty conventional and rotating inventories and validates every auth key and every rotating `expiring_key.key`. Missing records, malformed structures, unknown or classic-AES keys, and failed queries return nonzero, including with `PYTHONOPTIMIZE` enabled. Explicit unused `pending_key` slots (`type: 0`, `type_str: none`) are accepted; an empty primary or rotating key is rejected. Do not paste raw auth dumps or key values into evidence. If no toolbox is deployed, use an existing `rook-ceph-operator` Pod with `ceph -c /var/lib/rook/rook-ceph/rook-ceph.config` in place of the toolbox invocation; discovering a warning does not require creating a toolbox.
 
 ```bash
 # Audit all CephX key types before restricting allowedCiphers.
 (
 set -euo pipefail
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth dump-keys --format=json | python3 -c '
-import collections, json, sys
-data = json.load(sys.stdin)["data"]
-assert isinstance(data["secrets"], list) and isinstance(data["rotating_secrets"], list), "Unexpected audit schema"
-types = collections.Counter()
-def visit(value, field=""):
-    if field in ("key", "pending_key", "expiring_key") and not isinstance(value, dict):
-        types["unknown"] += 1
-        return
-    if isinstance(value, dict):
-        if field in ("key", "pending_key") or (field == "expiring_key" and ("type" in value or "type_str" in value)):
-            kind = (value.get("type"), value.get("type_str"))
-            if kind == (0, "none"):
-                return  # An unused key slot, not a classic-AES credential.
-            label = { (1, "aes"): "aes", (2, "aes256k"): "aes256k" }.get(kind, "unknown")
-            types[label] += 1
-            return
-        for name, child in value.items():
-            visit(child, name)
-    elif isinstance(value, list):
-        for child in value:
-            visit(child)
-visit(data)
-print("Audited key types: " + json.dumps(dict(types), sort_keys=True))
-if not types or set(types) != {"aes256k"}:
-    sys.exit("STOP: all keys must report aes256k before restricting allowedCiphers")
-print("All audited keys use aes256k; verify client mount compatibility separately")
-'
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth dump-keys --format=json \
+  | python3 scripts/check_cephx_key_types.py
 )
 ```
 

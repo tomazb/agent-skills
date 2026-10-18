@@ -1,5 +1,6 @@
-"""Execute the documented full-key audit; credentials must never be printed."""
+"""Execute the documented full-key audit against a mocked external CLI."""
 
+import copy
 import json
 import os
 import re
@@ -8,38 +9,38 @@ from pathlib import Path
 
 import pytest
 
-REFERENCE = Path(__file__).resolve().parents[1] / "references/validation-hardening.md"
+ROOT = Path(__file__).resolve().parents[1]
+REFERENCE = ROOT / "references/validation-hardening.md"
 
 
-@pytest.mark.parametrize("legacy_location", [None, "key", "pending_key", "expiring_key", "rotating"])
-def test_full_audit(tmp_path, legacy_location):
-    def key(kind):
-        return {"type": 2 if kind == "aes256k" else 1, "type_str": kind, "secret": "DO-NOT-PRINT"}
-
-    auth = {name: key("aes" if legacy_location == name else "aes256k")
-            for name in ("key", "pending_key", "expiring_key")}
-    fixture = {"data": {"secrets": [{"entity": {"type": 8, "type_str": "client"}, "auth": auth},
-                                   {"auth": {"pending_key": {"type": 0, "type_str": "none"}}}],
-                        "rotating_secrets": [{"entity": {"type": 1, "type_str": "mon"},
-                                              "secrets": {"keys": [{"expiring_key": {
-                            "key": key("aes" if legacy_location == "rotating" else "aes256k")}}]}}]}}
-    run = execute(tmp_path, fixture)
-    assert run.returncode == (0 if legacy_location is None else 1), run.stderr
-    assert "DO-NOT-PRINT" not in run.stdout + run.stderr
-    assert ("All audited keys use aes256k" in run.stdout) == (legacy_location is None)
-    if legacy_location is None:
-        assert 'Audited key types: {"aes256k": 4}' in run.stdout
+def key(kind="aes256k"):
+    return {"type": {"none": 0, "aes": 1, "aes256k": 2}[kind],
+            "type_str": kind, "secret": "DO-NOT-PRINT"}
 
 
-def execute(tmp_path, fixture, *, fail=False):
+def inventory():
+    return {"data": {
+        "secrets": [
+            {"entity": {"type": 8, "type_str": "client"},
+             "auth": {"key": key(), "pending_key": key("none")}},
+            {"auth": {"key": key()}},
+        ],
+        "rotating_secrets": [{"entity": {"type": 1, "type_str": "mon"},
+                              "secrets": {"keys": [{"expiring_key": {"key": key()}},
+                                                   {"expiring_key": {"key": key()}}]}}],
+    }}
+
+
+def execute(tmp_path, fixture, *, fail=False, optimize=""):
     source = tmp_path / "fixture.json"
     source.write_text(json.dumps(fixture))
     oc = tmp_path / "oc"
-    oc.write_text("""#!/usr/bin/python3
+    oc.write_text("""#!/usr/bin/env python3
 import os, sys
 from pathlib import Path
-assert sys.argv[1:] == ['-n', 'rook-ceph', 'exec', 'deploy/rook-ceph-tools', '--',
-                       'ceph', 'auth', 'dump-keys', '--format=json']
+if sys.argv[1:] != ['-n', 'rook-ceph', 'exec', 'deploy/rook-ceph-tools', '--',
+                    'ceph', 'auth', 'dump-keys', '--format=json']:
+    raise SystemExit(99)
 if os.environ['OC_FAIL'] == 'true':
     raise SystemExit(42)
 print(Path(os.environ['OC_FIXTURE']).read_text())
@@ -47,26 +48,75 @@ print(Path(os.environ['OC_FIXTURE']).read_text())
     oc.chmod(0o755)
     blocks = re.findall(r"```bash\n(.*?)```", REFERENCE.read_text(), re.DOTALL)
     script = next(b for b in blocks if "# Audit all CephX key types" in b)
-    return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script],
+    return subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script], cwd=ROOT,
                           env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
-                               "OC_FIXTURE": str(source), "OC_FAIL": str(fail).lower()},
-                          capture_output=True, text=True)
+                               "OC_FIXTURE": str(source), "OC_FAIL": str(fail).lower(),
+                               "PYTHONOPTIMIZE": optimize}, capture_output=True, text=True)
 
 
-@pytest.mark.parametrize("fixture", [{}, {"data": {"secrets": [], "rotating_secrets": []}},
-                                     {"data": {"secrets": [{"auth": {"key": {"type": 99, "type_str": "unknown"}}}], "rotating_secrets": []}},
-                                     {"data": {"secrets": [{"auth": {"pending_key": {"type": 0, "type_str": "none"}}}], "rotating_secrets": []}}])
-def test_empty_or_unknown_audit_cannot_pass(tmp_path, fixture):
+@pytest.mark.parametrize("optimize", ["", "1", "2"])
+def test_valid_inventory_and_unused_pending_slot(tmp_path, optimize):
+    run = execute(tmp_path, inventory(), optimize=optimize)
+    assert run.returncode == 0, run.stderr
+    assert 'Audited key types: {"aes256k": 4}' in run.stdout
+    assert "DO-NOT-PRINT" not in run.stdout + run.stderr
+
+
+@pytest.mark.parametrize("location", ["primary", "pending", "first_rotating", "last_rotating"])
+def test_legacy_key_rejected(tmp_path, location):
+    fixture = inventory()
+    if location in ("primary", "pending"):
+        field = "key" if location == "primary" else "pending_key"
+        fixture["data"]["secrets"][0]["auth"][field] = key("aes")
+    else:
+        index = 0 if location == "first_rotating" else 1
+        fixture["data"]["rotating_secrets"][0]["secrets"]["keys"][index]["expiring_key"]["key"] = key("aes")
+    run = execute(tmp_path, fixture)
+    assert run.returncode != 0
+    assert "All audited keys use aes256k" not in run.stdout
+    assert "DO-NOT-PRINT" not in run.stdout + run.stderr
+
+
+@pytest.mark.parametrize("bad", [None, [], {}, {"auth": None}, {"auth": {}},
+                                 {"auth": {"pending_key": key("none")}}])
+@pytest.mark.parametrize("optimize", ["", "1"])
+def test_mixed_missing_auth_records_rejected(tmp_path, bad, optimize):
+    fixture = inventory()
+    fixture["data"]["secrets"].append(copy.deepcopy(bad))
+    assert execute(tmp_path, fixture, optimize=optimize).returncode != 0
+
+
+@pytest.mark.parametrize("bad", [None, [], {}, {"secrets": {}}, {"secrets": {"keys": []}},
+                                 {"secrets": {"keys": [None]}}, {"secrets": {"keys": [{}]}},
+                                 {"secrets": {"keys": [{"expiring_key": {}}]}}])
+@pytest.mark.parametrize("optimize", ["", "1"])
+def test_mixed_missing_rotating_records_rejected(tmp_path, bad, optimize):
+    fixture = inventory()
+    fixture["data"]["rotating_secrets"].append(copy.deepcopy(bad))
+    assert execute(tmp_path, fixture, optimize=optimize).returncode != 0
+
+
+@pytest.mark.parametrize("bad", [{}, {"type": 1, "type_str": "aes256k"}, "opaque-key", None,
+                                 {"type": 99, "type_str": "unknown"}, key("none")])
+@pytest.mark.parametrize("location", ["primary", "rotating"])
+def test_invalid_present_keys_rejected(tmp_path, bad, location):
+    fixture = inventory()
+    if location == "primary":
+        fixture["data"]["secrets"][0]["auth"]["key"] = bad
+    else:
+        fixture["data"]["rotating_secrets"][0]["secrets"]["keys"][1]["expiring_key"]["key"] = bad
     assert execute(tmp_path, fixture).returncode != 0
 
 
-def test_failed_audit_cannot_pass(tmp_path):
-    assert execute(tmp_path, {}, fail=True).returncode != 0
+@pytest.mark.parametrize("field", ["secrets", "rotating_secrets"])
+@pytest.mark.parametrize("bad", [None, {}, [], "unexpected"])
+@pytest.mark.parametrize("optimize", ["", "1"])
+def test_malformed_top_level_inventory_rejected(tmp_path, field, bad, optimize):
+    fixture = inventory()
+    fixture["data"][field] = bad
+    assert execute(tmp_path, fixture, optimize=optimize).returncode != 0
 
 
-@pytest.mark.parametrize("broken_key", [{}, {"type": 1, "type_str": "aes256k"}, "opaque-key", None])
-def test_unrecognized_key_among_valid_keys_cannot_pass(tmp_path, broken_key):
-    fixture = {"data": {"secrets": [{"auth": {
-        "key": {"type": 2, "type_str": "aes256k"}, "pending_key": broken_key}}],
-        "rotating_secrets": []}}
-    assert execute(tmp_path, fixture).returncode != 0
+def test_empty_document_and_failed_query_rejected(tmp_path):
+    assert execute(tmp_path, {}).returncode != 0
+    assert execute(tmp_path, inventory(), fail=True).returncode != 0
