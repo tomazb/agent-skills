@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.27.5
+
+- Poll the named Deployment container for OLM propagation instead of using a filtered `oc wait` expression that older clients cannot parse. Bound both the polling deadline and individual reads; fail on timeout, API errors, or CSV replacement.
+- Execute both configuration modes against a mock old client, delayed propagation, and failure cases. Preserve rollout and named-container runtime checks after propagation.
+
 ## 1.27.4
 
 - Resolve CSV deployment/container indexes by name, correct absent/false/indirect/duplicate flags with a guarded JSON Patch, and preserve sidecars and unrelated environment entries. Share the procedure between 4.20 and 4.22.

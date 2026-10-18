@@ -5,6 +5,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 
 NAMESPACE = "openshift-storage"
 OPERATOR = "ocs-operator"
@@ -16,9 +17,9 @@ def require(condition, message):
         raise ValueError(message)
 
 
-def oc(*args):
+def oc(*args, timeout=200):
     return subprocess.run(["oc", "-n", NAMESPACE, *args], check=True,
-                          capture_output=True, text=True, timeout=200).stdout
+                          capture_output=True, text=True, timeout=timeout).stdout
 
 
 def named(items, name, description):
@@ -42,8 +43,8 @@ def correct(container):
     return [e for e in environment(container) if e.get("name") == "SINGLE_NODE"] == [FLAG]
 
 
-def load():
-    items = json.loads(oc("get", "csv,deployment", "-o", "json"))["items"]
+def load(timeout=200):
+    items = json.loads(oc("get", "csv,deployment", "-o", "json", timeout=timeout))["items"]
     csvs = [x for x in items if x.get("kind") == "ClusterServiceVersion"
             and x["metadata"]["name"].startswith("ocs-operator.")]
     deployments = [x for x in items if x.get("kind") == "Deployment" and x["metadata"]["name"] == OPERATOR]
@@ -87,7 +88,21 @@ def verify():
     print("Check StorageCluster reconciliation conditions separately")
 
 
-def configure(configuration_only=False):
+def wait_for_propagation(csv_uid, timeout):
+    """Poll named templates without requiring filtered oc-wait support."""
+    deadline = time.monotonic() + timeout
+    while True:
+        remaining = max(0, deadline - time.monotonic())
+        csv, deployment, _, _, container = load(timeout=max(1, min(30, remaining)))
+        require(csv["metadata"]["uid"] == csv_uid and correct(container), "OCS CSV changed during propagation")
+        if correct(operator_container(deployment["spec"])[1]):
+            return
+        remaining = deadline - time.monotonic()
+        require(remaining > 0, "OLM did not propagate SINGLE_NODE to the Deployment before timeout")
+        time.sleep(min(5, remaining))
+
+
+def configure(configuration_only=False, propagation_timeout=180):
     csv, _, di, ci, container = load()
     env = environment(container)
     if not correct(container):
@@ -105,8 +120,7 @@ def configure(configuration_only=False):
         oc("patch", "csv", csv["metadata"]["name"], "--type=json", "-p", json.dumps(patch))
     # CSV reconciliation is asynchronous; wait for OLM to update the desired Pod
     # template before checking its rollout. A healthy old Deployment is insufficient.
-    flag_path = '{.spec.template.spec.containers[?(@.name=="ocs-operator")].env[?(@.name=="SINGLE_NODE")].value}'
-    oc("wait", "deployment/ocs-operator", "--for=jsonpath=" + flag_path + "=true", "--timeout=3m")
+    wait_for_propagation(csv["metadata"]["uid"], propagation_timeout)
     if configuration_only:
         desired_configuration()
         print("Desired CSV/Deployment configuration verified; run check after the operator starts")
@@ -119,13 +133,17 @@ def main():
     parser.add_argument("action", choices=("check", "configure"))
     parser.add_argument("--configuration-only", action="store_true",
                         help="Configure desired templates before a StorageCluster exists; does not verify runtime")
+    parser.add_argument("--propagation-timeout", type=int, default=180,
+                        help="Seconds to poll OLM template propagation (default: 180; 0 checks once)")
     args = parser.parse_args()
     if args.configuration_only and args.action != "configure":
         parser.error("--configuration-only requires configure")
+    if args.propagation_timeout < 0:
+        parser.error("--propagation-timeout must be nonnegative")
     try:
         check_topology()
         if args.action == "configure":
-            configure(args.configuration_only)
+            configure(args.configuration_only, args.propagation_timeout)
         else:
             verify()
     except subprocess.CalledProcessError as error:

@@ -175,7 +175,7 @@ On the observed ODF 4.20 builds, `controlPlaneTopology: SingleReplica` did not r
 python3 scripts/sno_operator.py check
 ```
 
-Configure the flag through the installed `ocs-operator` CSV. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes. The helper resolves both deployment and container indexes by name, uses a resource-version JSON Patch precondition, adds an absent flag, replaces a wrong literal or `valueFrom`, and removes duplicate flags. It preserves sidecars and unrelated environment entries. An already-correct CSV still requires OLM propagation, full rollout, and runtime verification before success. Before creating a StorageCluster, use the explicitly configuration-only pre-install variant below.
+Configure the flag through the installed `ocs-operator` CSV. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes. The helper resolves both deployment and container indexes by name, uses a resource-version JSON Patch precondition, adds an absent flag, replaces a wrong literal or `valueFrom`, and removes duplicate flags. It preserves sidecars and unrelated environment entries. An already-correct CSV still requires OLM propagation, full rollout, and runtime verification before success. Propagation uses a bounded JSON poll of the named Deployment container, avoiding filtered `oc wait` expressions on older clients. The default is 180 seconds; `--propagation-timeout 0` checks once. Before creating a StorageCluster, use the explicitly configuration-only pre-install variant below.
 
 ```bash
 # Configure SNO operator through its CSV, then verify rollout and runtime.

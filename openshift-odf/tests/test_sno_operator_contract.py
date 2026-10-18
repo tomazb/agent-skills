@@ -22,6 +22,13 @@ if args[:2] != ['-n', 'openshift-storage']:
 args = args[2:]
 path = Path(os.environ['OC_FIXTURE'])
 state = json.loads(path.read_text())
+def propagate():
+    csv = next(i for i in state['items'] if i['kind'] == 'ClusterServiceVersion')
+    dep = next(i for i in state['items'] if i['kind'] == 'Deployment')
+    template = next(i for i in csv['spec']['install']['spec']['deployments'] if i['name'] == 'ocs-operator')
+    source = next(i for i in template['spec']['template']['spec']['containers'] if i['name'] == 'ocs-operator')
+    dest = next(i for i in dep['spec']['template']['spec']['containers'] if i['name'] == 'ocs-operator')
+    dest['env'] = copy.deepcopy(source['env'])
 with Path(os.environ['OC_LOG']).open('a') as log:
     log.write(json.dumps(args) + '\n')
 if args[0] == state.get('fail'):
@@ -29,12 +36,21 @@ if args[0] == state.get('fail'):
 if args == ['get', 'infrastructure', 'cluster', '-o', 'json']:
     print(json.dumps({'status': {'controlPlaneTopology': state['topology']}}))
 elif args == ['get', 'csv,deployment', '-o', 'json']:
+    if state.get('_patched'):
+        if state.get('fail') == 'poll':
+            raise SystemExit(42)
+        state['_polls'] = state.get('_polls', 0) + 1
+        if state.get('propagate_after') and state['_polls'] >= state['propagate_after']:
+            propagate()
+        path.write_text(json.dumps(state))
     print(json.dumps({'items': state['items']}))
 elif args == ['rollout', 'status', 'deploy/ocs-operator', '--timeout=3m']:
     pass  # Status may still be stale: the real helper must re-read it.
 elif args[:2] == ['wait', 'deployment/ocs-operator']:
-    if args[2:] != ['--for=jsonpath={.spec.template.spec.containers[?(@.name=="ocs-operator")].env[?(@.name=="SINGLE_NODE")].value}=true', '--timeout=3m']:
-        raise SystemExit(99)
+    if state.get('old_client'):
+        sys.stderr.write('unrecognized condition: filtered jsonpath\n')
+        raise SystemExit(42)
+    raise SystemExit(99)
 elif args == ['exec', 'deploy/ocs-operator', '-c', 'ocs-operator', '--', 'printenv', 'SINGLE_NODE']:
     sys.stdout.write(state['runtime'])
 elif args[:2] == ['patch', 'csv'] and args[3:5] == ['--type=json', '-p']:
@@ -61,12 +77,9 @@ elif args[:2] == ['patch', 'csv'] and args[3:5] == ['--type=json', '-p']:
         else:
             raise SystemExit(99)
     csv.update(updated)
-    if state.get('propagate', True):
-        dep = next(i for i in state['items'] if i['kind'] == 'Deployment')
-        template = next(i for i in csv['spec']['install']['spec']['deployments'] if i['name'] == 'ocs-operator')
-        source = next(i for i in template['spec']['template']['spec']['containers'] if i['name'] == 'ocs-operator')
-        dest = next(i for i in dep['spec']['template']['spec']['containers'] if i['name'] == 'ocs-operator')
-        dest['env'] = copy.deepcopy(source['env'])
+    state['_patched'] = True
+    if state.get('propagate', True) and not state.get('propagate_after'):
+        propagate()
     path.write_text(json.dumps(state))
 else:
     raise SystemExit(99)
@@ -93,7 +106,7 @@ def fixture(csv_env=None, deployment_env=None):
     return {"items": [csv, dep], "topology": "SingleReplica", "runtime": "true\n"}
 
 
-def execute(tmp_path, state, *, configure=False, configuration_only=False, script_override=None):
+def execute(tmp_path, state, *, configure=False, configuration_only=False, script_override=None, propagation_timeout=None):
     source = tmp_path / "fixture.json"
     source.write_text(json.dumps(state))
     log = tmp_path / "oc.jsonl"
@@ -105,6 +118,8 @@ def execute(tmp_path, state, *, configure=False, configuration_only=False, scrip
     if configuration_only:
         marker = "# Pre-install SNO desired configuration only"
     script = script_override or next(b for b in blocks if marker in b)
+    if propagation_timeout is not None:
+        script = script.rstrip() + " --propagation-timeout " + str(propagation_timeout) + "\n"
     run = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", script], cwd=ROOT,
                          env={**os.environ, "PATH": str(tmp_path) + os.pathsep + os.environ["PATH"],
                               "OC_FIXTURE": str(source), "OC_LOG": str(log)}, capture_output=True, text=True)
@@ -189,7 +204,9 @@ def test_configure_targets_named_operator_and_preserves_other_entries(tmp_path, 
     if not added:
         target["env"].append(FLAG)
     assert final["items"][0] == expected
-    assert next(i for i, c in enumerate(calls) if c[0] == "patch") < next(i for i, c in enumerate(calls) if c[0] == "wait")
+    patched = next(i for i, c in enumerate(calls) if c[0] == "patch")
+    assert calls[patched + 1] == ["get", "csv,deployment", "-o", "json"]
+    assert not any(c[0] == "wait" for c in calls)
 
 
 def test_correct_csv_is_noop_but_still_checks_runtime(tmp_path):
@@ -200,7 +217,7 @@ def test_correct_csv_is_noop_but_still_checks_runtime(tmp_path):
     assert any(c[0] == "exec" for c in calls)
 
 
-@pytest.mark.parametrize("failure", ["patch", "wait", "rollout", "exec"])
+@pytest.mark.parametrize("failure", ["patch", "poll", "rollout", "exec"])
 def test_failed_remediation_never_reports_success(tmp_path, failure):
     state = fixture([], []); state["fail"] = failure
     run, _, _ = execute(tmp_path, state, configure=True)
@@ -210,7 +227,10 @@ def test_failed_remediation_never_reports_success(tmp_path, failure):
 
 def test_unpropagated_patch_rejected(tmp_path):
     state = fixture([], []); state["propagate"] = False
-    assert execute(tmp_path, state, configure=True)[0].returncode != 0
+    run, _, calls = execute(tmp_path, state, configure=True, propagation_timeout=0)
+    assert run.returncode != 0
+    assert "before timeout" in run.stderr
+    assert not any(c[0] in ("rollout", "exec") for c in calls)
 
 
 def test_ambiguous_csv_cannot_patch(tmp_path):
@@ -242,3 +262,26 @@ def test_preinstall_configures_only_desired_state_without_runtime_claim(tmp_path
 def test_default_runtime_check_rejects_zero_replica_operator(tmp_path):
     state = fixture([FLAG], [FLAG]); state["items"][1]["spec"]["replicas"] = 0
     assert execute(tmp_path, state)[0].returncode != 0
+
+
+@pytest.mark.parametrize("configuration_only", [False, True])
+def test_old_client_can_configure_without_filtered_wait(tmp_path, configuration_only):
+    state = fixture([], []); state["old_client"] = True
+    run, _, calls = execute(tmp_path, state, configure=not configuration_only,
+                            configuration_only=configuration_only)
+    assert run.returncode == 0, run.stderr
+    assert not any(c[0] == "wait" for c in calls)
+
+
+@pytest.mark.parametrize("configuration_only", [False, True])
+def test_delayed_olm_propagation_is_polled_before_verification(tmp_path, configuration_only):
+    state = fixture([], []); state["propagate_after"] = 2; state["old_client"] = True
+    run, final, calls = execute(tmp_path, state, configure=not configuration_only,
+                               configuration_only=configuration_only)
+    assert run.returncode == 0, run.stderr
+    assert final['_polls'] >= 2
+    assert not any(c[0] == "wait" for c in calls)
+    if not configuration_only:
+        patched = next(i for i, c in enumerate(calls) if c[0] == "patch")
+        watched = next(i for i, c in enumerate(calls) if c[0] == "rollout")
+        assert calls[patched + 1:watched].count(["get", "csv,deployment", "-o", "json"]) >= 2
