@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.27.3
+
+- Diagnose SNO node-count errors with a read-only gate that verifies literal `SINGLE_NODE=true` in the named OCS operator container in both CSV and Deployment. Recheck after CSV replacement; do not classify blocked reconciliation or upgrades as cosmetic because Ceph and PVC I/O are healthy.
+- Verify the ODF 4.20.19 fix live: restoring the CSV flag unblocks reconciliation and upgrades, resumes the bundled Ceph image rollout, and requires completing the documented SNO CSI controller rollout. Fresh RBD/CephFS I/O and cleanup passed with original storage inventories and defaults preserved.
+- Execute the documented gate against mocked `oc`, covering missing, false, indirect, duplicate, sidecar-only, ambiguous, valid, and failed-query cases.
+
 ## 1.27.2
 
 - Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.

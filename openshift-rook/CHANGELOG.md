@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.18.8
+
+- Add existing-cluster CephX warning diagnosis: distinguish emergency daemon overrides and MonMap cipher policy from key material and SNO redundancy. Audit all key types before a staged policy change, preserving active clients and CSI generations.
+- Verify the two-stage correction live on Rook 1.20.5 / Ceph 20.2.4 SNO: remove the daemon override, verify a fresh RBD mount, then restrict the effective MonMap to AES256K. All three warnings cleared; fresh RBD/CephFS/NFS I/O and cleanup passed with original storage inventories and defaults preserved.
+- Replace the admin-key prefix check with the full `auth dump-keys` audit. Execute the documented filter against mocked `oc`, including pending, expiring, rotating, classic-AES, empty, unknown, and failed-query results, without printing credentials.
+
 ## 1.18.7
 
 - Keep private CA bundles in a separate `rgw-smoke-private-ca` ConfigMap and select the Pod's CA source with `RGW_TLS_CA_CONFIGMAP`. The private flow no longer deletes or edits the service-CA-injected ConfigMap, including when input or apply fails. Stateful execution tests verify both ConfigMaps and the Pod's selected source.
