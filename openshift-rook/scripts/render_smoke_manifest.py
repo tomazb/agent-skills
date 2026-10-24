@@ -30,7 +30,7 @@ metadata:
   name: rbd-smoke-writer
   namespace: {namespace}
 spec:
-  {node_name_line}containers:
+  {node_affinity_block}containers:
   - name: writer
     image: registry.access.redhat.com/ubi9/ubi-minimal
     command: ["sh", "-c", "sleep 3600"]
@@ -75,7 +75,7 @@ metadata:
   name: cephfs-smoke-writer
   namespace: {namespace}
 spec:
-  {node_name_line}containers:
+  {node_affinity_block}containers:
   - name: writer
     image: registry.access.redhat.com/ubi9/ubi-minimal
     command: ["sh", "-c", "sleep 3600"]
@@ -95,13 +95,30 @@ spec:
       claimName: cephfs-smoke-pvc
 """
 
+_NODE_LABEL_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
 
-def _node_name_line(node_name: str | None) -> str:
+
+def _node_affinity_block(node_name: str | None) -> str:
     if not node_name:
         return ""
-    if re.fullmatch(r"[A-Za-z0-9.-]+", node_name) is None:
+    if len(node_name) > 253 or any(
+        _NODE_LABEL_RE.fullmatch(label) is None for label in node_name.split(".")
+    ):
         raise ValueError(f"invalid node name: {node_name}")
-    return f"nodeName: {node_name}\n  "
+    # matchFields uses the Node object's name, not a potentially different hostname label.
+    # Unlike spec.nodeName, required node affinity still uses the scheduler (including WFFC).
+    return (
+        "affinity:\n"
+        "    nodeAffinity:\n"
+        "      requiredDuringSchedulingIgnoredDuringExecution:\n"
+        "        nodeSelectorTerms:\n"
+        "        - matchFields:\n"
+        "          - key: metadata.name\n"
+        "            operator: In\n"
+        "            values:\n"
+        f"            - {node_name}\n"
+        "  "
+    )
 
 
 def render_smoke_manifest(
@@ -111,14 +128,14 @@ def render_smoke_manifest(
     output: str,
     node_name: str | None = None,
 ) -> None:
-    node_name_line = _node_name_line(node_name)
+    node_affinity_block = _node_affinity_block(node_name)
     if mode == "rbd":
         yaml = RBD_SMOKE_YAML.format(
-            namespace=namespace, storage_class=storage_class, node_name_line=node_name_line
+            namespace=namespace, storage_class=storage_class, node_affinity_block=node_affinity_block
         )
     elif mode == "cephfs":
         yaml = CEPHFS_SMOKE_YAML.format(
-            namespace=namespace, storage_class=storage_class, node_name_line=node_name_line
+            namespace=namespace, storage_class=storage_class, node_affinity_block=node_affinity_block
         )
     else:
         raise ValueError(f"Unsupported mode: {mode}. Use 'rbd' or 'cephfs'.")
@@ -138,7 +155,7 @@ def main() -> int:
     parser.add_argument(
         "--node-name",
         default=None,
-        help="Pin the smoke pod to this node. Omit to let the scheduler choose.",
+        help="Constrain scheduling to this Node's metadata.name (supports WaitForFirstConsumer).",
     )
     args = parser.parse_args()
 

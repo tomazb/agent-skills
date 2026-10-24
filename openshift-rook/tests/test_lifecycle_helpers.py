@@ -3,10 +3,9 @@ from __future__ import annotations
 import importlib.util
 from pathlib import Path
 
-SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
+import pytest
 
-# Loaded by path under a name of its own: openshift-odf ships a render_smoke_manifest
-# module too.
+SCRIPTS_DIR = Path(__file__).resolve().parents[1] / "scripts"
 _spec = importlib.util.spec_from_file_location(
     "openshift_rook_render_smoke_manifest", SCRIPTS_DIR / "render_smoke_manifest.py"
 )
@@ -34,27 +33,35 @@ def test_smoke_manifest_cephfs_renders(tmp_path):
     assert "ReadWriteMany" in text
 
 
-def test_smoke_manifest_pins_node(tmp_path):
+@pytest.mark.parametrize("mode", ["rbd", "cephfs"])
+@pytest.mark.parametrize("node", ["worker-a", "worker-a.example.test"])
+def test_smoke_manifest_pins_node_with_scheduler_affinity(tmp_path, mode, node):
     pinned = tmp_path / "pinned.yaml"
     unpinned = tmp_path / "unpinned.yaml"
-    render_smoke_manifest(
-        "rbd", "rook-rbd-smoke", "rook-ceph-block", str(pinned), node_name="worker-a"
-    )
-    render_smoke_manifest("rbd", "rook-rbd-smoke", "rook-ceph-block", str(unpinned))
-    assert "nodeName: worker-a" in pinned.read_text(encoding="utf-8")
-    assert "nodeName" not in unpinned.read_text(encoding="utf-8")
+    render_smoke_manifest(mode, "rook-rbd-smoke", "rook-ceph-block", str(pinned), node_name=node)
+    render_smoke_manifest(mode, "rook-rbd-smoke", "rook-ceph-block", str(unpinned))
+    pinned_text = pinned.read_text(encoding="utf-8")
+    unpinned_text = unpinned.read_text(encoding="utf-8")
+    assert "spec:\n  affinity:\n    nodeAffinity:\n" in pinned_text
+    assert "requiredDuringSchedulingIgnoredDuringExecution:" in pinned_text
+    assert "- matchFields:\n          - key: metadata.name\n            operator: In\n            values:\n            - " + node in pinned_text
+    assert "nodeName:" not in pinned_text
+    assert "affinity:" not in unpinned_text
+    assert "nodeName:" not in unpinned_text
 
 
-def test_smoke_manifest_rejects_unsafe_node_name(tmp_path):
-    import pytest
-
+@pytest.mark.parametrize("node", [
+    "node: bad", "worker-a\nmetadata: injected", "-worker", "worker-", "worker..a",
+    "Worker", "a" * 64, "a" * 254,
+])
+def test_smoke_manifest_rejects_unsafe_node_name(tmp_path, node):
     with pytest.raises(ValueError):
         render_smoke_manifest(
-            "rbd", "rook-rbd-smoke", "rook-ceph-block", str(tmp_path / "bad.yaml"), node_name="node: bad"
+            "rbd", "rook-rbd-smoke", "rook-ceph-block", str(tmp_path / "bad.yaml"), node_name=node
         )
+    assert not (tmp_path / "bad.yaml").exists()
 
 
 def test_smoke_manifest_invalid_mode_raises(tmp_path):
-    import pytest
     with pytest.raises(ValueError):
         render_smoke_manifest("invalid", "ns", "sc", str(tmp_path / "out.yaml"))
