@@ -35,6 +35,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Backup, DR, and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node eviction, OSD replacement, operator uninstall, cluster destruction, or leftovers of an interrupted uninstall**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **Ceph `AUTH_*` cipher warnings**: use the strict full-record audit (`scripts/check_cephx_key_types.py`) and staged policy checks in `references/validation-hardening.md`. These warnings are not a SNO replica-count issue; audit rotating keys as well as client keys before tightening `allowedCiphers`.
 - **VM storage defaults, CDI StorageProfiles, or `CDIStorageProfilesIncomplete`**: use `references/vm-storage-profiles.md`.
 
 ## Core Safety Rules

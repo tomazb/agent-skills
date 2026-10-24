@@ -135,12 +135,12 @@ After the cluster is `Ready`, `status.cephx.csi.keyType` is `aes256k`, the admin
 
 ```bash
 oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.cephx.csi.keyType}{"\n"}{.spec.security.cephx.allowedCiphers}{"\n"}'
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth get-key client.admin | head -c 2; echo
+# Run the full key-type audit in references/validation-hardening.md before restricting existing keys.
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 oc -n rook-ceph get pod -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{.spec.containers[0].args}{"\n"}{end}'
 ```
 
-The mon arguments do not include `--mon-auth-emergency-allowed-ciphers`. On a cluster that already has keys, list every entity with `ceph auth ls` and read only the key prefix. Every prefix is `Ag` before `allowedCiphers` stays `aes256k` alone. A prefix of `AQ` means that entity still uses classic AES, so leave `aes` in `allowedCiphers` until that key is rotated. Restricting the list while a daemon key is still classic AES returns `RADOS permission denied` and can make the cluster unavailable.
+The mon arguments do not include `--mon-auth-emergency-allowed-ciphers`. On an existing cluster, use `ceph auth dump-keys` and the key-type gate in `references/validation-hardening.md` before restricting `allowedCiphers`. Checking only the admin key, CSI Secrets, or `ceph auth ls` is insufficient: pending, expiring, and rotating service keys also matter. Every audited key must report `aes256k`. If any key still uses `aes`, leave it allowed until that key and its consumers have migrated. Restricting the list while a daemon key is still classic AES returns `RADOS permission denied` and can make the cluster unavailable.
 
 **Probe one RBD volume on every schedulable node** after the block pool and StorageClass from `references/rbd-block-pools.md` exist. Substitute the class this install uses. A passing probe is the RBD smoke for `references/validation-hardening.md`. One scheduler-placed pod proves the cipher only on the node where it lands. The smoke image is `ubi9/ubi-minimal`, which has a shell and does not have `awk`, so the mount check stays inside `sh -c`.
 

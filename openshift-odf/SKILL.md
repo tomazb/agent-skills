@@ -38,6 +38,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
 - **CDI/KubeVirt VM storage defaults or StorageProfile configuration**: use `references/vm-storage-profiles.md`.
 - **Observed SNO configurations or ODF 4.16, 4.20, and 4.22 SNO regression workarounds**: use `references/validated-odf-sno.md` as version-scoped evidence, not as a universal default.
+- **SNO reports "Expected 3, found 1"**: use `scripts/sno_operator.py check` to verify `SINGLE_NODE=true` in the installed OCS CSV, current Deployment, and named running operator container; see `references/validated-odf-sno.md`, including after CSV upgrades. `flexibleScaling: true` and Ceph `HEALTH_OK` do not prove successful ODF reconciliation; do not dismiss blocked upgrades as cosmetic.
 - **Not enough vCPUs, workloads Pending on `Insufficient cpu`, or a lab SNO that should run ODF more modestly**: run the CPU Request Budget check in `references/install-and-preflight.md`, then the CPU-request floor in `references/validated-odf-sno.md` (`render_sno_remediation.py --lab-resources`). Lab/non-production only; never `resourceProfile: lean` on 4.20/4.22 SNO.
 
 ## Core Safety Rules

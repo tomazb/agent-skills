@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.27.5
+
+- Poll the named Deployment container for OLM propagation instead of using a filtered `oc wait` expression that older clients cannot parse. Bound both the polling deadline and individual reads; fail on timeout, API errors, or CSV replacement.
+- Execute both configuration modes against a mock old client, delayed propagation, and failure cases. Preserve rollout and named-container runtime checks after propagation.
+
+## 1.27.4
+
+- Resolve CSV deployment/container indexes by name, correct absent/false/indirect/duplicate flags with a guarded JSON Patch, and preserve sidecars and unrelated environment entries. Share the procedure between 4.20 and 4.22.
+- Verify OLM propagation, current Deployment generation and replicas, rollout completion, and exact runtime `printenv` output from `-c ocs-operator`. Pre-install configuration-only mode explicitly avoids a runtime readiness claim. Stateful command-execution tests cover patching, no-op checks, stale rollouts, runtime mismatches, and CLI failures.
+- Use portable env-based Python shebangs for mocked CLIs.
+
+## 1.27.3
+
+- Diagnose SNO node-count errors with a read-only gate that verifies literal `SINGLE_NODE=true` in the named OCS operator container in both CSV and Deployment. Recheck after CSV replacement; do not classify blocked reconciliation or upgrades as cosmetic because Ceph and PVC I/O are healthy.
+- Verify the ODF 4.20.19 fix live: restoring the CSV flag unblocks reconciliation and upgrades, resumes the bundled Ceph image rollout, and requires completing the documented SNO CSI controller rollout. Fresh RBD/CephFS I/O and cleanup passed with original storage inventories and defaults preserved.
+- Execute the documented gate against mocked `oc`, covering missing, false, indirect, duplicate, sidecar-only, ambiguous, valid, and failed-query cases.
+
 ## 1.27.2
 
 - Run VM provisioning verification in a subshell so fail-fast checks return their failure status without exiting the caller's interactive Bash session or changing its shell options. Execute success and failure cases in interactive Bash to guard this behavior.

@@ -27,6 +27,46 @@ oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api
 
 Confirm exactly one default StorageClass when defaulting is expected.
 
+## CephX cipher warnings on existing clusters
+
+For Rook **1.20.5 / Ceph 20.2.4** (also check the installed version's [key-rotation guide](https://github.com/rook/rook/blob/v1.20.5/Documentation/Storage-Configuration/Advanced/cephx-key-rotation.md)), distinguish key material from policy:
+
+- `AUTH_EMERGENCY_CIPHERS_SET`: inspect monitor arguments for `--mon-auth-emergency-allowed-ciphers` and `spec.security.cephx.daemon.keyType`. An explicit daemon override can leave this temporary recovery mechanism enabled even when all keys are AES256K.
+- `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE`: inspect `spec.security.cephx.allowedCiphers` and the MonMap policy. An omitted/empty list allows classic AES; creating AES256K keys alone does not restrict it.
+- These are authentication-policy warnings, not the expected loss of redundancy on SNO. Do not change pool replica counts, downgrade Ceph, or rotate working keys merely to clear them.
+
+Read the requested policy, effective policy, and monitor arguments:
+
+```bash
+oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.spec.security.cephx}{"\n"}{.status.cephx}{"\n"}'
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mon dump --format=json
+oc -n rook-ceph get pod -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{range .spec.containers[?(@.name=="mon")]}{.args}{"\n"}{end}{end}'
+```
+
+In the MonMap, inspect `auth_allowed_ciphers`, `auth_preferred_cipher`, and `auth_service_cipher`. Cipher policy lives in the MonMap; an empty `ceph config dump` cipher search does not prove the policy is restricted. Redact monitor addresses before recording output.
+
+The audit below prints only key-type counts, including pending, expiring, and rotating keys. The Ceph 20.2.4 schema check requires nonempty conventional and rotating inventories and validates every auth key and every rotating `expiring_key.key`. Missing records, malformed structures, unknown or classic-AES keys, and failed queries return nonzero, including with `PYTHONOPTIMIZE` enabled. Explicit unused `pending_key` slots (`type: 0`, `type_str: none`) are accepted; an empty primary or rotating key is rejected. Do not paste raw auth dumps or key values into evidence. If no toolbox is deployed, use an existing `rook-ceph-operator` Pod with `ceph -c /var/lib/rook/rook-ceph/rook-ceph.config` in place of the toolbox invocation; discovering a warning does not require creating a toolbox.
+
+```bash
+# Audit all CephX key types before restricting allowedCiphers.
+(
+set -euo pipefail
+oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph auth dump-keys --format=json \
+  | python3 scripts/check_cephx_key_types.py
+)
+```
+
+Observed on OCP **4.20.34**, SNO, Rook **1.20.5 / Ceph 20.2.4**: all 28 audited key records were AES256K, but the MonMap allowed both `aes` and `aes256k`, `allowedCiphers` was omitted, and `daemon.keyType: aes256k` kept the emergency monitor argument enabled. Removing only the daemon override cleared `AUTH_EMERGENCY_CIPHERS_SET` while the two permissive-policy warnings remained. After a fresh kernel RBD write/read probe passed, setting `allowedCiphers: [aes256k]` cleared both remaining warnings. Verify the **effective MonMap**, not just the requested CR value, before treating a test as evidence of the restricted policy.
+
+Post-remediation verification: Ceph `HEALTH_OK` with no health checks, all **217 PGs active+clean**, the single monitor in quorum without an emergency cipher argument, and fresh RBD, CephFS, and NFS PVC write/sync/read probes passed. Post-policy probes require the effective AES256K-only MonMap before claim creation. Smoke namespaces and their claiming PVs were deleted, original PVC/PV/namespace inventories and StorageClasses/defaults were preserved, and the CephCluster spec changed only by removing the daemon override and adding the allowed-cipher list. No key rotation, node drain, or pool change was needed.
+
+For a cluster with that evidence, plan two separate changes through the **CephCluster**, preserving unrelated security settings:
+
+1. Remove only `spec.security.cephx.daemon.keyType`; leave the allowed-cipher policy unchanged. Let Rook reconcile the monitors, then verify quorum and that **every** monitor has lost the emergency argument. Removing this override may restart monitors; on SNO, plan for interruption rather than draining its only node.
+2. Re-run the full audit. Only when every key is AES256K and the RBD mount/write probe in `references/install-and-preflight.md` passes on every intended node, set `spec.security.cephx.allowedCiphers: [aes256k]`. Account for external clients, mirror peers, NFS per-export keys, and retained CSI generations before retiring classic AES.
+
+If the audit reports any `aes`, stop before step 2 and use the version-matched migration guide; rotating service tokens may take 2–3 hours to expire. Keep in-use CSI generations until their mounts have migrated. If the audit command or schema is unavailable, do not infer success from key prefixes. After either change, check Ceph health, quorum, OSDs, PGs, the effective MonMap, and fresh RBD/CephFS write/read probes; clean up the smoke namespaces. Do not mute warnings to report a successful fix.
+
 ## Smoke Test
 
 Create a namespace, PVC, and writer pod using the intended StorageClass. Validate:

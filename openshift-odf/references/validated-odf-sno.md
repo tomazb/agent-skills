@@ -146,7 +146,7 @@ spec:
             app: rook-ceph-osd-prepare
 ```
 
-`flexibleScaling: true` allows ODF to accept a single node (without it the StorageCluster reconciler rejects the CR with "Not enough nodes found: Expected 3, found 1").
+Keep `flexibleScaling: true`, but it does not replace the operator's `SINGLE_NODE=true` setting. In the [release-4.20 node-count calculation](https://github.com/red-hat-storage/ocs-operator/blob/release-4.20/controllers/storagecluster/cephcluster.go), `getMinDeviceSetReplica()` defaults to three unless the operator recognizes a single-node deployment. A replica-1 device set alone does not lower that minimum.
 
 **It does not silence that message on every z-stream.** Observed on **4.20.17**: with `flexibleScaling: true` set and the cluster fully serving, the reconcile loop still fails with
 
@@ -156,41 +156,35 @@ Error while reconciling: Not enough nodes found: Expected 3, found 1
 
 logged roughly 200 times an hour, leaving `.status.phase: Error` permanently. The same cluster read `phase: Ready` on 4.20.16 before the automatic upgrade.
 
-Do not gate validation on `.status.phase` alone here. Read the conditions instead — on the affected cluster `Available=True`, `Degraded=False`, `Upgradeable=True` and only `ReconcileComplete=False` carried the node-count message, while `ceph -s` was `HEALTH_OK`, all three storage modes passed smoke tests, and RBD/CephFS/RGW served normally. Treat `phase: Error` with this specific message and otherwise-healthy conditions as cosmetic-but-noisy, and check the ODF release notes before assuming a real fault.
+Do not gate validation on `.status.phase` alone here. On that 4.20.17 observation, `Available=True`, `Degraded=False`, `Upgradeable=True` and only `ReconcileComplete=False` carried the node-count message, while `ceph -s` was `HEALTH_OK` and all three storage modes passed smoke tests. Those observations establish data-plane availability, not successful reconciliation. Check the operator flag below before attributing the error to a z-stream regression; do not classify it as cosmetic while `Progressing=True`, `Upgradeable=False`, or the SNO flag is missing.
+
+Observed again on OCP **4.20.37 / ODF 4.20.19**, SNO: `flexibleScaling: true`, one eligible node, and a replica-1 device set, but `SINGLE_NODE` was absent from both the installed CSV and Deployment. Ceph was `HEALTH_OK` while `ReconcileComplete=False`, `Progressing=True`, and `Upgradeable=False`. Restoring literal `SINGLE_NODE=true` in the installed CSV cleared the node-count error. After rollout, StorageCluster reached `Ready`, with `ReconcileComplete=True`, `Available=True`, `Progressing=False`, `Degraded=False`, and `Upgradeable=True`. This SNO did not need additional nodes.
+
+Restoring the flag also resumed previously blocked reconciliation: ODF applied the Ceph image bundled in its installed CSV and rolled dependent workloads. Both CSI drivers were already configured for one replica, but the image rollout hit the old-Pod anti-affinity deadlock described under **Regression 3** below. Replacing the old controller Pod one driver at a time completed both rollouts with one updated, Ready replica each. Plan for the queued rollout when restoring this flag on an existing SNO; the fix can do more than update status conditions.
+
+Post-remediation verification: Ceph `HEALTH_OK`, all **296 PGs active+clean**, three monitors in quorum, NooBaa `Ready`, and fresh RBD and CephFS PVC write/sync/read probes passed. Both smoke namespaces and their claiming PVs were deleted. The StorageCluster spec, StorageClasses/defaults, and original PVC/PV/namespace inventories were unchanged; the OCS CSV changed only by the added flag, and the generated CephCluster spec changed only to the bundled Ceph image.
 
 Do **not** set `resourceProfile: lean` — in ODF 4.20 this traps the StorageCluster in `Progressing` indefinitely.
 
 ## ODF 4.20 Regression 1: `SINGLE_NODE=true` Not Auto-Set
 
-ODF 4.20 does **not** auto-detect `controlPlaneTopology: SingleReplica` to set its internal `SINGLE_NODE` flag. Patch the `ocs-operator` CSV to inject it. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes within seconds.
+On the observed ODF 4.20 builds, `controlPlaneTopology: SingleReplica` did not result in the internal `SINGLE_NODE` flag being set. Confirm the topology first, then run this read-only gate. It checks the named operator container in both the CSV and Deployment; a flag on a sidecar does not count.
 
 ```bash
-# Select exactly one ocs-operator CSV. Stop if zero or several match: patching
-# the wrong CSV (or an old one left by a failed upgrade) silently does nothing.
-# Anchored on "ocs-operator." so ocs-client-operator does not match.
-mapfile -t OCS_CSVS < <(oc -n openshift-storage get csv \
-  -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' | grep '^ocs-operator\.')
-[ "${#OCS_CSVS[@]}" -eq 1 ] || { echo "expected 1 ocs-operator CSV, found ${#OCS_CSVS[@]}: ${OCS_CSVS[*]}" >&2; exit 1; }
-OCS_CSV="csv/${OCS_CSVS[0]}"
-
-# Confirm the flag is absent from that CSV before patching. Appending to the env
-# array is not idempotent — a rerun would add a duplicate SINGLE_NODE entry.
-if oc -n openshift-storage get "$OCS_CSV" \
-     -o jsonpath='{.spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*].name}' \
-     | tr ' ' '\n' | grep -qx SINGLE_NODE; then
-  echo "SINGLE_NODE already present in $OCS_CSV - nothing to patch" >&2
-  exit 0
-fi
-
-# Append SINGLE_NODE=true to the ocs-operator CSV env array
-oc -n openshift-storage patch "$OCS_CSV" \
-  --type json \
-  -p '[{"op":"add","path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/-","value":{"name":"SINGLE_NODE","value":"true"}}]'
-
-# Verify after rollout
-oc -n openshift-storage rollout status deploy/ocs-operator --timeout=3m
-oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE
+# Read-only SNO operator gate (requires confirmed SingleReplica topology).
+python3 scripts/sno_operator.py check
 ```
+
+Configure the flag through the installed `ocs-operator` CSV. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes. The helper resolves both deployment and container indexes by name, uses a resource-version JSON Patch precondition, adds an absent flag, replaces a wrong literal or `valueFrom`, and removes duplicate flags. It preserves sidecars and unrelated environment entries. An already-correct CSV still requires OLM propagation, full rollout, and runtime verification before success. Propagation uses a bounded JSON poll of the named Deployment container, avoiding filtered `oc wait` expressions on older clients. The default is 180 seconds; `--propagation-timeout 0` checks once. Before creating a StorageCluster, use the explicitly configuration-only pre-install variant below.
+
+```bash
+# Configure SNO operator through its CSV, then verify rollout and runtime.
+python3 scripts/sno_operator.py configure
+```
+
+Both commands require `SingleReplica` topology and exactly one matching CSV, deployment template, Deployment, and named operator container. The check verifies literal `SINGLE_NODE=true` in both desired templates, waits for rollout, re-reads the current Deployment generation and replica status, and runs `printenv SINGLE_NODE` using `-c ocs-operator`. The runtime value must be exactly `true`; incomplete rollouts, stale generations, runtime mismatches, and CLI failures return nonzero. It does not report a sidecar or desired template as proof of the running operator environment.
+
+Re-run the read-only gate after rollout and after every OCS CSV replacement or upgrade: a manual edit to one CSV is not a persistent Subscription setting. Then check StorageCluster conditions and recent operator logs for the node-count error. Require reconciliation to complete, `Progressing=False`, `Degraded=False`, `Available=True`, and `Upgradeable=True` before declaring ODF fully ready; `HEALTH_OK` and passing PVC tests alone do not establish that. Do not add nodes or alter healthy pools to compensate for a missing operator flag.
 
 ## ODF 4.20 Regression 2: Pool Sizes Not Reduced for SNO
 
@@ -509,7 +503,7 @@ assuming a pre-existing default is present to be preserved.
 
 - `HEALTH_OK (muted: POOL_NO_REDUNDANCY)`; 3 mons + 1 mgr, matching the mon-count note above.
 - All 12 Ceph pools report `size 1 min_size 1`, including `.mgr`.
-- `SINGLE_NODE=true` appears exactly once in the `ocs-operator` CSV env — the append is not idempotent, so the pre-patch check matters.
+- `SINGLE_NODE=true` appeared exactly once in the `ocs-operator` CSV env. The current helper preserves that invariant when rerun.
 - Both `drivers.csi.ceph.io` CRs report `controllerPlugin.replicas: 1`; MDS and RGW placements both read `kubernetes.io/hostname` + `ScheduleAnyway`.
 - `CephObjectStore` and `CephFilesystem` pools carry `size: 1` with `replicasPerFailureDomain` absent, and the filesystem has exactly one data pool — the layout the single-data-pool precondition assumes.
 - In `managedFields`, the `CephBlockPool` CR's `size`, `requireSafeReplicaSize`, and `failureDomain` are owned by `kubectl-patch` while `ocs-operator` owns only `targetSizeRatio`. Direct confirmation that the size has to be patched into the CR by hand, and that the freeze keeps ocs-operator off those fields.
@@ -520,15 +514,15 @@ assuming a pre-existing default is present to be preserved.
 Observed on a fresh `stable-4.20` (`ocs-operator.v4.20.17-rhodf`) SNO install:
 
 - **`enableCephTools` is rejected as an unknown field.** `oc patch OCSInitialization ocsinit -n openshift-storage -p '{"spec":{"enableCephTools":true}}'` returns `Warning: unknown field "spec.enableCephTools"` and makes no change on this build, so the toolbox route (`rook-ceph-tools` Deployment) never appears and a `rollout status`/`exec` on it times out. Run Ceph commands through the rook-operator pod with the cluster config instead of the toolbox: `ROOK_OP=$(oc -n openshift-storage get pods -l app=rook-ceph-operator -o name | head -1); CONF=/var/lib/rook/openshift-storage/openshift-storage.config; oc -n openshift-storage exec $ROOK_OP -- ceph -c $CONF -s`. The primary install and validation runbooks flag this same caveat on their toolbox steps.
-- **`ocs-operator` runs 0 replicas until a `StorageCluster` exists.** Right after the CSVs reach `Succeeded`, `deploy/ocs-operator` is `0/0`, so the Regression 1 verification `oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE` fails with no pod. Verify the patch on the **CSV/Deployment spec** at that stage — discover the CSV name first, then query its env:
+- **`ocs-operator` runs 0 replicas until a `StorageCluster` exists.** Right after CSV installation the Deployment can be `0/0`; a runtime check must fail rather than claim a running environment. For this pre-install stage only, use the explicit configuration-only mode:
 
   ```bash
-  OCS_CSV=$(oc -n openshift-storage get csv -o name | grep -m1 '/ocs-operator\.')
-  oc -n openshift-storage get "$OCS_CSV" -o jsonpath='{range .spec.install.spec.deployments[0].spec.template.spec.containers[0].env[?(@.name=="SINGLE_NODE")]}{.name}={.value}{"\n"}{end}'
-  # must print exactly: SINGLE_NODE=true   (an empty or false value does not enable the single-node logic)
+  # Pre-install SNO desired configuration only; no running-operator claim.
+  python3 scripts/sno_operator.py configure --configuration-only
   ```
 
-  The pod-level check only works after the StorageCluster scales ocs-operator up.
+  This still checks names, topology, exact literal values, and OLM propagation, but reports only desired configuration. After creating the StorageCluster and starting the operator, run `python3 scripts/sno_operator.py check` to verify rollout and runtime.
+
 - **`SINGLE_NODE=true` is best applied before creating the StorageCluster**, so ocs-operator reconciles pools with the single-node logic from the start.
 - **`ceph-volume raw ... prepare successful` may print `dmcrypt` even when encryption is not configured.** It is misleading wording, not proof of an encrypted OSD — confirm with `dmsetup ls` / `lsblk` (no crypt layer) rather than trusting the log line.
 - On this z-stream the `StorageCluster` reached `phase: Ready` with `ReconcileComplete=True` after all workarounds; the permanent `phase: Error` node-count noise documented above was not reproduced on every 4.20.17 install, so gate on conditions and `ceph -s`, not folklore about a fixed phase value.
@@ -648,20 +642,10 @@ This section documents additional observed evidence and workarounds for ODF 4.22
 
 ## ODF 4.22 Regression: `SINGLE_NODE=true` Not Auto-Set
 
-ODF 4.22 does **not** auto-detect `controlPlaneTopology: SingleReplica` to set its internal `SINGLE_NODE` flag. It must be injected manually via the `ocs-operator` CSV. **Patch the CSV, not the Deployment**; OLM reverts deployment-level env changes within seconds.
+On the observed ODF 4.22 builds, the operator did not automatically set `SINGLE_NODE=true`. Use the same name-based CSV procedure and runtime checks as **ODF 4.20 Regression 1** above, including its configuration-only mode when no StorageCluster exists yet:
 
 ```bash
-# Find current env array length (to append correctly)
-oc -n openshift-storage get csv ocs-operator.v4.22.0-rhodf \
-  -o jsonpath='{range .spec.install.spec.deployments[0].spec.template.spec.containers[0].env[*]}{.name}{"\n"}{end}'
-
-# Append SINGLE_NODE=true to ocs-operator CSV env
-oc -n openshift-storage patch csv ocs-operator.v4.22.0-rhodf \
-  --type json \
-  -p '[{"op":"add","path":"/spec/install/spec/deployments/0/spec/template/spec/containers/0/env/-","value":{"name":"SINGLE_NODE","value":"true"}}]'
-
-# Verify it's running in the pod (after rollout)
-oc -n openshift-storage exec deploy/ocs-operator -- env | grep SINGLE_NODE
+python3 scripts/sno_operator.py configure
 ```
 
 ## ODF 4.22 Regression: Empty `topologyKey` in Mon and OSD Placement

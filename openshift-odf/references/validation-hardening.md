@@ -58,6 +58,12 @@ Confirm exactly one default StorageClass when defaulting is expected, and that t
 
 ## SNO Readiness Gate (ODF 4.20 and 4.22)
 
+On ODF 4.20, first run the read-only `SINGLE_NODE=true` check in
+`references/validated-odf-sno.md` against both the installed CSV and Deployment,
+including after upgrades. An `Expected 3, found 1` reconciliation error with a
+missing flag or `Upgradeable=False` remains an operator issue even when PVC I/O
+works. Record operator reconciliation and data-plane availability separately.
+
 On Single Node OpenShift, **`StorageCluster: Ready` and `CephBlockPool: Ready` do not
 mean ODF is fully ready.** CephFS and RGW can still be broken. Do not skip the checks
 below or treat a green StorageCluster as proof that file and object storage work.
