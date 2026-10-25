@@ -32,6 +32,8 @@ REQUIRED_FILES = [
     "scripts/patch_longhorn_okd_manifest.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/check_snapshot_smoke.py",
+    "scripts/cleanup_smoke_namespace.sh",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]

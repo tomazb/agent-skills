@@ -613,6 +613,10 @@ Before declaring success, verify:
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - Exactly one default StorageClass exists when defaulting is expected.
 
+## Snapshot readiness
+
+After creating RBD/CephFS StorageClasses, complete [snapshot setup and verification](backup-restore-dr.md#snapshot-readiness) before declaring the install complete. Configure supported snapshotting even if the cluster has no PVCs yet. Record any explicit opt-out, unsupported service, or blocked prerequisite; healthy Ceph and CSI pods do not replace this check.
+
 ## Enable The Rook Orchestrator Backend
 
 The dashboard Orchestrator page and `ceph orch` commands stay unavailable until

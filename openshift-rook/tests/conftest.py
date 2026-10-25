@@ -88,7 +88,7 @@ Validated SNO evidence should include `v1.20.2`, `v20.2.2`, `rook-ceph-rgw-obc`,
 
 Use `python3 scripts/patch_rook_ceph_manifest.py` when preparing placeholder manifests.
 
-Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers.
+Use `python3 scripts/render_smoke_manifest.py` for smoke PVC writers. Use `python3 scripts/check_snapshot_smoke.py` for snapshot recovery.
 
 oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
@@ -228,6 +228,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "classify_ceph_ownership.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
         (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()

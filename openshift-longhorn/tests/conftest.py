@@ -123,6 +123,9 @@ def package_factory(tmp_path, validator):
             "#!/usr/bin/env python3\n", encoding="utf-8"
         )
 
+        (scripts / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
+        (scripts / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
+
         assets = root / "assets"
         assets.mkdir()
         (assets / "smoke-pvc-writer.yaml").write_text(

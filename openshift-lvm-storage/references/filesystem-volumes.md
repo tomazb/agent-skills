@@ -108,6 +108,10 @@ oc -n my-app get pvc my-pvc
 oc -n my-app exec my-app -- df -h /data
 ```
 
+## Snapshot readiness
+
+Complete [snapshot setup and restore verification](backup-restore-dr.md#snapshot-readiness) for supported thin-backed filesystem volumes before declaring setup complete. Reuse the operator-managed device-class snapshot class. Test a restore with a new PVC and consumer on the source node; `WaitForFirstConsumer` requires that consumer before binding.
+
 ## Safety Rules
 
 - Keep exactly one default StorageClass unless the user explicitly requests another policy.

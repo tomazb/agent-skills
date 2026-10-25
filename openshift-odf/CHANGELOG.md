@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.28.0
+
+- Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.
+- Run guarded snapshot/restore/data-comparison smoke tests for supported modes, with filesystem/raw-block handling, explicit context, labeled disposable sources, preserved retention policies, and verified snapshot/PV cleanup.
+- Audit leftover VolumeSnapshotContent during namespace cleanup and retain failed test status even when cleanup succeeds.
+- Require supported snapshot readiness during setup and validation; reuse ODF-managed classes and resolve missing classes through operator reconciliation while preserving policy and ownership.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+
 ## 1.27.5
 
 - Poll the named Deployment container for OLM propagation instead of using a filtered `oc wait` expression that older clients cannot parse. Bound both the polling deadline and individual reads; fail on timeout, API errors, or CSV replacement.

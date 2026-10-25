@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0
+
+- Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.
+- Run guarded snapshot/restore/data-comparison smoke tests for supported modes, with filesystem/raw-block handling, explicit context, labeled disposable sources, preserved retention policies, and verified snapshot/PV cleanup.
+- Audit leftover VolumeSnapshotContent during namespace cleanup and retain failed test status even when cleanup succeeds.
+- Require snapshot readiness for supported thin-backed volumes; discover managed device-class snapshot classes, preserve local-node binding, and verify restores with consumers.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+
 ## 1.1.1
 
 - Document that changing the default StorageClass after install must be done on

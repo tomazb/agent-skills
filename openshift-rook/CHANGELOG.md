@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.19.0
+
+- Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.
+- Run guarded snapshot/restore/data-comparison smoke tests for supported modes, with filesystem/raw-block handling, explicit context, labeled disposable sources, preserved retention policies, and verified snapshot/PV cleanup.
+- Audit leftover VolumeSnapshotContent during namespace cleanup and retain failed test status even when cleanup succeeds.
+- Require supported RBD/CephFS snapshot configuration during setup, audit driver/backend coverage during validation, and add snapshot-to-new-PVC restore/data verification with test-resource cleanup.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+- Isolate mocked shell-command tests from host Bash startup files so profile-defined functions cannot override the fake disk tools.
+
 ## 1.18.10
 
 - Fail closed when the namespace-scoped `oc adm policy who-can` returns partial authorization results with a successful exit: inspect the evaluation-error diagnostic, reject missing user/group summaries, and execute mocked local/remote success, failure, and zero-exit partial-result regression cases.

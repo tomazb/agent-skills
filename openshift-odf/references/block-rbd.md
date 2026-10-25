@@ -105,13 +105,42 @@ Create a test PVC and pod. Confirm:
 Minimum smoke flow (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py`):
 
 ```bash
-oc apply -f /tmp/odf-rbd-smoke.yaml
-oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace odf-rbd-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace odf-rbd-smoke" >&2
+  exit 1
+fi
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace odf-rbd-smoke \
+  --storage-class ocs-storagecluster-ceph-rbd \
+  --output /tmp/odf-rbd-smoke.yaml
+
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/odf-rbd-smoke.yaml
+oc --context="$target_context" -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace odf-rbd-smoke \
+  --source-pvc rbd-smoke-pvc --writer-pod rbd-smoke-writer \
+  --snapshot-class "<rbd-snapshot-class>"
+)
 ```
 
-The cleanup command is the end of the smoke. It deletes `odf-rbd-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
+The cleanup command is the end of the smoke. It deletes `odf-rbd-smoke` and fails if the namespace, a PV that claims it, or a VolumeSnapshotContent that references it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 

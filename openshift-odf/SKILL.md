@@ -41,6 +41,12 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **SNO reports "Expected 3, found 1"**: use `scripts/sno_operator.py check` to verify `SINGLE_NODE=true` in the installed OCS CSV, current Deployment, and named running operator container; see `references/validated-odf-sno.md`, including after CSV upgrades. `flexibleScaling: true` and Ceph `HEALTH_OK` do not prove successful ODF reconciliation; do not dismiss blocked upgrades as cosmetic.
 - **Not enough vCPUs, workloads Pending on `Insufficient cpu`, or a lab SNO that should run ODF more modestly**: run the CPU Request Budget check in `references/install-and-preflight.md`, then the CPU-request floor in `references/validated-odf-sno.md` (`render_sno_remediation.py --lab-resources`). Lab/non-production only; never `resourceProfile: lean` on 4.20/4.22 SNO.
 
+## Snapshot readiness
+
+For installation, configuration, and remediation, configure supported snapshotting by default before declaring storage ready, unless the user explicitly opts out. Follow [references/backup-restore-dr.md](references/backup-restore-dr.md) for prerequisites, operator-managed `VolumeSnapshotClass` reconciliation, selection, and snapshot/restore verification. Reuse ODF-owned classes; do not replace them with upstream Rook manifests.
+
+Validation-only requests remain read-only. Report supported but unconfigured snapshotting as **Warning**, unsupported combinations as **N/A** with a version-specific reason, and inaccessible or unverified capability as **Not checked**. Report **Supported**, **Configured**, **Scheduled**, and **Restore-tested** separately for each StorageClass. Configure classes during authorized setup even when no PVC exists; create recurring jobs only with a workload, retention, and consistency policy. Local snapshots do not replace off-cluster backups. Smoke tests must run `python3 scripts/check_snapshot_smoke.py` for supported modes and verify restored data and cleanup before a full pass; see `references/validation-hardening.md`.
+
 ## Core Safety Rules
 
 - Never run or recommend destructive disk-wiping commands such as `ceph-volume lvm zap`, `wipefs -a`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.

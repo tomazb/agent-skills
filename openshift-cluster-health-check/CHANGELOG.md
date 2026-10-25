@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Assess snapshot readiness per StorageClass without mutation; report supported but unconfigured drivers as Warning and separate configuration, scheduling, and restore evidence.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+
 ## 1.2.0
 
 - Normalized Use-when description and added Specialist handoffs to storage lifecycle skills and openshift-versions.

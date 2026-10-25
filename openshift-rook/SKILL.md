@@ -38,6 +38,12 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Ceph `AUTH_*` cipher warnings**: use the strict full-record audit (`scripts/check_cephx_key_types.py`) and staged policy checks in `references/validation-hardening.md`. These warnings are not a SNO replica-count issue; audit rotating keys as well as client keys before tightening `allowedCiphers`.
 - **VM storage defaults, CDI StorageProfiles, or `CDIStorageProfilesIncomplete`**: use `references/vm-storage-profiles.md`.
 
+## Snapshot readiness
+
+For installation, configuration, and remediation, configure supported snapshotting by default before declaring storage ready, unless the user explicitly opts out. Follow [references/backup-restore-dr.md](references/backup-restore-dr.md) for prerequisites, driver-matched `VolumeSnapshotClass` setup, selection, and snapshot/restore verification. Check each installed storage service; a CSI snapshotter sidecar alone does not prove support or configuration.
+
+Validation-only requests remain read-only. Report supported but unconfigured snapshotting as **Warning**, unsupported combinations as **N/A** with a version-specific reason, and inaccessible or unverified capability as **Not checked**. Report **Supported**, **Configured**, **Scheduled**, and **Restore-tested** separately for each StorageClass. Configure classes during authorized setup even when no PVC exists; create recurring jobs only with a workload, retention, and consistency policy. Local snapshots do not replace off-cluster backups. Smoke tests must run `python3 scripts/check_snapshot_smoke.py` for supported modes and verify restored data and cleanup before a full pass; see `references/validation-hardening.md`.
+
 ## Core Safety Rules
 
 - Never run or recommend `ceph-volume lvm zap`, `wipefs`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.

@@ -99,7 +99,7 @@ Create a test PVC and pod. Confirm:
 - MDS is in `active` state.
 - `oc get sc` shows exactly one default StorageClass when defaulting is expected.
 
-Use the CephFS smoke flow in `references/validation-hardening.md`. After the write is recorded, that flow deletes the smoke namespace:
+Use the complete CephFS snapshot/restore smoke flow in `references/validation-hardening.md`. It verifies the restored token and then deletes and audits the smoke namespace; a provisioning-only check is not a full smoke pass:
 
 ```bash
 bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
@@ -107,7 +107,7 @@ bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
 
 ## Snapshot Support
 
-Enable CephFS snapshot support by creating a `VolumeSnapshotClass`:
+Configure supported CephFS snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1

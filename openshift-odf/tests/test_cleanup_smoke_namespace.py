@@ -5,6 +5,8 @@ import os
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "cleanup_smoke_namespace.sh"
 
 OC = """\
@@ -17,6 +19,8 @@ log = os.environ.get("OC_LOG")
 if log:
     with open(log, "a", encoding="utf-8") as fh:
         fh.write(" ".join(args) + "\\n")
+if args[:1] == ["--context"]:
+    args = args[2:]
 fail = os.environ.get("OC_FAIL", "")
 if args[:2] == ["delete", "namespace"]:
     if fail == "delete":
@@ -28,6 +32,28 @@ if args[:1] == ["get"] and args[1] in ("namespaces", "namespace"):
         sys.stderr.write("error: namespaces\\n")
         raise SystemExit(1)
     sys.stdout.write(os.environ.get("OC_NAMESPACES", "namespace/default\\nnamespace/kube-system\\n"))
+    raise SystemExit(0)
+if args[:1] == ["api-resources"]:
+    if fail == "snapshot-discovery":
+        sys.stderr.write("error: discovery forbidden\\n")
+        raise SystemExit(1)
+    sys.stdout.write(os.environ.get("OC_SNAPSHOT_APIS", ""))
+    raise SystemExit(0)
+if args[:2] == ["get", "volumesnapshotcontents.snapshot.storage.k8s.io"]:
+    if fail == "snapshot-contents":
+        sys.stderr.write("error: contents forbidden\\n")
+        raise SystemExit(1)
+    count_file = (log or "oc") + ".snapshotcount"
+    seen = 0
+    if os.path.exists(count_file):
+        with open(count_file, encoding="utf-8") as fh:
+            seen = int(fh.read() or "0")
+    with open(count_file, "w", encoding="utf-8") as fh:
+        fh.write(str(seen + 1))
+    if seen >= 1 and "OC_SNAPSHOT_JSON_AFTER" in os.environ:
+        sys.stdout.write(os.environ["OC_SNAPSHOT_JSON_AFTER"])
+        raise SystemExit(0)
+    sys.stdout.write(os.environ.get("OC_SNAPSHOT_JSON", '{"items":[]}'))
     raise SystemExit(0)
 if args[:2] == ["get", "pv"]:
     if fail == "pv":
@@ -68,7 +94,7 @@ def _run(tmp_path: Path, *args: str, **env_extra: str) -> subprocess.CompletedPr
     env["OC_LOG"] = str(log)
     env.update(env_extra)
     return subprocess.run(
-        ["/bin/bash", str(SCRIPT), *args],
+        ["/bin/bash", "--noprofile", "--norc", str(SCRIPT), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -294,3 +320,125 @@ def test_empty_namespace_list_is_unverified(tmp_path):
     assert result.returncode == 1
     assert "could not list namespaces - cleanup unverified" in result.stderr
     assert "deleted smoke namespace" not in result.stdout
+
+
+SNAPSHOT_APIS = (
+    "volumesnapshotclasses.snapshot.storage.k8s.io\n"
+    "volumesnapshotcontents.snapshot.storage.k8s.io\n"
+    "volumesnapshots.snapshot.storage.k8s.io\n"
+)
+
+
+def _snapshot_content(namespace: str, policy: str = "Delete") -> str:
+    return json.dumps({"items": [{
+        "metadata": {"name": "snapshot-content-left"},
+        "spec": {
+            "volumeSnapshotRef": {"namespace": namespace, "name": "smoke-snapshot"},
+            "deletionPolicy": policy,
+        },
+    }]})
+
+
+def test_snapshot_apis_absent_is_not_applicable_after_successful_discovery(tmp_path):
+    result = _run(tmp_path, "--namespace", "storage-smoke", OC_SNAPSHOT_APIS="")
+    assert result.returncode == 0, result.stderr
+    assert "api-resources --api-group=snapshot.storage.k8s.io -o name" in _log(tmp_path)
+    assert "get volumesnapshotcontents" not in _log(tmp_path)
+
+
+@pytest.mark.parametrize("namespace", ["app", "team-storage-smoke", "storage-smoke-extra"])
+def test_snapshot_content_in_other_namespace_is_kept(tmp_path, namespace):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS,
+        OC_SNAPSHOT_JSON=_snapshot_content(namespace),
+    )
+    assert result.returncode == 0, result.stderr
+    assert "get volumesnapshotcontents.snapshot.storage.k8s.io -o json" in _log(tmp_path)
+
+
+def test_retained_snapshot_content_fails_without_object_flag(tmp_path):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS,
+        OC_SNAPSHOT_JSON=_snapshot_content("storage-smoke", "Retain"),
+        CLEANUP_PV_WAIT_SECONDS="0",
+    )
+    assert result.returncode == 1
+    assert "leftover VolumeSnapshotContents" in result.stderr
+    assert "storage-smoke" in result.stderr
+    assert "snapshot-content-left" in result.stderr
+    assert "deletionPolicy is Retain" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+    log = _log(tmp_path)
+    assert log.count("get volumesnapshotcontents.snapshot.storage.k8s.io -o json") == 1
+    assert "delete volumesnapshotcontent" not in log
+    assert "patch " not in log
+
+
+def test_delete_snapshot_content_eventually_clears(tmp_path):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS,
+        OC_SNAPSHOT_JSON=_snapshot_content("storage-smoke"),
+        OC_SNAPSHOT_JSON_AFTER='{"items":[]}',
+        CLEANUP_PV_WAIT_SECONDS="1",
+    )
+    assert result.returncode == 0, result.stderr
+    assert _log(tmp_path).count("get volumesnapshotcontents.snapshot.storage.k8s.io -o json") == 2
+
+
+@pytest.mark.parametrize("failure", ["snapshot-discovery", "snapshot-contents"])
+def test_failed_snapshot_audit_is_unverified(tmp_path, failure):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS, OC_FAIL=failure,
+    )
+    assert result.returncode == 1
+    assert "cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+@pytest.mark.parametrize("payload", [
+    "", "not-json", "null", "[]", "{}", '{"items":null}',
+    '{"items":{}}', '{"items":[null]}', '{"items":[{"spec":[]}]}',
+    '{"items":[{"spec":{"volumeSnapshotRef":"storage-smoke"}}]}',
+])
+def test_invalid_snapshot_list_fails_closed(tmp_path, payload):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS, OC_SNAPSHOT_JSON=payload,
+    )
+    assert result.returncode == 1
+    assert "cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+@pytest.mark.parametrize("discovery", ["not discovery output", "volumesnapshots.snapshot.storage.k8s.io\n"])
+def test_invalid_snapshot_discovery_fails_closed(tmp_path, discovery):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke", OC_SNAPSHOT_APIS=discovery,
+    )
+    assert result.returncode == 1
+    assert "cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+
+def test_context_is_forwarded_to_every_cleanup_command(tmp_path):
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke", "--context", "<target-context>", "--object",
+        OC_SNAPSHOT_APIS=SNAPSHOT_APIS, OC_BUCKETS='{"items":[]}',
+    )
+    assert result.returncode == 0, result.stderr
+    lines = _log(tmp_path).splitlines()
+    assert len(lines) == 6
+    assert all(line.startswith("--context <target-context> ") for line in lines)
+
+
+@pytest.mark.parametrize("args", [("--context",), ("--context=",), ("--context", "--object")])
+def test_missing_context_value_fails_before_deleting(tmp_path, args):
+    result = _run(tmp_path, "--namespace", "storage-smoke", *args)
+    assert result.returncode == 2
+    assert "missing value for --context" in result.stderr
+    assert _log(tmp_path) == ""

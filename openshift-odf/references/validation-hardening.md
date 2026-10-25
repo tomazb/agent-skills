@@ -2,6 +2,10 @@
 
 Use this runbook after install, upgrade, reboot, maintenance, or incident response on ODF.
 
+## Snapshot readiness
+
+Run the read-only [snapshot readiness inventory](backup-restore-dr.md#snapshot-readiness) during every validation, including clusters with no PVCs. Report supported but unconfigured drivers as **Warning**, alongside Ceph runtime health; resolve missing ODF-owned classes through operator reconciliation. Record Supported, Configured, Scheduled, and Restore-tested for each StorageClass. Configure missing supported classes during authorized setup/remediation; validation alone does not authorize mutations or production-volume tests.
+
 ## Core Validation
 
 Start with the Kubernetes-level state, which needs no Ceph client:
@@ -204,6 +208,10 @@ afterward on both.
 
 ## Smoke Test
 
+For every backend/mode with verified snapshot support, the minimum smoke test also runs `python3 scripts/check_snapshot_smoke.py`. It writes and syncs a token, snapshots the source, changes the source token, restores a new PVC, and compares the restored data with the original token. A ready snapshot or Bound restore PVC is not sufficient. Missing supported snapshot configuration fails this stage; resolve it using [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) before rerunning. Mark verified unsupported combinations **N/A** with the version/mode reason, and unavailable or unverified recovery **untested**; never silently report a complete smoke pass after skipping supported snapshot tests.
+
+Use generated manifests or labeled assets with `app.kubernetes.io/part-of: storage-smoke` on the Namespace, PVC, and writer Pod. The helper refuses unlabeled or non-smoke sources, and requires a Delete-reclaim StorageClass so test PV cleanup can complete. Pass the same explicit target context to source creation, the round-trip helper, and namespace cleanup. Replace the snapshot-class placeholder with the discovered compatible class. Retained snapshot classes are preserved; the helper uses a temporary Delete class for its own snapshots. It checks restored PVC/PV and VolumeSnapshotContent cleanup before success, then the EXIT trap removes and audits the source namespace even if the test fails. Record cleanup failures as failures, retaining the resource names for follow-up. Use a unique namespace per run and replace the example name consistently; the preflight refuses an existing namespace.
+
 Create a namespace, PVC, and writer pod using the intended StorageClass. Validate:
 
 - PVC is `Bound`.
@@ -215,36 +223,82 @@ Create a namespace, PVC, and writer pod using the intended StorageClass. Validat
 
 Use unique smoke namespaces per mode, for example `odf-rbd-smoke` and `odf-cephfs-smoke`, so cleanup and audit commands are unambiguous.
 
-After the write is recorded, delete that namespace with `scripts/cleanup_smoke_namespace.sh`. The writer command includes `sleep 3600` and the pod restarts, so a passing test keeps its volume until this command runs. The script waits for the namespace to disappear and fails if a PV still claims it. It only deletes a `*-smoke` namespace. If a step fails, record the pod events, then run the same cleanup. A finished smoke does not stay on the cluster.
+After the snapshot/restore result is recorded, delete that namespace with `scripts/cleanup_smoke_namespace.sh`. The writer command includes `sleep 3600` and the pod restarts, so a passing test keeps its volume until this command runs. The script waits for the namespace to disappear and fails if a PV still claims it or a VolumeSnapshotContent still references it. It only deletes a `*-smoke` namespace. If a step fails, record the pod events, then run the same cleanup. A finished smoke does not stay on the cluster.
 
 Minimum smoke flow for RBD (pod name `rbd-smoke-writer` matches `scripts/render_smoke_manifest.py` output):
 
 ```bash
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace odf-rbd-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace odf-rbd-smoke" >&2
+  exit 1
+fi
 python3 scripts/render_smoke_manifest.py \
   --mode rbd \
   --namespace odf-rbd-smoke \
   --storage-class ocs-storagecluster-ceph-rbd \
   --output /tmp/odf-rbd-smoke.yaml
 
-oc apply -f /tmp/odf-rbd-smoke.yaml
-oc -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-rbd-smoke exec rbd-smoke-writer -- cat /data/smoke-probe
-bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/odf-rbd-smoke.yaml
+oc --context="$target_context" -n odf-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace odf-rbd-smoke \
+  --source-pvc rbd-smoke-pvc --writer-pod rbd-smoke-writer \
+  --snapshot-class "<rbd-snapshot-class>"
+)
 ```
 
 Minimum smoke flow for CephFS (pod name `cephfs-smoke-writer`):
 
 ```bash
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace odf-cephfs-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace odf-cephfs-smoke" >&2
+  exit 1
+fi
 python3 scripts/render_smoke_manifest.py \
   --mode cephfs \
   --namespace odf-cephfs-smoke \
   --storage-class ocs-storagecluster-cephfs \
   --output /tmp/odf-cephfs-smoke.yaml
 
-oc apply -f /tmp/odf-cephfs-smoke.yaml
-oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- cat /data/smoke-probe
-bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/odf-cephfs-smoke.yaml
+oc --context="$target_context" -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace odf-cephfs-smoke \
+  --source-pvc cephfs-smoke-pvc --writer-pod cephfs-smoke-writer \
+  --snapshot-class "<cephfs-snapshot-class>"
+)
 ```
 
 If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`. Delete that namespace with `bash scripts/cleanup_smoke_namespace.sh --namespace odf-smoke`.

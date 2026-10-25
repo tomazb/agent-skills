@@ -162,7 +162,7 @@ def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, omit=()
         ]
     )
     result = subprocess.run(
-        [str(bin_dir / "bash"), "-c", script],
+        [str(bin_dir / "bash"), "--noprofile", "--norc", "-c", script],
         cwd=skill,
         env={"PATH": str(bin_dir), "ROOK_DELETE_TIMEOUT": "0", **(env or {})},
         capture_output=True,

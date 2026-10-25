@@ -323,6 +323,10 @@ Before declaring success, verify:
 
 Finish with a functional smoke test from `references/validation-hardening.md` (PVC plus consumer pod, then cleanup). TopoLVM StorageClasses use `volumeBindingMode: WaitForFirstConsumer`, so an unconsumed PVC stays `Pending` by design — a PVC alone proves nothing, and a `Pending` PVC without a pod is not a failure. This applies only to `WaitForFirstConsumer`: on a StorageClass with `volumeBindingMode: Immediate` (which TopoLVM StorageClasses must not use), a PVC stuck `Pending` without a consumer does indicate a provisioning problem.
 
+## Snapshot readiness
+
+Complete [snapshot setup and verification](backup-restore-dr.md#snapshot-readiness) before declaring the install complete. Verify the operator-managed snapshot class for each thin-backed device class, even if no PVCs exist yet. Resolve missing classes through LVMS reconciliation and record any explicit opt-out, unsupported combination, or blocked prerequisite.
+
 ## MachineConfig Discipline
 
 MachineConfig changes can reboot nodes. On SNO, warn that API access can disappear until the single node returns. Apply one purpose per MachineConfig, wait for MCP recovery, then verify host state:

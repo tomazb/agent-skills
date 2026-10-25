@@ -63,7 +63,7 @@ def write_oc(bin_dir: Path, body: str) -> None:
 
 def run_script(name: str, bin_dir: Path, *args: str, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["/bin/bash", str(SCRIPTS / name), *args],
+        ["/bin/bash", "--noprofile", "--norc", str(SCRIPTS / name), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -153,7 +153,8 @@ if args[:1] == ["debug"]:
         # PATH: a check the mocks do not answer fails instead of reaching the host.
         import subprocess
         i = args.index("-c")
-        done = subprocess.run([WORLD["node"]["bash"], *args[i:]], env={"PATH": WORLD["node"]["bin"]})
+        done = subprocess.run([WORLD["node"]["bash"], "--noprofile", "--norc", *args[i:]],
+                              env={"PATH": WORLD["node"]["bin"]})
         raise SystemExit(done.returncode)
     # Otherwise "debug" is the canned stdout of every `oc debug`.
     sys.stdout.write(WORLD["debug"])

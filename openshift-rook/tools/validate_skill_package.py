@@ -36,6 +36,7 @@ REQUIRED_FILES = [
     "scripts/post_uninstall_audit.sh",
     "scripts/rook_common.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/check_snapshot_smoke.py",
     "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
     "tools/validate_skill_package.py",
@@ -512,11 +513,11 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "one default if defaulting is expected",
         ],
     )
-    require_order(
+    require(
         "references/rbd-block-pools.md",
         "RBD smoke cleanup",
         [
-            "oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "python3 scripts/check_snapshot_smoke.py",
             "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
         ],
     )

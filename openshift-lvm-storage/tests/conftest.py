@@ -161,6 +161,8 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "patch_lvms_manifest.py").write_text("", encoding="utf-8")
         (root / "scripts" / "post_uninstall_audit.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")
         (root / "tools" / "validate_skill_package.sh").write_text("", encoding="utf-8")

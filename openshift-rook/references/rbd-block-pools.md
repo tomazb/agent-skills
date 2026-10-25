@@ -139,17 +139,46 @@ Create a test PVC and pod. Confirm:
 Minimum smoke flow:
 
 ```bash
-oc apply -f /tmp/rook-rbd-smoke.yaml
-oc -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
-oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace rook-rbd-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace rook-rbd-smoke" >&2
+  exit 1
+fi
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace rook-rbd-smoke \
+  --storage-class rook-ceph-block \
+  --output /tmp/rook-rbd-smoke.yaml
+
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/rook-rbd-smoke.yaml
+oc --context="$target_context" -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace rook-rbd-smoke \
+  --source-pvc rbd-smoke-pvc --writer-pod rbd-smoke-writer \
+  --snapshot-class "<rbd-snapshot-class>"
+)
 ```
 
-The cleanup command is the end of the smoke. It deletes `rook-rbd-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
+The cleanup command is the end of the smoke. It deletes `rook-rbd-smoke` and fails if the namespace, a PV that claims it, or a VolumeSnapshotContent that references it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 
-Enable RBD snapshot support by creating a `VolumeSnapshotClass`:
+Configure supported RBD snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1

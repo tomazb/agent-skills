@@ -8,11 +8,15 @@ RBD_SMOKE_YAML = """\
 apiVersion: v1
 kind: Namespace
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: {namespace}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: rbd-smoke-pvc
   namespace: {namespace}
 spec:
@@ -26,6 +30,8 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: rbd-smoke-writer
   namespace: {namespace}
 spec:
@@ -53,11 +59,15 @@ CEPHFS_SMOKE_YAML = """\
 apiVersion: v1
 kind: Namespace
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: {namespace}
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: cephfs-smoke-pvc
   namespace: {namespace}
 spec:
@@ -71,6 +81,8 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: cephfs-smoke-writer
   namespace: {namespace}
 spec:
