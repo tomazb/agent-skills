@@ -2,9 +2,9 @@
 
 ## 1.18.10
 
-- Gate the upstream Rook `rook-ceph` SCC host-network and host-port permissions on an explicit host-network choice, with ownership classification, read-only auditing of direct users/groups and RBAC `use` grants, post-install verification, and declarative persistence rather than a routine operator restart.
+- Gate the upstream Rook `rook-ceph` SCC host-network and host-port permissions on an explicit host-network choice, with ownership classification, read-only auditing of direct users/groups and **namespace-by-namespace** RBAC `use` grants (including remote RoleBindings), fail-closed discovery, post-install verification, and declarative persistence rather than a routine operator restart.
 - Document reported OpenShift 4.21.34 / RHCOS 5.14 AES256K RBD field evidence as version- and topology-specific; retain the full CephX key-type audit instead of leaking keys or relying on `client.admin` prefixes.
-- Pin RBD/CephFS smoke pods using scheduler-mediated node affinity on `metadata.name`, compatible with `WaitForFirstConsumer` binding; cover pinning, invalid names, and runbook safety gates in tests.
+- Pin RBD/CephFS smoke pods using scheduler-mediated node affinity on `metadata.name`, compatible with `WaitForFirstConsumer` binding. Match Kubernetes `IsDNS1123Subdomain` Node-name validation (253 total characters, no 63-character component limit) and test long valid names, remote namespace audits, failure paths, and YAML output.
 
 ## 1.18.9
 

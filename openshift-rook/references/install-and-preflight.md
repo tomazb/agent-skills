@@ -351,15 +351,39 @@ For pod networking, leave the `rook-ceph` SCC defaults unchanged.
   oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
   oc get scc rook-ceph -o jsonpath='{range .users[*]}{.}{"\n"}{end}'
   oc get scc rook-ceph -o jsonpath='{range .groups[*]}{.}{"\n"}{end}'
-  oc adm policy who-can use scc rook-ceph
+  # who-can evaluates namespaced RBAC. Enumerate *all* namespaces before
+  # widening this cluster-scoped SCC; a RoleBinding outside rook-ceph matters.
+  namespaces=$(oc get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}') || {
+    echo 'STOP: cannot enumerate namespaces for SCC RBAC audit' >&2
+    exit 1
+  }
+  [ -n "$namespaces" ] || {
+    echo 'STOP: namespace inventory is empty; SCC RBAC audit is incomplete' >&2
+    exit 1
+  }
+  while IFS= read -r namespace; do
+    [ -n "$namespace" ] || {
+      echo 'STOP: invalid empty namespace in SCC RBAC audit' >&2
+      exit 1
+    }
+    printf '\n== SCC RBAC use grants in namespace %s ==\n' "$namespace"
+    oc -n "$namespace" adm policy who-can use scc rook-ceph || {
+      echo "STOP: SCC RBAC audit failed in namespace ${namespace}" >&2
+      exit 1
+    }
+  done <<< "$namespaces"
 )
 ```
 
 The SCC `users` and `groups` fields show **direct** grants; `oc adm policy
-who-can use scc rook-ceph` shows **RBAC** grants, not direct SCC assignments.
-Review all listed users, group membership, and RoleBinding/ClusterRoleBinding
-subjects and scope (including broad groups or wildcard RBAC rules) against
-the intended Rook workloads. **STOP without patching** if the audit fails or
+who-can use scc rook-ceph` shows **RBAC** grants in the selected namespace,
+not direct SCC assignments. The audit explicitly queries **every namespace**
+because a RoleBinding outside `rook-ceph` can authorize use of this shared,
+cluster-scoped SCC. Review all listed users, group membership, and
+RoleBinding/ClusterRoleBinding subjects and scope (including broad groups or
+wildcard RBAC rules) against the intended Rook workloads. Run this check
+immediately before applying the patch, and account for namespace/RBAC changes
+between the audit and the mutation. **STOP without patching** if the audit fails or
 any principal or group membership is unexpected or cannot be classified. If
 sharing this SCC is inappropriate, design a separately scoped SCC/grant instead;
 do not silently widen permissions for other workloads.

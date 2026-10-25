@@ -34,7 +34,10 @@ def test_smoke_manifest_cephfs_renders(tmp_path):
 
 
 @pytest.mark.parametrize("mode", ["rbd", "cephfs"])
-@pytest.mark.parametrize("node", ["worker-a", "worker-a.example.test"])
+@pytest.mark.parametrize("node", [
+    "worker-a", "worker-a.example.test", "worker-" + "a" * 57,
+    "a" * 253, "a" * 126 + "." + "b" * 126,
+])
 def test_smoke_manifest_pins_node_with_scheduler_affinity(tmp_path, mode, node):
     """Both storage modes must retain scheduler participation with explicit pinning."""
     pinned = tmp_path / "pinned.yaml"
@@ -53,7 +56,7 @@ def test_smoke_manifest_pins_node_with_scheduler_affinity(tmp_path, mode, node):
 
 @pytest.mark.parametrize("node", [
     "node: bad", "worker-a\nmetadata: injected", "-worker", "worker-", "worker..a",
-    "Worker", "a" * 64, "a" * 254,
+    "Worker", "a" * 254, "a" * 253 + ".", "worker_1",
 ])
 def test_smoke_manifest_rejects_unsafe_node_name(tmp_path, node):
     """Reject node names that are invalid or could inject YAML into a Pod."""

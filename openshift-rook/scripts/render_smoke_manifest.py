@@ -95,7 +95,10 @@ spec:
       claimName: cephfs-smoke-pvc
 """
 
-_NODE_LABEL_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
+# Matches Kubernetes IsDNS1123Subdomain: max 253 characters total, not 63 per label.
+_DNS1123_SUBDOMAIN_RE = re.compile(
+    r"[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*"
+)
 
 
 def _node_affinity_block(node_name: str | None) -> str:
@@ -106,9 +109,7 @@ def _node_affinity_block(node_name: str | None) -> str:
     """
     if not node_name:
         return ""
-    if len(node_name) > 253 or any(
-        _NODE_LABEL_RE.fullmatch(label) is None for label in node_name.split(".")
-    ):
+    if len(node_name) > 253 or _DNS1123_SUBDOMAIN_RE.fullmatch(node_name) is None:
         raise ValueError(f"invalid node name: {node_name}")
     # matchFields uses the Node object's name, not a potentially different hostname label.
     # Unlike spec.nodeName, required node affinity still uses the scheduler (including WFFC).
