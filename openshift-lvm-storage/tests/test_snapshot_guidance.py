@@ -14,3 +14,9 @@ def test_lvms_reuses_managed_classes_before_creating_custom_ones():
     assert "WaitForFirstConsumer" in text
     assert "readyToUse" in text
     assert "node failure destroys the snapshot" not in text.lower()
+
+def test_block_snapshot_example_selects_operator_managed_class():
+    """The block-volume example must not depend on an optional custom class."""
+    text = (ROOT / "references/block-volumes.md").read_text(encoding="utf-8")
+    snapshot = text.split("kind: VolumeSnapshot\n", 1)[1].split("```", 1)[0]
+    assert "volumeSnapshotClassName: lvms-vg1" in snapshot

@@ -328,7 +328,9 @@ def test_delete_snapshot_content_eventually_clears(tmp_path):
         OC_SNAPSHOT_APIS=SNAPSHOT_APIS,
         OC_SNAPSHOT_JSON=_snapshot_content("storage-smoke"),
         OC_SNAPSHOT_JSON_AFTER='{"items":[]}',
-        CLEANUP_PV_WAIT_SECONDS="1",
+        # Subprocess scheduling and whole-second SECONDS resolution make a
+        # one-second polling test unreliable on loaded CI runners.
+        CLEANUP_PV_WAIT_SECONDS="3",
     )
     assert result.returncode == 0, result.stderr
     assert _log(tmp_path).count("get volumesnapshotcontents.snapshot.storage.k8s.io -o json") == 2

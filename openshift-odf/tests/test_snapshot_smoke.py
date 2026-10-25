@@ -49,6 +49,15 @@ if verb == "get":
             obj["status"] = {}
         elif scenario == "snapshot-error":
             obj["status"]["error"] = {"message": "private-secret-value"}
+        elif scenario == "snapshot-transient-error":
+            polls = s.get("snapshot_polls", 0)
+            s["snapshot_polls"] = polls + 1
+            if polls == 0:
+                obj["status"]["readyToUse"] = False
+                obj["status"]["error"] = {"message": "private-secret-value"}
+            else:
+                obj["status"]["readyToUse"] = True
+                obj["status"].pop("error", None)
     if kind == "pod" and obj and name != "writer" and scenario == "ownership-changed":
         obj["metadata"]["labels"]["storage-smoke/run"] = "different-owner"
     if kind == "secret" and obj:
@@ -251,6 +260,15 @@ def test_unsafe_preflight_never_mutates(tmp_path, scenario):
     result, state = run(tmp_path, mode="Block" if scenario == "unsafe-device" else "Filesystem", change=change)
     assert result.returncode != 0
     assert not state["writes"] and not state["created"]
+
+
+def test_transient_snapshot_error_is_retried_until_ready(tmp_path):
+    """A retryable controller error should not abort a valid restore."""
+    result, state = run(tmp_path, scenario="snapshot-transient-error")
+    assert result.returncode == 0, result.stderr
+    assert state["snapshot_polls"] >= 2
+    assert "private-secret-value" not in result.stdout + result.stderr
+    assert not any(k.startswith("volumesnapshot/") for k in state["objects"])
 
 
 @pytest.mark.parametrize("scenario", ["snapshot-pending", "snapshot-error", "content-mismatch", "restore-mismatch",

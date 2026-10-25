@@ -153,7 +153,7 @@ spec:
     apiGroup: snapshot.storage.k8s.io
 ```
 
-Wait for snapshot readiness before applying the restore document. Complete token verification and cleanup from **Snapshot readiness**, then use `bash scripts/cleanup_smoke_namespace.sh --namespace <test-smoke-namespace>` to finish namespace/PV cleanup. Check that no test VolumeSnapshotContent remains; namespace deletion alone does not prove snapshot cleanup.
+Wait for snapshot readiness before applying the restore document. Complete token verification and cleanup from **Snapshot readiness**, then use `bash scripts/cleanup_smoke_namespace.sh --namespace <test-smoke-namespace> --context <target-context>` to finish namespace/PV cleanup. Check that no test VolumeSnapshotContent remains; namespace deletion alone does not prove snapshot cleanup.
 
 ## RGW Object Versioning
 

@@ -110,10 +110,12 @@ metadata:
   name: my-block-snapshot
   namespace: my-app
 spec:
-  volumeSnapshotClassName: lvms-snapshot-class
+  volumeSnapshotClassName: lvms-vg1
   source:
     persistentVolumeClaimName: my-block-pvc
 ```
+
+Use the discovered operator-managed `lvms-<device-class>` snapshot class (`lvms-vg1` in this example). Use `lvms-snapshot-class` only if a custom class was needed and created. Class and device-class names must be discovered on the target cluster.
 
 ## Safety Rules
 

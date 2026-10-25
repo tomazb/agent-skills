@@ -33,3 +33,10 @@ def test_each_rook_snapshot_driver_has_a_matching_restore_example():
         assert restore["spec"]["storageClassName"] == (
             "rook-ceph-block" if ".rbd." in cls["driver"] else "rook-cephfs"
         )
+
+def test_manual_cephfs_snapshot_cleanup_uses_the_target_context():
+    """Namespace cleanup must be scoped to the intended cluster."""
+    text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")
+    instruction = next(line for line in text.splitlines()
+                       if "Wait for snapshot readiness before applying" in line)
+    assert "--namespace <test-smoke-namespace> --context <target-context>" in instruction

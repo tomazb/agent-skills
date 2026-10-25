@@ -64,6 +64,7 @@ class Smoke:
         self.contents = set()
         self.pvs = set()
         self.snapshot_uid = None
+        self.snapshot_error_seen = False
 
     def oc(self, *args, namespace=None, payload=None):
         command = ["oc", "--context", self.args.context, "--request-timeout=5s"]
@@ -218,8 +219,10 @@ class Smoke:
         status = snap.get("status", {})
         if status.get("boundVolumeSnapshotContentName"):
             self.contents.add(status["boundVolumeSnapshotContentName"])
-        require(not status.get("error"), "snapshot controller reported an error")
-        return snap if status.get("readyToUse") is True else None
+        # The controller retries and clears its last observed error upon success.
+        # Track a boolean only: controller error details may contain secret data.
+        self.snapshot_error_seen |= bool(status.get("error"))
+        return snap if status.get("readyToUse") is True and not status.get("error") else None
 
     def verify_content(self, snap):
         status = snap["status"]
@@ -282,7 +285,13 @@ class Smoke:
             class_name = self.name
         self.create("VolumeSnapshot", {"spec": {"volumeSnapshotClassName": class_name,
                                                 "source": {"persistentVolumeClaimName": self.args.source_pvc}}})
-        snap = self.wait("snapshot readyToUse", self.snapshot_ready)
+        try:
+            snap = self.wait("snapshot readyToUse", self.snapshot_ready)
+        except Failure as exc:
+            # Do not mask access/API errors that are unrelated to the timeout.
+            if str(exc) == "timed out: snapshot readyToUse" and self.snapshot_error_seen:
+                raise Failure("snapshot controller reported an error") from None
+            raise
         restore_size = self.verify_content(snap)
         mutated = secrets.token_hex(32)
         self.token(self.args.writer_pod, self.container["name"], self.path, mutated)
