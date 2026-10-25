@@ -99,6 +99,11 @@ _NODE_LABEL_RE = re.compile(r"[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?")
 
 
 def _node_affinity_block(node_name: str | None) -> str:
+    """Constrain scheduling to a Node by name without bypassing the scheduler.
+
+    Return an empty string when no target node was requested. This keeps
+    WaitForFirstConsumer volume binding compatible with pinned smoke tests.
+    """
     if not node_name:
         return ""
     if len(node_name) > 253 or any(
@@ -128,6 +133,7 @@ def render_smoke_manifest(
     output: str,
     node_name: str | None = None,
 ) -> None:
+    """Write a PVC-writer Pod manifest, optionally pinned by scheduler affinity."""
     node_affinity_block = _node_affinity_block(node_name)
     if mode == "rbd":
         yaml = RBD_SMOKE_YAML.format(
@@ -143,6 +149,7 @@ def render_smoke_manifest(
 
 
 def main() -> int:
+    """Parse smoke-test options and render the requested manifest."""
     parser = argparse.ArgumentParser(description="Render Rook Ceph smoke test manifests")
     parser.add_argument(
         "--mode", choices=["rbd", "cephfs"], required=True, help="Storage mode"

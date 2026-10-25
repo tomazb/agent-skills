@@ -338,14 +338,36 @@ the main operator deployment is running.
 Run the Product Ownership Gate first; stop for ODF-owned, mixed, or unknown
 ownership. After the upstream Rook operator has created the `rook-ceph` SCC
 and **before** applying a CephCluster using `spec.network.provider: host`,
-inspect its permissions and users. Do not patch `rook-ceph-csi` or grant the
-built-in `privileged` SCC as a workaround. For pod networking, leave the
-`rook-ceph` SCC defaults unchanged.
+inspect its permissions and every authorization path. Do not patch
+`rook-ceph-csi` or grant the built-in `privileged` SCC as a workaround.
+For pod networking, leave the `rook-ceph` SCC defaults unchanged.
+
+**Read-only authorization audit (stop if any command fails):**
 
 ```bash
-oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
-oc get scc rook-ceph -o jsonpath='{range .users[*]}{.}{"\n"}{end}'
-# ONLY for confirmed upstream Rook with spec.network.provider: host planned:
+# READ-ONLY SCC authorization audit; complete it before any permission change.
+(
+  set -euo pipefail
+  oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
+  oc get scc rook-ceph -o jsonpath='{range .users[*]}{.}{"\n"}{end}'
+  oc get scc rook-ceph -o jsonpath='{range .groups[*]}{.}{"\n"}{end}'
+  oc adm policy who-can use scc rook-ceph
+)
+```
+
+The SCC `users` and `groups` fields show **direct** grants; `oc adm policy
+who-can use scc rook-ceph` shows **RBAC** grants, not direct SCC assignments.
+Review all listed users, group membership, and RoleBinding/ClusterRoleBinding
+subjects and scope (including broad groups or wildcard RBAC rules) against
+the intended Rook workloads. **STOP without patching** if the audit fails or
+any principal or group membership is unexpected or cannot be classified. If
+sharing this SCC is inappropriate, design a separately scoped SCC/grant instead;
+do not silently widen permissions for other workloads.
+
+**Only after** confirming upstream Rook ownership, explicit host networking,
+and approval of the affected principals, apply the change:
+
+```bash
 oc patch scc rook-ceph --type=merge \
   -p '{"allowHostNetwork":true,"allowHostPorts":true}'
 oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
