@@ -40,3 +40,8 @@ def test_manual_cephfs_snapshot_cleanup_uses_the_target_context():
     instruction = next(line for line in text.splitlines()
                        if "Wait for snapshot readiness before applying" in line)
     assert "--namespace <test-smoke-namespace> --context <target-context>" in instruction
+
+def test_standalone_rook_smoke_cleanup_pins_target_context():
+    """The legacy smoke-manifest fallback targets the intended cluster."""
+    guide = (ROOT / "references/validation-hardening.md").read_text(encoding="utf-8")
+    assert 'cleanup_smoke_namespace.sh --namespace rook-smoke --context "<target-context>"' in guide

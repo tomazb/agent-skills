@@ -121,18 +121,35 @@ import json, sys
 ns = sys.argv[1]
 try:
     data = json.load(sys.stdin)
-except json.JSONDecodeError:
+    if not isinstance(data, dict):
+        raise ValueError("expected a PV list or PersistentVolume")
+    if "items" in data:
+        items = data["items"]
+        if not isinstance(items, list):
+            raise ValueError("invalid PV items")
+    elif (data.get("kind") == "PersistentVolume"
+          and isinstance(data.get("metadata"), dict)
+          and isinstance(data.get("spec"), dict)):
+        items = [data]
+    else:
+        raise ValueError("missing PV items or valid single-PV shape")
+    for item in items:
+        if (not isinstance(item, dict)
+            or not isinstance(item.get("metadata"), dict)
+            or not isinstance(item.get("spec"), dict)):
+            raise ValueError("invalid PV item")
+        claim = item["spec"].get("claimRef")
+        if claim is None:
+            continue
+        if not isinstance(claim, dict):
+            raise ValueError("invalid PV claimRef")
+        if claim.get("namespace") == ns:
+            name = item["metadata"].get("name") or "unnamed"
+            policy = item["spec"].get("persistentVolumeReclaimPolicy") or ""
+            print(name + "\t" + policy)
+except (ValueError, TypeError):
     sys.stderr.write("could not parse PV list - cleanup unverified\n")
     sys.exit(1)
-items = data.get("items")
-if items is None:
-    items = [data] if data.get("kind") == "PersistentVolume" else []
-for item in items:
-    claim = (item.get("spec") or {}).get("claimRef") or {}
-    if claim.get("namespace") == ns:
-        name = (item.get("metadata") or {}).get("name") or "unnamed"
-        policy = (item.get("spec") or {}).get("persistentVolumeReclaimPolicy") or ""
-        print(name + "\t" + policy)
 ' "$namespace"); then
     echo "could not inspect PVs - cleanup unverified" >&2
     exit 1

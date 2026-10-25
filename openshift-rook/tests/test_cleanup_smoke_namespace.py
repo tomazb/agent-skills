@@ -254,6 +254,43 @@ def test_unparsed_pv_list_is_unverified(tmp_path):
     assert "could not inspect PVs - cleanup unverified" in result.stderr
 
 
+
+@pytest.mark.parametrize("payload", [
+    "null", "[]", "{}",
+    '{"items": null}', '{"items": {}}', '{"items": "not-a-list"}',
+    '{"items": [null]}', '{"items": [{}]}',
+    '{"items": [{"metadata": {}, "spec": {"claimRef": "invalid"}}]}',
+    '{"kind": "PersistentVolume", "metadata": {}}',
+    '{"kind": "PersistentVolume", "spec": {}}',
+])
+def test_malformed_pv_inventory_fails_closed(tmp_path, payload):
+    """A successful oc command is insufficient without a valid PV response."""
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_PV_JSON=payload, CLEANUP_PV_WAIT_SECONDS="0",
+    )
+    assert result.returncode == 1
+    assert "could not inspect PVs - cleanup unverified" in result.stderr
+    assert "deleted smoke namespace" not in result.stdout
+
+
+def test_single_pv_inventory_checks_namespace_claim(tmp_path):
+    """A valid single-PV API response must not be mistaken for an empty list."""
+    pv = json.dumps({
+        "kind": "PersistentVolume",
+        "metadata": {"name": "pvc-left"},
+        "spec": {"claimRef": {"namespace": "storage-smoke", "name": "smoke-pvc"}},
+    })
+    result = _run(
+        tmp_path, "--namespace", "storage-smoke",
+        OC_PV_JSON=pv, CLEANUP_PV_WAIT_SECONDS="0",
+    )
+    assert result.returncode == 1
+    assert "leftover PVs still claim storage-smoke" in result.stderr
+    assert "pvc-left" in result.stderr
+    assert "could not inspect PVs" not in result.stderr
+
+
 LEFT_PV = (
     '{"items":[{"metadata":{"name":"pvc-left"},'
     '"spec":{"claimRef":{"namespace":"rook-rbd-smoke","name":"rbd-smoke-pvc"},'

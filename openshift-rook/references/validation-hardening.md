@@ -166,7 +166,7 @@ python3 scripts/check_snapshot_smoke.py \
 )
 ```
 
-If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it. That asset uses namespace `rook-smoke`. Delete it with `bash scripts/cleanup_smoke_namespace.sh --namespace rook-smoke`.
+If the helper is unavailable, adapt `assets/smoke-pvc-writer.yaml` and replace every placeholder before applying it. That asset uses namespace `rook-smoke`. Delete it with `bash scripts/cleanup_smoke_namespace.sh --namespace rook-smoke --context "<target-context>"`, using the same explicit target context as the smoke test.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 

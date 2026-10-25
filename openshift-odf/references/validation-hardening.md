@@ -301,7 +301,7 @@ python3 scripts/check_snapshot_smoke.py \
 )
 ```
 
-If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`. Delete that namespace with `bash scripts/cleanup_smoke_namespace.sh --namespace odf-smoke`.
+If the helper is unavailable, `assets/smoke-pvc-writer.yaml` is the RBD baseline: it uses namespace `odf-smoke`, PVC `smoke-pvc`, pod `smoke-writer`, and StorageClass `ocs-storagecluster-ceph-rbd`. For CephFS, change those names consistently in the apply, wait, and exec commands, set `accessModes` to `ReadWriteMany`, and set `storageClassName` to `ocs-storagecluster-cephfs`. Delete that namespace with `bash scripts/cleanup_smoke_namespace.sh --namespace odf-smoke --context "<target-context>"`, using the same explicit target context as the smoke test.
 
 On OpenShift, make smoke pods compatible with restricted PodSecurity by setting `allowPrivilegeEscalation: false`, dropping all capabilities, setting `runAsNonRoot: true` when the image supports it, and setting `seccompProfile.type: RuntimeDefault`.
 
@@ -353,10 +353,10 @@ s3.delete_object(Bucket=b, Key="smoke-probe")
 
 Any S3 client works; the check is that a PUT is readable back by GET. `registry.access.redhat.com/ubi9/python-311` needs `pip install boto3` at pod start, which requires egress — on a disconnected cluster use a mirrored image that already ships an S3 client instead.
 
-Clean up by deleting only the smoke namespace. The script waits for the namespace to disappear, fails if a PV still claims it, and with `--object` fails if an ObjectBucket `claimRef` still names that namespace. A failed query is not treated as a clean result.
+Clean up by deleting only the smoke namespace, passing the same explicit target context used for the object smoke test. The script waits for the namespace to disappear, fails if a PV still claims it, and with `--object` fails if an ObjectBucket `claimRef` still names that namespace. A failed query is not treated as a clean result.
 
 ```bash
-bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object
+bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object --context "<target-context>"
 ```
 
 ## Dashboard And Monitoring
