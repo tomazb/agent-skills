@@ -367,10 +367,21 @@ For pod networking, leave the `rook-ceph` SCC defaults unchanged.
       exit 1
     }
     printf '\n== SCC RBAC use grants in namespace %s ==\n' "$namespace"
-    oc -n "$namespace" adm policy who-can use scc rook-ceph || {
+    # 'oc who-can' can report partial authorization results even with exit 0.
+    who_can_output=$(oc -n "$namespace" adm policy who-can use scc rook-ceph 2>&1) || {
       echo "STOP: SCC RBAC audit failed in namespace ${namespace}" >&2
       exit 1
     }
+    if grep -Eiq 'error during evaluation|evaluationerror|evalutionerror' <<< "$who_can_output"; then
+      echo "STOP: incomplete SCC RBAC authorization evaluation in namespace ${namespace}" >&2
+      exit 1
+    fi
+    if ! grep -Eq '^Users:[[:space:]]' <<< "$who_can_output" ||
+       ! grep -Eq '^Groups:[[:space:]]' <<< "$who_can_output"; then
+      echo "STOP: missing SCC RBAC authorization results in namespace ${namespace}" >&2
+      exit 1
+    fi
+    printf '%s\n' "$who_can_output"
   done <<< "$namespaces"
 )
 ```
@@ -383,7 +394,11 @@ cluster-scoped SCC. Review all listed users, group membership, and
 RoleBinding/ClusterRoleBinding subjects and scope (including broad groups or
 wildcard RBAC rules) against the intended Rook workloads. Run this check
 immediately before applying the patch, and account for namespace/RBAC changes
-between the audit and the mutation. **STOP without patching** if the audit fails or
+between the audit and the mutation. OpenShift `who-can` can print
+`Error during evaluation, results may not be complete` despite exiting with
+status 0. The audit rejects that diagnostic, `evaluationError` / `evalutionError`
+field variants, and missing user/group summaries, so an incomplete query
+cannot authorize the SCC change. **STOP without patching** if the audit fails or
 any principal or group membership is unexpected or cannot be classified. If
 sharing this SCC is inappropriate, design a separately scoped SCC/grant instead;
 do not silently widen permissions for other workloads.

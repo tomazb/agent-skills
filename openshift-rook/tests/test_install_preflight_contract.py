@@ -47,6 +47,10 @@ def test_host_network_scc_permissions_are_conditional_and_verified():
     assert 'oc -n "$namespace" adm policy who-can use scc rook-ceph' in blocks[0]
     assert 'oc get namespaces -o jsonpath=' in blocks[0]
     assert 'STOP: SCC RBAC audit failed in namespace' in blocks[0]
+    assert 'incomplete SCC RBAC authorization evaluation' in blocks[0]
+    assert 'missing SCC RBAC authorization results' in blocks[0]
+    assert 'error during evaluation|evaluationerror|evalutionerror' in blocks[0]
+    assert '2>&1' in blocks[0]
     assert "oc patch scc rook-ceph" not in blocks[0]
     assert "oc patch scc rook-ceph" in blocks[1]
     assert "spec.network.provider: host" in gate
@@ -61,7 +65,11 @@ def test_host_network_scc_permissions_are_conditional_and_verified():
 @pytest.mark.parametrize(
     ("scenario", "expect_success"),
     [("ok", True), ("remote_denied", False), ("list_denied", False),
-     ("empty_list", False), ("local_denied", False)],
+     ("empty_list", False), ("local_denied", False),
+     ("local_eval_error_stdout", False), ("remote_eval_error_stdout", False),
+     ("remote_eval_error_stderr", False), ("remote_eval_field", False),
+     ("remote_eval_typo", False), ("remote_empty_response", False),
+     ("remote_malformed_response", False), ("local_empty_response", False)],
 )
 def test_scc_read_only_audit_all_namespaces_and_fails_closed(tmp_path, scenario, expect_success):
     """Discover local/remote SCC use and reject incomplete cluster-wide audits."""
@@ -80,7 +88,23 @@ fi
 if [ "$1" = '-n' ] && [ "$3 $4 $5 $6 $7 $8" = 'adm policy who-can use scc rook-ceph' ]; then
   [ "$OC_TEST_SCENARIO" = remote_denied ] && [ "$2" = remote-storage ] && exit 52
   [ "$OC_TEST_SCENARIO" = local_denied ] && [ "$2" = rook-ceph ] && exit 53
-  echo 'USERS: system:serviceaccount:rook-ceph:rook-ceph-default'
+  case "$OC_TEST_SCENARIO/$2" in
+    local_empty_response/rook-ceph|remote_empty_response/remote-storage)
+      exit 0 ;;
+    remote_malformed_response/remote-storage)
+      printf 'Users:  service-account\n'; exit 0 ;;
+    local_eval_error_stdout/rook-ceph|remote_eval_error_stdout/remote-storage)
+      printf 'Users:  service-account\nGroups: none\nError during evaluation, results may not be complete: missing bound role\n'; exit 0 ;;
+    remote_eval_error_stderr/remote-storage)
+      printf 'Users:  service-account\nGroups: none\n'
+      printf 'Error during evaluation, results may not be complete: missing bound role\n' >&2
+      exit 0 ;;
+    remote_eval_field/remote-storage)
+      printf 'Users:  service-account\nGroups: none\nevaluationError: missing bound role\n'; exit 0 ;;
+    remote_eval_typo/remote-storage)
+      printf 'Users:  service-account\nGroups: none\nevalutionError: missing bound role\n'; exit 0 ;;
+  esac
+  printf 'Users:  system:serviceaccount:rook-ceph:rook-ceph-default\nGroups: none\n'
   exit 0
 fi
 exit 0
@@ -100,10 +124,17 @@ exit 0
     assert "patch" not in commands
     if scenario not in ("list_denied", "empty_list"):
         assert "-n rook-ceph adm policy who-can use scc rook-ceph" in commands
-    if scenario in ("ok", "remote_denied"):
+    if scenario not in ("list_denied", "empty_list", "local_denied",
+                        "local_eval_error_stdout", "local_empty_response"):
         # Regression: the current-namespace query alone would miss this grant.
         assert "-n remote-storage adm policy who-can use scc rook-ceph" in commands
     if expect_success:
         assert "== SCC RBAC use grants in namespace remote-storage ==" in result.stdout
+        assert "Users:" in result.stdout and "Groups:" in result.stdout
     else:
         assert "STOP:" in result.stderr
+    if "eval_error" in scenario or "eval_field" in scenario or "eval_typo" in scenario:
+        assert "incomplete SCC RBAC authorization evaluation" in result.stderr
+        assert "Error during evaluation, results may not be complete" not in result.stdout
+    if "empty_response" in scenario or "malformed_response" in scenario:
+        assert "missing SCC RBAC authorization results" in result.stderr
