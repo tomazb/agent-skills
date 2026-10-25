@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.18.10
+
+- Fail closed when the namespace-scoped `oc adm policy who-can` returns partial authorization results with a successful exit: inspect the evaluation-error diagnostic, reject missing user/group summaries, and execute mocked local/remote success, failure, and zero-exit partial-result regression cases.
+- Gate the upstream Rook `rook-ceph` SCC host-network and host-port permissions on an explicit host-network choice, with ownership classification, read-only auditing of direct users/groups and **namespace-by-namespace** RBAC `use` grants (including remote RoleBindings), fail-closed discovery, post-install verification, and declarative persistence rather than a routine operator restart.
+- Document reported OpenShift 4.21.34 / RHCOS 5.14 AES256K RBD field evidence as version- and topology-specific; retain the full CephX key-type audit instead of leaking keys or relying on `client.admin` prefixes.
+- Pin RBD/CephFS smoke pods using scheduler-mediated node affinity on `metadata.name`, compatible with `WaitForFirstConsumer` binding. Match Kubernetes `IsDNS1123Subdomain` Node-name validation (253 total characters, no 63-character component limit) and test long valid names, remote namespace audits, failure paths, and YAML output.
+
 ## 1.18.9
 
 - Replace recursive key discovery with explicit Ceph 20.2.4 conventional/rotating record validation. Reject missing keys, empty required structures, malformed records, and unknown types even when mixed with valid AES256K keys or Python optimization is enabled.

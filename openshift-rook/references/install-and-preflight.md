@@ -87,7 +87,7 @@ AES256K keys use key byte `0x02` and the base64 prefix `Ag`. Classic AES keys us
 
 The secure default is `spec.security.cephx.allowedCiphers: [aes256k]` plus `spec.security.cephx.csi.keyType: aes256k`. Leave `spec.security.cephx.daemon.keyType` unset. Setting it adds `--mon-auth-emergency-allowed-ciphers` to the monitors and raises `AUTH_EMERGENCY_CIPHERS_SET`. Rook selects the daemon key type itself. An empty `allowedCiphers` list allows every cipher, which raises `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE`. Allow `aes` only when the user asks for classic AES, or when the volume probe cannot mount an AES256K key.
 
-A kernel release string below 7.0 does not choose the cipher. OpenShift 4.20 on RHCOS kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. The volume probe is the decision.
+**Reported field evidence (not independently reproduced):** An OpenShift 4.20 RHCOS node running kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. A compact three-node OpenShift 4.21.34 cluster running RHCOS kernel `5.14.0-570.141.1.el9_6`, Rook `v1.21.0`, and ceph-csi `v3.18.1` reportedly wrote through an AES256K RBD mapping at `/dev/rbd0` on every schedulable node. These observations are not a compatibility guarantee for all 5.14 kernels or FIPS configurations. Capture the kernel, FIPS state, Ceph/Rook/CSI versions, effective MonMap policy, audited key types, and per-node `/dev/rbd*` write/read results. The live volume probe, not the kernel release string, decides.
 
 **Discover the ceph-csi image before the CephCluster.** The CSI Deployment may not exist yet. Read the operator image-set, or the manifest about to be applied:
 
@@ -135,14 +135,14 @@ After the cluster is `Ready`, `status.cephx.csi.keyType` is `aes256k`, the admin
 
 ```bash
 oc -n rook-ceph get cephcluster rook-ceph -o jsonpath='{.status.cephx.csi.keyType}{"\n"}{.spec.security.cephx.allowedCiphers}{"\n"}'
-# Run the full key-type audit in references/validation-hardening.md before restricting existing keys.
+# For an existing cluster, run the full CephX audit in references/validation-hardening.md before restricting ciphers.
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 oc -n rook-ceph get pod -l app=rook-ceph-mon -o jsonpath='{range .items[*]}{.spec.containers[0].args}{"\n"}{end}'
 ```
 
-The mon arguments do not include `--mon-auth-emergency-allowed-ciphers`. On an existing cluster, use `ceph auth dump-keys` and the key-type gate in `references/validation-hardening.md` before restricting `allowedCiphers`. Checking only the admin key, CSI Secrets, or `ceph auth ls` is insufficient: pending, expiring, and rotating service keys also matter. Every audited key must report `aes256k`. If any key still uses `aes`, leave it allowed until that key and its consumers have migrated. Restricting the list while a daemon key is still classic AES returns `RADOS permission denied` and can make the cluster unavailable.
+The mon arguments do not include `--mon-auth-emergency-allowed-ciphers`. On an existing cluster, run the complete `ceph auth dump-keys` audit in `references/validation-hardening.md` using `scripts/check_cephx_key_types.py` before restricting `allowedCiphers`. Checking only `client.admin`, CSI Secrets, or key prefixes is insufficient: pending, expiring, and rotating service keys also matter. Do not run `ceph auth ls` for this gate: it reveals authentication keys and cannot substitute for the full audit. Every audited key must report `aes256k`. If any key still uses `aes`, keep it allowed until that key and its consumers have migrated. Restricting the list while a daemon key is still classic AES returns `RADOS permission denied` and can make the cluster unavailable.
 
-**Probe one RBD volume on every schedulable node** after the block pool and StorageClass from `references/rbd-block-pools.md` exist. Substitute the class this install uses. A passing probe is the RBD smoke for `references/validation-hardening.md`. One scheduler-placed pod proves the cipher only on the node where it lands. The smoke image is `ubi9/ubi-minimal`, which has a shell and does not have `awk`, so the mount check stays inside `sh -c`.
+**Probe one RBD volume on every schedulable node** after the block pool and StorageClass from `references/rbd-block-pools.md` exist. Substitute the class this install uses. A passing probe is the RBD smoke for `references/validation-hardening.md`. One scheduler-placed pod proves the cipher only on the node where it lands. The smoke helper uses required node affinity matching the Node's `metadata.name`, not `spec.nodeName`, so the scheduler still participates when the selected StorageClass uses `WaitForFirstConsumer`. The smoke image is `ubi9/ubi-minimal`, which has a shell and does not have `awk`, so the mount check stays inside `sh -c`.
 
 A schedulable node is `Ready`, is not cordoned, and has no `NoSchedule` or `NoExecute` taint. The probe pod has no tolerations. An empty list means no node can run the probe; stop and fix scheduling before choosing a cipher.
 
@@ -182,6 +182,7 @@ python3 scripts/render_smoke_manifest.py \
   --output /tmp/rook-rbd-aes256k-probe.yaml
 oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
 oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+oc -n rook-rbd-aes256k-probe get pod rbd-smoke-writer -o jsonpath='{.spec.nodeName}{"\n"}'  # confirm requested node
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
 ```
@@ -259,6 +260,13 @@ scoped SecurityContextConstraints instead of granting the broad built-in
   SCC) bound to the Rook service accounts, and sets
   `ROOK_HOSTPATH_REQUIRES_PRIVILEGED=true` so OSD pods using host paths run
   correctly.
+- The upstream `rook-ceph` SCC ships with `allowHostNetwork: false` and
+  `allowHostPorts: false`. When `CephCluster.spec.network.provider: host` is
+  explicitly selected, the mon canary pods can fail SCC admission with
+  `host network is not allowed` or rejected host ports `3300` and `6789`.
+  Use the **Host-Network SCC Gate** after the operator install and before
+  creating the CephCluster. Leave these permissions disabled for pod-network
+  clusters; enabling them expands permissions for all users of this SCC.
 - The dedicated `rook-ceph` SCC binds these service accounts: `rook-ceph-system`,
   `rook-ceph-default`, `rook-ceph-mgr`, `rook-ceph-osd`, and `rook-ceph-rgw`.
   Confirm they are covered before deploying OSDs or an object store.
@@ -324,6 +332,96 @@ Newer Rook releases use `csi.ceph.io/v1` resources such as `CephConnection`,
 `Driver`, and `OperatorConfig`. If `csi-operator.yaml` is omitted, a new
 `CephCluster` can stall with `no matches for kind "CephConnection"` even though
 the main operator deployment is running.
+
+### Host-Network SCC Gate (Only When Selected)
+
+Run the Product Ownership Gate first; stop for ODF-owned, mixed, or unknown
+ownership. After the upstream Rook operator has created the `rook-ceph` SCC
+and **before** applying a CephCluster using `spec.network.provider: host`,
+inspect its permissions and every authorization path. Do not patch
+`rook-ceph-csi` or grant the built-in `privileged` SCC as a workaround.
+For pod networking, leave the `rook-ceph` SCC defaults unchanged.
+
+**Read-only authorization audit (stop if any command fails):**
+
+```bash
+# READ-ONLY SCC authorization audit; complete it before any permission change.
+(
+  set -euo pipefail
+  oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
+  oc get scc rook-ceph -o jsonpath='{range .users[*]}{.}{"\n"}{end}'
+  oc get scc rook-ceph -o jsonpath='{range .groups[*]}{.}{"\n"}{end}'
+  # who-can evaluates namespaced RBAC. Enumerate *all* namespaces before
+  # widening this cluster-scoped SCC; a RoleBinding outside rook-ceph matters.
+  namespaces=$(oc get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}') || {
+    echo 'STOP: cannot enumerate namespaces for SCC RBAC audit' >&2
+    exit 1
+  }
+  [ -n "$namespaces" ] || {
+    echo 'STOP: namespace inventory is empty; SCC RBAC audit is incomplete' >&2
+    exit 1
+  }
+  while IFS= read -r namespace; do
+    [ -n "$namespace" ] || {
+      echo 'STOP: invalid empty namespace in SCC RBAC audit' >&2
+      exit 1
+    }
+    printf '\n== SCC RBAC use grants in namespace %s ==\n' "$namespace"
+    # 'oc who-can' can report partial authorization results even with exit 0.
+    who_can_output=$(oc -n "$namespace" adm policy who-can use scc rook-ceph 2>&1) || {
+      echo "STOP: SCC RBAC audit failed in namespace ${namespace}" >&2
+      exit 1
+    }
+    if grep -Eiq 'error during evaluation|evaluationerror|evalutionerror' <<< "$who_can_output"; then
+      echo "STOP: incomplete SCC RBAC authorization evaluation in namespace ${namespace}" >&2
+      exit 1
+    fi
+    if ! grep -Eq '^Users:[[:space:]]' <<< "$who_can_output" ||
+       ! grep -Eq '^Groups:[[:space:]]' <<< "$who_can_output"; then
+      echo "STOP: missing SCC RBAC authorization results in namespace ${namespace}" >&2
+      exit 1
+    fi
+    printf '%s\n' "$who_can_output"
+  done <<< "$namespaces"
+)
+```
+
+The SCC `users` and `groups` fields show **direct** grants; `oc adm policy
+who-can use scc rook-ceph` shows **RBAC** grants in the selected namespace,
+not direct SCC assignments. The audit explicitly queries **every namespace**
+because a RoleBinding outside `rook-ceph` can authorize use of this shared,
+cluster-scoped SCC. Review all listed users, group membership, and
+RoleBinding/ClusterRoleBinding subjects and scope (including broad groups or
+wildcard RBAC rules) against the intended Rook workloads. Run this check
+immediately before applying the patch, and account for namespace/RBAC changes
+between the audit and the mutation. OpenShift `who-can` can print
+`Error during evaluation, results may not be complete` despite exiting with
+status 0. The audit rejects that diagnostic, `evaluationError` / `evalutionError`
+field variants, and missing user/group summaries, so an incomplete query
+cannot authorize the SCC change. **STOP without patching** if the audit fails or
+any principal or group membership is unexpected or cannot be classified. If
+sharing this SCC is inappropriate, design a separately scoped SCC/grant instead;
+do not silently widen permissions for other workloads.
+
+**Only after** confirming upstream Rook ownership, explicit host networking,
+and approval of the affected principals, apply the change:
+
+```bash
+oc patch scc rook-ceph --type=merge \
+  -p '{"allowHostNetwork":true,"allowHostPorts":true}'
+oc get scc rook-ceph -o jsonpath='{.allowHostNetwork}{" "}{.allowHostPorts}{"\n"}'
+```
+
+Verify both fields read back as `true`, then create the CephCluster and check
+mon canary events and reconciliation. Changing an SCC does not normally require
+restarting the operator. If reconciliation remains stalled after admission
+succeeds, inspect `oc -n rook-ceph logs deploy/rook-ceph-operator` and pod
+events before considering a deliberate operator restart.
+
+Reapplying the unmodified upstream OpenShift manifest can reset these SCC
+fields to `false`. Persist the host-network settings in the version-pinned
+manifest, Helm post-renderer, or GitOps overlay used by the installation;
+verify them again after an upgrade or reapply.
 
 ## CephCluster CR for SNO
 
