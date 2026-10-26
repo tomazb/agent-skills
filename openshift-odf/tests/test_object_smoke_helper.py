@@ -390,6 +390,7 @@ def test_lost_forward_pointer_after_roundtrip_does_not_report_a_pass():
     ("missing_forward_binding", False, False),
     ("contradictory_reverse_binding", False, False),
     ("different_objectbucket", False, False),
+    ("missing_objectbucket", False, False),
     ("retained_bucket_policy", False, False),
     ("bucket_remains_after_cleanup", False, True),
 ])
@@ -433,6 +434,7 @@ oc() {
       if [ "$FAKE_LEFTOVER" = "1" ]; then printf 'objectbucket/%s\n' "$3"; fi
       return 0
     fi
+    if [ "$FAKE_BUCKET_RC" = "1" ]; then return 1; fi
     printf '%s\n' "$FAKE_BUCKET"
     return 0
   fi
@@ -445,7 +447,8 @@ bash() {
 }
 '''
     env = {**os.environ, "FAKE_CLAIM": json.dumps(claim), "FAKE_BUCKET": json.dumps(bucket),
-           "FAKE_LEFTOVER": "1" if case == "bucket_remains_after_cleanup" else "0"}
+           "FAKE_LEFTOVER": "1" if case == "bucket_remains_after_cleanup" else "0",
+           "FAKE_BUCKET_RC": "1" if case == "missing_objectbucket" else "0"}
     result = subprocess.run(["bash", "-c", fake + runbook], env=env,
                             capture_output=True, text=True, timeout=5)
     assert (result.returncode == 0) is passed, result.stdout + result.stderr
