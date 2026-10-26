@@ -45,14 +45,15 @@ check_retained_objectbucket_inventory() {
   run_split oc get csv -A -o json
   if [ "$RUN_RC" -ne 0 ]; then fail "retained CRD CSV lookup failed"; return 1; fi
   csvs="$RUN_OUT"
-  if ! jq -e --argjson inventory "$inventory" --argjson subs "$subscriptions" --argjson csvs "$csvs" '
-      ($subs.items | type == "array") and ($csvs.items | type == "array") and
+  if ! printf '%s\n%s\n%s\n' "$inventory" "$subscriptions" "$csvs" | jq -e -s '
+      .[0] as $inventory | .[1] as $subs | .[2] as $csvs |
+       (length == 3) and ($subs.items | type == "array") and ($csvs.items | type == "array") and
       all($inventory.crds[]; . as $expected |
         any($subs.items[]; .metadata.namespace == $expected.ownerNamespace and .spec.name == $expected.ownerPackage
           and .status.installedCSV == $expected.ownerCSV and .metadata.deletionTimestamp == null)
         and any($csvs.items[]; .metadata.namespace == $expected.ownerNamespace and .metadata.name == $expected.ownerCSV
           and .status.phase == "Succeeded" and .metadata.deletionTimestamp == null))
-      ' <<<"null" >/dev/null 2>&1; then
+      ' >/dev/null 2>&1; then
     fail "retained CRD live non-ODF owner is unverified"; return 1
   fi
   RETAINED_OBJECTBUCKET_KINDS=$(jq -r '.crds[].name' <<<"$inventory") || return 1

@@ -60,7 +60,9 @@ For an RGW-backed bucket instead of MCG, set `storageClassName: ocs-storageclust
 ### Repeatable object smoke
 
 After the product ownership gate, use the packaged helper with an approved,
-pinned image containing Python 3 and compatible with restricted SCC:
+digest-pinned image containing Python 3 and declaring a numeric non-zero OCI
+`USER`. Confirm admission under the namespace SCC (`runAsNonRoot` does not
+itself supply a non-root UID):
 
 ```bash
 python3 scripts/check_object_smoke.py --context "<target-context>" \
@@ -68,6 +70,12 @@ python3 scripts/check_object_smoke.py --context "<target-context>" \
   --image "<approved-python-image>@sha256:<digest>" \
   --tls-ca service-ca --ca-configmap "<injected-service-ca-configmap>"
 ```
+
+Ctrl-C after provisioning enters best-effort UID-guarded cleanup and returns a
+failure status. `SIGKILL`, node loss, or repeated interrupts can still strand
+resources. Inspect `oc -n openshift-storage get pod,objectbucketclaim -l storage-smoke/run -o json`
+and verify run labels, exact UIDs, and bucket associations before manual recovery.
+Do not delete the operator namespace.
 
 For MCG, replace the class with `openshift-storage.noobaa.io`. The helper uses the
 NooBaa provisioner/readiness path, not RGW's namespace watch configuration. For

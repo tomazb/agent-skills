@@ -1,5 +1,6 @@
 """ODF-specific regressions for the findings tracked in issue 38."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -7,7 +8,7 @@ import sys
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from test_runbook_functions import _run, GROUPS, UPSTREAM
+from test_runbook_functions import _run, GROUPS, UPSTREAM, RUNBOOK
 from cluster_fake import meta
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
@@ -53,6 +54,52 @@ def test_csi_teardown_stops_if_temporary_sno_scale_down_was_not_restored(tmp_pat
     assert "rc=1" in result.stdout
     assert "CSI controller" in result.stderr
     assert deletes == []
+
+
+@pytest.mark.parametrize("replicas", ["0", "00", "-1", "abc", "1.5", ""])
+def test_sno_scale_down_rejects_invalid_csi_replicas_without_mutating(replicas):
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    snippet = runbook.split(
+        "# Stop only the reconcilers that recreate CephClients (NOT rook-ceph-operator):", 1
+    )[1].split("\n$OC -n openshift-storage patch noobaa", 1)[0]
+    fake_oc = r'''
+oc() {
+  case " $* " in
+    *" get deploy/ocs-client-operator-controller-manager "*) echo 1 ;;
+    *" get deploy/ceph-csi-controller-manager "*) printf '%s\n' "$FAKE_CSI_REPLICAS" ;;
+    *" scale deploy/ocs-client-operator-controller-manager "*) echo SCALE_CALLED ;;
+    *) return 99 ;;
+  esac
+}
+'''
+    result = subprocess.run(["bash", "-c", fake_oc + snippet + "\necho CONTINUED\n"],
+                            env={**os.environ, "FAKE_CSI_REPLICAS": replicas},
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode != 0
+    assert "SCALE_CALLED" not in result.stdout and "CONTINUED" not in result.stdout
+    if replicas == "0":
+        assert "replicas (0) are not a positive integer" in result.stderr
+
+
+def test_sno_scale_down_accepts_positive_csi_replicas():
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    snippet = runbook.split(
+        "# Stop only the reconcilers that recreate CephClients (NOT rook-ceph-operator):", 1
+    )[1].split("\n$OC -n openshift-storage patch noobaa", 1)[0]
+    fake_oc = r'''
+oc() {
+  case " $* " in
+    *" get deploy/ocs-client-operator-controller-manager "*) echo 1 ;;
+    *" get deploy/ceph-csi-controller-manager "*) echo 2 ;;
+    *" scale deploy/ocs-client-operator-controller-manager "*) echo SCALE_CALLED ;;
+    *) return 99 ;;
+  esac
+}
+'''
+    result = subprocess.run(["bash", "-c", fake_oc + snippet + "\necho CONTINUED\n"],
+                            capture_output=True, text=True, timeout=5)
+    assert result.returncode == 0, result.stderr
+    assert "SCALE_CALLED" in result.stdout and "CONTINUED" in result.stdout
 
 
 def test_live_storagecluster_prevents_manual_csi_cleanup(tmp_path):

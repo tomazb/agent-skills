@@ -49,6 +49,16 @@ def test_retained_objectbucket_apis_require_matching_identity_and_ownership(tmp_
     assert "retained: verified OLM-owned CRD inventory" in result.stdout
 
 
+def test_large_olm_owner_lists_use_stdin_instead_of_large_argv(tmp_path):
+    path, objects = retention(tmp_path)
+    # Larger than Linux MAX_ARG_STRLEN (128 KiB) for either --argjson.
+    objects["subscription"][0]["metadata"]["annotations"] = {"large": "s" * 160_000}
+    objects["csv"][0]["metadata"]["annotations"] = {"large": "c" * 160_000}
+    result = _audit(tmp_path, objects=objects, groups=SHARED_GROUPS,
+                    env={"ODF_RETAINED_OBJECTBUCKET_CRDS_FILE": str(path)})
+    _clean(result)
+
+
 @pytest.mark.parametrize("failure", ["server", "uid", "owner", "owner-empty", "missing", "instance", "access", "malformed", "discovery"])
 def test_retention_expectations_fail_closed(tmp_path, failure):
     path, objects = retention(tmp_path)

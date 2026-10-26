@@ -275,7 +275,8 @@ class Smoke:
             "resources": {"requests": {"cpu": "10m", "memory": "32Mi"}, "limits": {"memory": "128Mi"}},
             "securityContext": {"allowPrivilegeEscalation": False, "runAsNonRoot": True,
                                 "capabilities": {"drop": ["ALL"]}, "seccompProfile": {"type": "RuntimeDefault"}}}
-        pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"restartPolicy": "Never", "containers": [container]}}
+        pod = {"apiVersion": "v1", "kind": "Pod", "spec": {"restartPolicy": "Never",
+                "automountServiceAccountToken": False, "containers": [container]}}
         if a.ca_configmap:
             container["volumeMounts"] = [{"name": "ca", "mountPath": "/etc/rgw-ca", "readOnly": True}]
             pod["spec"]["volumes"] = [{"name": "ca", "configMap": {"name": a.ca_configmap}}]
@@ -346,12 +347,15 @@ class Smoke:
         failure = None
         try:
             self.execute()
-        except Exception as error:
+        except (Exception, KeyboardInterrupt) as error:
+            # Attempt guarded cleanup even when Ctrl-C interrupts a resource creation.
             failure = error
         try:
             self.cleanup()
-        except Exception:
+        except (Exception, KeyboardInterrupt):
             raise Failure("smoke cleanup unverified; preserve namespace and inspect owned resources") from None
+        if isinstance(failure, KeyboardInterrupt):
+            raise Failure("S3 smoke interrupted; owned-resource cleanup verified") from None
         if failure:
             raise Failure("S3 smoke failed; owned-resource cleanup verified") from None
         return {"status": "passed", "put_get_compare_delete": True, "cleanup_verified": True,
@@ -389,6 +393,10 @@ def main(argv=None):
     except Failure as error:
         print("STOP: " + str(error), file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        # run() catches interruption after provisioning; preflight is read-only.
+        print("STOP: interrupted during read-only smoke preflight", file=sys.stderr)
+        return 130
     except Exception:
         print("STOP: malformed or unverified smoke input/result", file=sys.stderr)
         return 1

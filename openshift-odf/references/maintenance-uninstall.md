@@ -113,6 +113,10 @@ OC="oc --request-timeout=30s"
 OCS_CLIENT_REPLICAS=$($OC -n openshift-storage get deploy/ocs-client-operator-controller-manager -o jsonpath='{.spec.replicas}')
 CSI_MANAGER_REPLICAS=$($OC -n openshift-storage get deploy/ceph-csi-controller-manager -o jsonpath='{.spec.replicas}')
 : "${OCS_CLIENT_REPLICAS:?record original replicas}" "${CSI_MANAGER_REPLICAS:?record original replicas}"
+if ! [[ "$CSI_MANAGER_REPLICAS" =~ ^[1-9][0-9]*$ ]]; then
+  printf 'STOP: recorded ceph-csi-controller-manager replicas (%s) are not a positive integer; recover the original value before continuing.\n' "$CSI_MANAGER_REPLICAS" >&2
+  exit 1
+fi
 $OC -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/ceph-csi-controller-manager --replicas=0
 
 $OC -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
@@ -147,6 +151,8 @@ remaining="$($OC -n openshift-storage get ${KINDS// /,} --no-headers -o name)" |
 }
 [ -z "$remaining" ] || { printf '%s\n' "$remaining"; echo "dependents did not converge" >&2; exit 1; }
 ```
+
+On an interrupted rerun, zero CSI manager replicas means the original value was already lost; stop and recover the previous positive value rather than restoring zero.
 
 Once the `CephCluster` is deleted, restore `rook-ceph-operator` if it was changed and restore the recorded `ceph-csi-controller-manager` replicas before step 4 so CSI finalizers can complete. The OCS client reconciler can stay stopped during removal; restore its recorded replicas if uninstall is aborted. Do not wait until after deleting the namespace to restore a controller needed for finalization.
 

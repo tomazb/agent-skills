@@ -138,15 +138,16 @@ oc -n rook-ceph get route rook-ceph-rgw -o wide
 
 ### Repeatable object roundtrip
 
-Prefer the shipped helper. It uses a pinned Python-capable image and a standard
-library SigV4 client, so no runtime pip installation or local SDK is needed. It
+Prefer the shipped helper with an approved, digest-pinned Python 3 client image.
+Its standard-library SigV4 client requires no runtime pip installation or local SDK. It
 signs Content-Type as well as the required host and x-amz headers. Credentials
 come from `envFrom` inside the test pod and are never read by the local helper.
 
 ```bash
+SMOKE_IMAGE="<approved-python3-image>@sha256:<verified-digest>"
 python3 scripts/check_rgw_smoke.py --context "<target-context>" \
   --namespace rook-ceph --operator-namespace rook-ceph \
-  --storage-class rook-ceph-rgw-obc --image quay.io/ceph/ceph:v20.2.4 --allow-http
+  --storage-class rook-ceph-rgw-obc --image "$SMOKE_IMAGE" --allow-http
 ```
 
 Use `--allow-http` only for a trusted in-cluster pod-to-gateway path. For HTTPS,
@@ -154,8 +155,13 @@ omit it. Public certificates use the default trust store; an OpenShift serving
 certificate uses `--tls-ca service-ca --ca-configmap <injected-ca-configmap>`;
 a private CA uses `--tls-ca /etc/rgw-ca/ca-bundle.crt --ca-configmap <ca-configmap>`.
 Prepare the CA ConfigMap as described below. TLS verification stays enabled.
-Select a pinned client image compatible with the installed release and restricted
-SCC. Feature gates and server authentication settings are not changed.
+Verify the image supplies a working `python3` and declares a numeric non-zero
+OCI `USER` (check `.config.User` via
+`skopeo inspect --config docker://"$SMOKE_IMAGE" | jq -r '.config.User'`).
+Confirm admission under the target namespace's SCC. Do not assume a Ceph image
+using a root/default user can satisfy `runAsNonRoot` without an SCC-injected UID.
+The helper does not request elevated SCC access. Feature gates and server
+authentication settings are not changed.
 
 The default OBC watch scope is the operator namespace. The helper checks that
 scope and creates uniquely labelled OBC/pod resources there, never deleting the
@@ -165,7 +171,11 @@ Do not broaden the operator watch scope just to run a test.
 
 Pass requires PUT, GET byte comparison, DELETE, confirmation the object is gone,
 and removal of the owned pod, OBC, ObjectBucket, Secret, and ConfigMap. Cleanup
-also runs after failure; successful cleanup never turns a failed test green.
+also runs after ordinary failure or a single Ctrl-C, and a failed test remains
+failed. `SIGKILL`, node loss, or repeated interrupts can still strand resources.
+Inspect `oc -n rook-ceph get pod,objectbucketclaim -l storage-smoke/run -o json`
+and verify run labels, exact UIDs, and bucket associations before targeted
+recovery; never bulk-delete the operator namespace.
 UID/ownership changes stop cleanup and report failure. Query failures or timeouts
 are unverified, never clean. The helper preserves the StorageClass and namespace.
 

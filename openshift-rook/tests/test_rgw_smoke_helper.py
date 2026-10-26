@@ -118,8 +118,41 @@ def test_operator_watch_scope_roundtrip_cleans_only_owned_resources():
     assert smoke.run()["status"] == "passed"
     assert not any(key[1] in ("pod", "objectbucketclaim", "objectbucket", "secret") for key in kube.objects)
     pod = next(json.loads(payload) for _, command, payload in kube.events if command[0] == "create" and json.loads(payload)["kind"] == "Pod")
+    assert pod["spec"]["automountServiceAccountToken"] is False
     assert pod["spec"]["containers"][0]["envFrom"]
     assert pod["spec"]["containers"][0]["securityContext"]["allowPrivilegeEscalation"] is False
+
+
+@pytest.mark.parametrize("stage", ["ObjectBucketClaim", "Pod", "exec"])
+def test_keyboard_interrupt_after_api_accepts_create_cleans_run_resources(stage):
+    module = load(); kube = Kube()
+
+    def runner(command, **kwargs):
+        response = kube(command, **kwargs)
+        if "create" in command and stage != "exec":
+            if json.loads(kwargs["input"])["kind"] == stage:
+                raise KeyboardInterrupt
+        if stage == "exec" and "exec" in command:
+            raise KeyboardInterrupt
+        return response
+
+    with pytest.raises(module.Failure, match="interrupted; owned-resource cleanup verified"):
+        module.Smoke(args(), runner=runner).run()
+    assert not any(key[1] in ("pod", "objectbucketclaim", "objectbucket", "secret") for key in kube.objects)
+    assert any(command[0] == "delete" for _, command, _ in kube.events)
+
+
+def test_keyboard_interrupt_during_cleanup_never_reports_success():
+    module = load(); kube = Kube()
+
+    def runner(command, **kwargs):
+        response = kube(command, **kwargs)
+        if "delete" in command:
+            raise KeyboardInterrupt
+        return response
+
+    with pytest.raises(module.Failure, match="cleanup unverified"):
+        module.Smoke(args(), runner=runner).run()
 
 
 def test_s3_failure_is_preserved_after_successful_cleanup():
