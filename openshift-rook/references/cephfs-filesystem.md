@@ -78,6 +78,8 @@ parameters:
   pool: rook-cephfs-data0
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
   csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
   csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
 reclaimPolicy: Delete
@@ -85,7 +87,11 @@ allowVolumeExpansion: true
 volumeBindingMode: Immediate
 ```
 
+`allowVolumeExpansion: true` is honored only when `controller-expand-secret-name` and `controller-expand-secret-namespace` name the provisioner Secret. The external-resizer does not fall back to the provisioner-secret parameters. From this skill directory, `python3 scripts/check_volume_expansion_secrets.py` fails if an expandable RBD or CephFS class omits either parameter, or if that Secret has no `userID` or `userKey`. It prints Secret names, never Secret data. Pass `--context <target-context>` when the current context is not the target cluster. A failed check during read-only validation is reported, not patched.
+
 Keep exactly one default StorageClass unless the user explicitly requests another policy.
+
+CSI template references are **Not checked**, not invalid. The expansion checker exits 2 for them; verify the resolved PV references as described in [validation-hardening.md](validation-hardening.md) before recording a full credential-validation pass.
 
 For VirtualMachine disks on CephFS, configure `StorageProfile` `claimPropertySets` (`Filesystem` mode) — see `references/vm-storage-profiles.md`.
 
@@ -98,16 +104,17 @@ Create a test PVC and pod. Confirm:
 - CephFS mount is active and healthy.
 - MDS is in `active` state.
 - `oc get sc` shows exactly one default StorageClass when defaulting is expected.
+- For literal expansion-secret references, `python3 scripts/check_volume_expansion_secrets.py` exits 0. For templated references, record exit 2 as **Not checked** until separate verification of the resolved PV references and Secret succeeds. Record that evidence before a full credential-validation pass; the checker itself continues to exit 2 for templates.
 
-Use the CephFS smoke flow in `references/validation-hardening.md`. After the write is recorded, that flow deletes the smoke namespace:
+Use the complete CephFS snapshot/restore smoke flow in `references/validation-hardening.md`. It verifies the restored token and then deletes and audits the smoke namespace; a provisioning-only check is not a full smoke pass:
 
 ```bash
-bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke --context "<target-context>"
 ```
 
 ## Snapshot Support
 
-Enable CephFS snapshot support by creating a `VolumeSnapshotClass`:
+Configure supported CephFS snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Set this driver's `snapshotPolicy` to `volumeSnapshot` for ordinary snapshots; use `volumeGroupSnapshot` only after the optional group-snapshot prerequisites and recovery checks pass there. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1

@@ -6,6 +6,7 @@ kind: Namespace
 metadata:
   name: __NAMESPACE__
   labels:
+    app.kubernetes.io/part-of: storage-smoke
     app.kubernetes.io/name: longhorn-smoke
     longhorn.io/data-engine: __MODE__
 ---
@@ -15,6 +16,7 @@ metadata:
   name: __PVC_NAME__
   namespace: __NAMESPACE__
   labels:
+    app.kubernetes.io/part-of: storage-smoke
     app.kubernetes.io/name: longhorn-smoke
     longhorn.io/data-engine: __MODE__
 spec:
@@ -32,6 +34,7 @@ metadata:
   name: __POD_NAME__
   namespace: __NAMESPACE__
   labels:
+    app.kubernetes.io/part-of: storage-smoke
     app.kubernetes.io/name: longhorn-smoke
     longhorn.io/data-engine: __MODE__
 spec:

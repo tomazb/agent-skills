@@ -17,6 +17,8 @@ FS_POD = """\
 apiVersion: v1
 kind: Pod
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: lvms-smoke-writer
   namespace: {namespace}
 spec:
@@ -46,6 +48,8 @@ BLOCK_POD = """\
 apiVersion: v1
 kind: Pod
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: lvms-smoke-writer
   namespace: {namespace}
 spec:
@@ -76,6 +80,8 @@ FS_PVC = """\
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: lvms-smoke-pvc
   namespace: {namespace}
 spec:
@@ -91,6 +97,8 @@ BLOCK_PVC = """\
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: lvms-smoke-pvc
   namespace: {namespace}
 spec:
@@ -108,6 +116,8 @@ NAMESPACE = """\
 apiVersion: v1
 kind: Namespace
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: {namespace}
 """
 

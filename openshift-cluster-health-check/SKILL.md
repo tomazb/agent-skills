@@ -265,6 +265,8 @@ oc get pvc -A -o json | jq '.items[] | select(.status.phase == "Pending") | {nam
 
 PVs in `Failed`/`Released` or PVCs stuck in `Pending` indicate provisioner or backend problems. See [references/checklist-storage.md](references/checklist-storage.md) for platform-specific CSI driver checks, ODF/Ceph health, and volume attachment triage.
 
+Also assess snapshot readiness for each StorageClass, including clusters with no PVCs: supported driver/backend/mode, matching `VolumeSnapshotClass`, snapshot-controller/CSI snapshotter readiness, class selection, schedules, and restore evidence. Supported but unconfigured snapshotting is **Warning** even when storage runtime health is good. Unknown support or failed discovery is **Not checked**; verified unsupported combinations are **N/A** with a reason. Keep this phase read-only and hand off configuration to the owning storage lifecycle skill.
+
 ---
 
 ### Phase 9 — Monitoring and alerting
@@ -455,6 +457,7 @@ Always return: overall status (**Healthy** / **Warning** / **Critical**), a 2-4 
 | DNS | ... | ... | ... | ... |
 | Networking | ... | ... | ... | ... |
 | Storage | ... | ... | ... | ... |
+| Snapshot readiness | ... | Supported / Configured / Scheduled / Restore-tested per StorageClass | recovery coverage | owning lifecycle skill |
 | Monitoring | ... | ... | ... | ... |
 | Image registry | ... | ... | ... | ... |
 | Console | ... | ... | ... | ... |
@@ -513,5 +516,6 @@ This skill is complete when:
 - Blast radius is explained.
 - Pending and crashing pods are classified as quota, platform, or application issues.
 - Platform-specific checks ran (bare metal, virtual, or cloud as appropriate).
+- Snapshot readiness is recorded per StorageClass; missing supported configuration is reported and routed to the owning lifecycle skill without mutating the cluster.
 - The next 1-5 priority actions are clear.
 - Uncertainty is documented.

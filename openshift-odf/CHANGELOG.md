@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.28.5
+
+- Default ordinary RBD/CephFS snapshots to `volumeSnapshot`; require verified API/sidecar compatibility and group recovery before using optional group mode or classes. Correct executable examples and validation contracts to preserve ordinary snapshot readiness. Replace the blanket snapshotter-major-version claim with exact client/API-version discovery.
+
+## 1.28.4
+
+- Storage setup does not enable feature gates. Create a VolumeGroupSnapshotClass only when the group-snapshot API is already served.
+
+## 1.28.3
+
+- Create an RBD and a CephFS `VolumeGroupSnapshotClass` when the group-snapshot API is served. On OpenShift 4.22 that API is `groupsnapshot.storage.k8s.io/v1beta2`. Leave `snapshotPolicy` at `volumeSnapshot` when `csi-snapshotter` v8 cannot list that version, because its v1 watch never syncs and ordinary VolumeSnapshots stay unready.
+
+## 1.28.2
+
+- Set `snapshotPolicy` to `volumeGroupSnapshot` only when the group-snapshot API is served. Without those CRDs the snapshotter never syncs and ordinary VolumeSnapshots stay unready. Leave `TechPreviewNoUpgrade` unchanged unless the user accepts that it cannot be undone and blocks minor upgrades.
+
+## 1.28.1
+
+- Set ceph-csi-operator `Driver.spec.snapshotPolicy` to `volumeGroupSnapshot` for the ODF RBD and CephFS drivers. That keeps VolumeSnapshot and enables the group-snapshot sidecar feature gate. Leave NFS drivers and the operator-wide default unchanged.
+
+## 1.28.0
+
+- Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.
+- Run guarded snapshot/restore/data-comparison smoke tests for supported modes, with filesystem/raw-block handling, explicit context, labeled disposable sources, preserved retention policies, and verified snapshot/PV cleanup.
+- Audit leftover VolumeSnapshotContent during namespace cleanup and retain failed test status even when cleanup succeeds.
+- Require supported snapshot readiness during setup and validation; reuse ODF-managed classes and resolve missing classes through operator reconciliation while preserving policy and ownership.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+
 ## 1.27.5
 
 - Poll the named Deployment container for OLM propagation instead of using a filtered `oc wait` expression that older clients cannot parse. Bound both the polling deadline and individual reads; fail on timeout, API errors, or CSV replacement.

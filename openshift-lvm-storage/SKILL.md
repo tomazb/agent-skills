@@ -19,6 +19,12 @@ Use this skill as a lifecycle router for LVM Storage (LVMS) on OpenShift/OKD. Do
 - **Node maintenance, disk removal, VG cleanup, operator uninstall, or cluster cleanup**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
 
+## Snapshot readiness
+
+For installation, configuration, and remediation, configure supported snapshotting by default before declaring storage ready, unless the user explicitly opts out. Follow [references/backup-restore-dr.md](references/backup-restore-dr.md) for prerequisites, operator-managed `VolumeSnapshotClass` discovery, selection, and snapshot/restore verification. Verify thin-pool and installed-version support before creating a custom class.
+
+Validation-only requests remain read-only. Report supported but unconfigured snapshotting as **Warning**, unsupported combinations as **N/A** with a version-specific reason, and inaccessible or unverified capability as **Not checked**. Report **Supported**, **Configured**, **Scheduled**, and **Restore-tested** separately for each StorageClass. Configure classes during authorized setup even when no PVC exists; create recurring jobs only with a workload, retention, and consistency policy. Local snapshots do not replace off-cluster backups. Smoke tests must run `python3 scripts/check_snapshot_smoke.py` for supported modes and verify restored data and cleanup before a full pass; see `references/validation-hardening.md`.
+
 ## Core Safety Rules
 
 - Never run or recommend `pvcreate`, `vgcreate`, `vgremove`, `lvremove`, `wipefs`, partitioning, or LVMS uninstall until the user gives explicit destructive confirmation for the exact target disk and intent.

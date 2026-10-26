@@ -350,6 +350,10 @@ Before declaring success, verify:
 - Exactly one default StorageClass exists when defaulting is expected.
 - The ODF console plugin is enabled when the Data Foundation UI is required — CLI OLM install does not enable it automatically; see `references/console-plugin.md`.
 
+## Snapshot readiness
+
+Complete [snapshot setup and verification](backup-restore-dr.md#snapshot-readiness) before declaring the install complete. Verify the operator-managed RBD/CephFS snapshot classes and resolve missing classes through ODF reconciliation. Configure supported snapshotting even if the cluster has no PVCs yet; record any explicit opt-out, unsupported service, or blocked prerequisite.
+
 ## MachineConfig Discipline
 
 MachineConfig changes can reboot nodes. On SNO, warn that API access can disappear until the single node returns. Apply one purpose per MachineConfig, wait for MCP recovery, then verify host state:

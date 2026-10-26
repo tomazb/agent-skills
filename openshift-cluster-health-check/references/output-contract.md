@@ -50,6 +50,7 @@ Use this table format with one row per subsystem. Omit rows that are not applica
 | DNS | — | — | — | — |
 | Networking | — | — | — | — |
 | Storage | — | — | — | — |
+| Snapshot readiness | — | Supported / Configured / Scheduled / Restore-tested per StorageClass | recovery coverage | owning lifecycle skill |
 | Monitoring | — | — | — | — |
 | Image registry | — | — | — | — |
 | Console | — | — | — | — |

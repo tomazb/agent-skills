@@ -36,6 +36,8 @@ REQUIRED_FILES = [
     "scripts/post_uninstall_audit.sh",
     "scripts/rook_common.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/check_snapshot_smoke.py",
+    "scripts/check_volume_expansion_secrets.py",
     "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
     "tools/validate_skill_package.py",
@@ -512,12 +514,58 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "one default if defaulting is expected",
         ],
     )
-    require_order(
+    require(
+        "references/backup-restore-dr.md",
+        "ordinary snapshot policy with verified optional groups",
+        [
+            "snapshotPolicy: volumeGroupSnapshot",
+            "Use `volumeSnapshot` by default",
+            "group snapshot and restore",
+            "--feature-gates=CSIVolumeGroupSnapshot=true",
+            "Do not set `snapshotPolicy` on an NFS driver",
+            "driverSpecDefaults.snapshotPolicy",
+            "rook-ceph.rbd.csi.ceph.com",
+            "rook-ceph.cephfs.csi.ceph.com",
+            "set `snapshotPolicy: volumeSnapshot` instead",
+            "TechPreviewNoUpgrade",
+            "kind: VolumeGroupSnapshotClass",
+            "groupsnapshot.storage.k8s.io/v1beta2",
+            "group API client",
+            "CustomNoUpgrade",
+            "Do not enable feature gates.",
+        ],
+    )
+    require(
+        "references/rbd-block-pools.md",
+        "RBD ordinary snapshot policy",
+        [
+            "snapshotPolicy` to `volumeSnapshot`",
+        ],
+    )
+    require(
+        "references/cephfs-filesystem.md",
+        "CephFS ordinary snapshot policy",
+        [
+            "snapshotPolicy` to `volumeSnapshot`",
+        ],
+    )
+    require(
         "references/rbd-block-pools.md",
         "RBD smoke cleanup",
         [
-            "oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "python3 scripts/check_snapshot_smoke.py",
             "bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke",
+        ],
+    )
+    require_order(
+        "references/rbd-block-pools.md",
+        "RBD volume expansion credentials",
+        [
+            "csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner",
+            "csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph",
+            "csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node",
+            "does not fall back to the provisioner-secret parameters",
+            "python3 scripts/check_volume_expansion_secrets.py",
         ],
     )
     require(
@@ -525,6 +573,26 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "CephFS smoke cleanup",
         [
             "bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke",
+        ],
+    )
+    require_order(
+        "references/cephfs-filesystem.md",
+        "CephFS volume expansion credentials",
+        [
+            "csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner",
+            "csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph",
+            "csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node",
+            "does not fall back to the provisioner-secret parameters",
+            "python3 scripts/check_volume_expansion_secrets.py",
+        ],
+    )
+    require(
+        "references/validation-hardening.md",
+        "volume expansion credentials",
+        [
+            "does not fall back to the provisioner-secret parameters",
+            "python3 scripts/check_volume_expansion_secrets.py",
+            "no `userID` or `userKey`",
         ],
     )
     require_order(

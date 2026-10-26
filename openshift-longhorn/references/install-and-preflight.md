@@ -240,3 +240,7 @@ oc get sc
 ```
 
 Before declaring success, verify exactly one default StorageClass if Longhorn was intended to be default.
+
+## Snapshot readiness
+
+Complete [snapshot setup and verification](backup-restore-dr.md#snapshot-readiness) before declaring the install complete. Configure supported CSI snapshotting for each installed data engine even if no PVCs exist yet; record any explicit opt-out, unsupported version/engine combination, or blocked prerequisite. A recurring Longhorn snapshot job does not substitute for a CSI snapshot class.

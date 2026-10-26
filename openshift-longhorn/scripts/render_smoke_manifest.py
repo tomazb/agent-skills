@@ -36,6 +36,7 @@ def render_smoke_documents(options: SmokeOptions) -> list[dict[str, Any]]:
         raise ValueError("mode must be v1 or v2")
 
     labels = {
+        "app.kubernetes.io/part-of": "storage-smoke",
         "app.kubernetes.io/name": "longhorn-smoke",
         "longhorn.io/data-engine": options.mode,
     }

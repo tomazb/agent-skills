@@ -1,5 +1,42 @@
 # Changelog
 
+## 1.19.7
+
+- Default ordinary RBD/CephFS snapshots to `volumeSnapshot`; require verified API/sidecar compatibility and group recovery before using optional group mode or classes. Correct executable examples and validation contracts to preserve ordinary snapshot readiness. Replace the blanket snapshotter-major-version claim with exact client/API-version discovery. Accept checker exit 2 as Not checked in both credential-validation checklists until resolved-PV/Secret evidence is recorded, and pin standalone CephFS cleanup to the target context.
+
+## 1.19.6
+
+- Report templated CSI expansion-secret references as Not checked with exit code 2 instead of rejecting them as invalid names. Continue verifying literal references and preserve failures for missing parameters, invalid literal fields, and missing Secret keys. Document resolved-PV verification and add command-level regression coverage without exposing Secret data.
+
+## 1.19.5
+
+- Storage setup does not enable feature gates. Create a VolumeGroupSnapshotClass only when the group-snapshot API is already served.
+
+## 1.19.4
+
+- Create an RBD and a CephFS `VolumeGroupSnapshotClass` when the group-snapshot API is served. On OpenShift 4.22 that API is `groupsnapshot.storage.k8s.io/v1beta2`. Leave `snapshotPolicy` at `volumeSnapshot` when `csi-snapshotter` v8 cannot list that version, because its v1 watch never syncs and ordinary VolumeSnapshots stay unready.
+
+## 1.19.3
+
+- Set `snapshotPolicy` to `volumeGroupSnapshot` only when the group-snapshot API is served. Without those CRDs the snapshotter never syncs and ordinary VolumeSnapshots stay unready. Leave `TechPreviewNoUpgrade` unchanged unless the user accepts that it cannot be undone and blocks minor upgrades.
+
+## 1.19.2
+
+- Set ceph-csi-operator `Driver.spec.snapshotPolicy` to `volumeGroupSnapshot` for RBD and CephFS. That keeps VolumeSnapshot and enables the group-snapshot sidecar feature gate. Leave NFS drivers and the operator-wide default unchanged.
+
+## 1.19.1
+
+- Require controller-expand Secret parameters on expandable RBD and CephFS StorageClasses. The external-resizer does not use the provisioner-secret parameters. `scripts/check_volume_expansion_secrets.py` fails closed when those parameters or the Secret's `userID` and `userKey` are missing, without printing Secret data.
+
+## 1.19.0
+
+- Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.
+- Run guarded snapshot/restore/data-comparison smoke tests for supported modes, with filesystem/raw-block handling, explicit context, labeled disposable sources, preserved retention policies, and verified snapshot/PV cleanup.
+- Audit leftover VolumeSnapshotContent during namespace cleanup and retain failed test status even when cleanup succeeds.
+- Require supported RBD/CephFS snapshot configuration during setup, audit driver/backend coverage during validation, and add snapshot-to-new-PVC restore/data verification with test-resource cleanup.
+- Add snapshot-readiness regression coverage; distinguish support, configuration, scheduling, and restore testing, including read-only and unavailable-evidence cases.
+- Isolate mocked shell-command tests from host Bash startup files so profile-defined functions cannot override the fake disk tools.
+
 ## 1.18.10
 
 - Fail closed when the namespace-scoped `oc adm policy who-can` returns partial authorization results with a successful exit: inspect the evaluation-error diagnostic, reject missing user/group summaries, and execute mocked local/remote success, failure, and zero-exit partial-result regression cases.

@@ -114,6 +114,8 @@ parameters:
   imageFeatures: layering
   csi.storage.k8s.io/provisioner-secret-name: rook-csi-rbd-provisioner
   csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
   csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
   csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
   csi.storage.k8s.io/fstype: ext4
@@ -122,7 +124,11 @@ allowVolumeExpansion: true
 volumeBindingMode: Immediate
 ```
 
+`allowVolumeExpansion: true` is honored only when `controller-expand-secret-name` and `controller-expand-secret-namespace` name the provisioner Secret. The external-resizer does not fall back to the provisioner-secret parameters. From this skill directory, `python3 scripts/check_volume_expansion_secrets.py` fails if an expandable RBD or CephFS class omits either parameter, or if that Secret has no `userID` or `userKey`. It prints Secret names, never Secret data. Pass `--context <target-context>` when the current context is not the target cluster. A failed check during read-only validation is reported, not patched.
+
 Keep exactly one default StorageClass unless the user explicitly requests another policy.
+
+CSI template references are **Not checked**, not invalid. The expansion checker exits 2 for them; verify the resolved PV references as described in [validation-hardening.md](validation-hardening.md) before recording a full credential-validation pass.
 
 For VirtualMachine disks, prefer a VM/virt default via `storageclass.kubevirt.io/is-default-virt-class` and block-mode `StorageProfile` `claimPropertySets` — see `references/vm-storage-profiles.md`.
 
@@ -135,21 +141,51 @@ Create a test PVC and pod. Confirm:
 - RBD image is created in the pool.
 - RBD image has the correct replica count and failure domain.
 - `oc get sc` shows exactly one default StorageClass when defaulting is expected.
+- For literal expansion-secret references, `python3 scripts/check_volume_expansion_secrets.py` exits 0. For templated references, record exit 2 as **Not checked** until separate verification of the resolved PV references and Secret succeeds. Record that evidence before a full credential-validation pass; the checker itself continues to exit 2 for templates.
 
 Minimum smoke flow:
 
 ```bash
-oc apply -f /tmp/rook-rbd-smoke.yaml
-oc -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
-oc -n rook-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace rook-rbd-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace rook-rbd-smoke" >&2
+  exit 1
+fi
+python3 scripts/render_smoke_manifest.py \
+  --mode rbd \
+  --namespace rook-rbd-smoke \
+  --storage-class rook-ceph-block \
+  --output /tmp/rook-rbd-smoke.yaml
+
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace rook-rbd-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/rook-rbd-smoke.yaml
+oc --context="$target_context" -n rook-rbd-smoke wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace rook-rbd-smoke \
+  --source-pvc rbd-smoke-pvc --writer-pod rbd-smoke-writer \
+  --snapshot-class "<rbd-snapshot-class>"
+)
 ```
 
-The cleanup command is the end of the smoke. It deletes `rook-rbd-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
+The cleanup command is the end of the smoke. It deletes `rook-rbd-smoke` and fails if the namespace, a PV that claims it, or a VolumeSnapshotContent that references it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 
-Enable RBD snapshot support by creating a `VolumeSnapshotClass`:
+Configure supported RBD snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Set this driver's `snapshotPolicy` to `volumeSnapshot` for ordinary snapshots; use `volumeGroupSnapshot` only after the optional group-snapshot prerequisites and recovery checks pass there. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1

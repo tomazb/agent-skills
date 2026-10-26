@@ -35,6 +35,7 @@ REQUIRED_FILES = [
     "scripts/render_storagecluster.py",
     "scripts/post_uninstall_audit.sh",
     "scripts/render_smoke_manifest.py",
+    "scripts/check_snapshot_smoke.py",
     "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
     "scripts/render_console_plugin_patch.py",
@@ -644,19 +645,19 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object",
         ],
     )
-    require_order(
+    require(
         "references/block-rbd.md",
         "RBD smoke cleanup",
         [
-            "oc -n odf-rbd-smoke exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "python3 scripts/check_snapshot_smoke.py",
             "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rbd-smoke",
         ],
     )
-    require_order(
+    require(
         "references/cephfs-filesystem.md",
         "CephFS smoke cleanup",
         [
-            "oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'",
+            "python3 scripts/check_snapshot_smoke.py",
             "bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke",
         ],
     )
@@ -681,6 +682,41 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "LVMCluster.spec.storage.deviceClasses[].default",
             "odf-vm-smoke",
             "bash scripts/cleanup_smoke_namespace.sh --namespace odf-vm-smoke",
+        ],
+    )
+    require(
+        "references/backup-restore-dr.md",
+        "ordinary snapshot policy with verified optional groups",
+        [
+            "snapshotPolicy: volumeGroupSnapshot",
+            "Use `volumeSnapshot` by default",
+            "group snapshot and restore",
+            "--feature-gates=CSIVolumeGroupSnapshot=true",
+            "Do not set `snapshotPolicy` on an NFS driver",
+            "driverSpecDefaults.snapshotPolicy",
+            "openshift-storage.rbd.csi.ceph.com",
+            "openshift-storage.cephfs.csi.ceph.com",
+            "set `snapshotPolicy: volumeSnapshot` instead",
+            "TechPreviewNoUpgrade",
+            "kind: VolumeGroupSnapshotClass",
+            "groupsnapshot.storage.k8s.io/v1beta2",
+            "group API client",
+            "CustomNoUpgrade",
+            "Do not enable feature gates.",
+        ],
+    )
+    require(
+        "references/block-rbd.md",
+        "RBD ordinary snapshot policy",
+        [
+            "snapshotPolicy` to `volumeSnapshot`",
+        ],
+    )
+    require(
+        "references/cephfs-filesystem.md",
+        "CephFS ordinary snapshot policy",
+        [
+            "snapshotPolicy` to `volumeSnapshot`",
         ],
     )
     require(

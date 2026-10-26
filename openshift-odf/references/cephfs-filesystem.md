@@ -72,17 +72,46 @@ Create a test PVC and pod. Confirm:
 Minimum smoke flow (pod name `cephfs-smoke-writer` matches `scripts/render_smoke_manifest.py`):
 
 ```bash
-oc apply -f /tmp/odf-cephfs-smoke.yaml
-oc -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
-oc -n odf-cephfs-smoke exec cephfs-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke
+(
+set -euo pipefail
+target_context="<target-context>"
+smoke_existing=$(oc --context="$target_context" get namespace odf-cephfs-smoke --ignore-not-found -o name)
+if [ -n "$smoke_existing" ]; then
+  echo "refusing to reuse existing namespace odf-cephfs-smoke" >&2
+  exit 1
+fi
+python3 scripts/render_smoke_manifest.py \
+  --mode cephfs \
+  --namespace odf-cephfs-smoke \
+  --storage-class ocs-storagecluster-cephfs \
+  --output /tmp/odf-cephfs-smoke.yaml
+
+cleanup_smoke() {
+  smoke_status=$?
+  trap - EXIT
+  if ! bash scripts/cleanup_smoke_namespace.sh --namespace odf-cephfs-smoke --context "$target_context"; then
+    exit 1
+  fi
+  exit "$smoke_status"
+}
+trap cleanup_smoke EXIT
+
+
+oc --context="$target_context" apply -f /tmp/odf-cephfs-smoke.yaml
+oc --context="$target_context" -n odf-cephfs-smoke wait pod/cephfs-smoke-writer --for=condition=Ready --timeout=5m
+python3 scripts/check_snapshot_smoke.py \
+  --context "$target_context" \
+  --namespace odf-cephfs-smoke \
+  --source-pvc cephfs-smoke-pvc --writer-pod cephfs-smoke-writer \
+  --snapshot-class "<cephfs-snapshot-class>"
+)
 ```
 
-The cleanup command is the end of the smoke. It deletes `odf-cephfs-smoke` and fails if the namespace or a PV that claims it remains. See `references/validation-hardening.md`.
+The cleanup command is the end of the smoke. It deletes `odf-cephfs-smoke` and fails if the namespace, a PV that claims it, or a VolumeSnapshotContent that references it remains. See `references/validation-hardening.md`.
 
 ## Snapshot Support
 
-ODF installs a cephfs `VolumeSnapshotClass` (`ocs-storagecluster-cephfsplugin-snapclass`). Verify and use it:
+ODF installs a cephfs `VolumeSnapshotClass` (`ocs-storagecluster-cephfsplugin-snapclass`). Verify and use it. Set this driver's `snapshotPolicy` to `volumeSnapshot` for ordinary snapshots; use `volumeGroupSnapshot` only after the optional group-snapshot prerequisites and recovery checks pass as described in [Snapshot readiness](backup-restore-dr.md#snapshot-readiness):
 
 ```bash
 oc get volumesnapshotclass ocs-storagecluster-cephfsplugin-snapclass

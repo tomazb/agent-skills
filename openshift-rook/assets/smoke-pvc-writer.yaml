@@ -1,11 +1,15 @@
 apiVersion: v1
 kind: Namespace
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: rook-smoke
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: smoke-pvc
   namespace: rook-smoke
 spec:
@@ -19,6 +23,8 @@ spec:
 apiVersion: v1
 kind: Pod
 metadata:
+  labels:
+    app.kubernetes.io/part-of: storage-smoke
   name: smoke-writer
   namespace: rook-smoke
 spec:

@@ -44,6 +44,28 @@ oc get storageclasses -o json | \
 
 ---
 
+## Snapshot readiness
+
+This inventory is read-only. Check every StorageClass, even with no PVCs. Discover APIs before querying them:
+
+```bash
+oc get storageclasses -o json
+oc get csidrivers
+oc api-resources --api-group=snapshot.storage.k8s.io --verbs=list -o name
+# Run each following query only when its resource was discovered above.
+oc get volumesnapshotclasses -o json
+oc get volumesnapshots -A
+oc get volumesnapshotcontents
+```
+
+Match `StorageClass.provisioner` to `VolumeSnapshotClass.driver`, then check backend parameters such as clusterID/pool and credential references. Class names are not ownership or compatibility proof. A snapshot class for LVMS does not cover Rook RBD/CephFS. Verify installed-version support for each backend, data engine, and volume mode; a CSIDriver object or snapshotter sidecar does not establish capability by itself. Check the distribution snapshot-controller and relevant CSI snapshotter workloads for readiness. Do not install controllers or create classes in a health-check request.
+
+Record **Supported**, **Configured**, **Scheduled**, and **Restore-tested** separately for each StorageClass. Configured requires ready prerequisites, a matching VolumeSnapshotClass, existing referenced credentials, and explicit class selection or an unambiguous intended snapshot default. `snapshot.storage.kubernetes.io/is-default-class` allows at most one default per driver and is independent of StorageClass defaulting. With multiple backends sharing a driver, verify explicit selection. If CDI is present, also verify the StorageProfile's snapshotClass/default selection for VM disks.
+
+Report supported but unconfigured snapshotting as **Warning**, not a runtime storage outage. Verified unsupported combinations are **N/A** with their reason; inaccessible APIs, failed discovery, and unverified support are **Not checked**. An explicit user opt-out is disabled by policy, not configured. Zero existing VolumeSnapshots means no currently retained Kubernetes snapshots were observed, not that the feature is disabled. Absence of schedules must not imply that external backup automation is absent.
+
+Inspect `readyToUse`, snapshot errors, bound VolumeSnapshotContent, driver, restore size, deletionPolicy, and any dated restore/data-comparison evidence. Do not claim recoverability from a ready snapshot or Bound restore PVC alone. Local snapshots do not replace independent off-cluster backups; record schedule, retention, workload/application-consistency coverage, and backup/restore uncertainty separately. Missing configuration routes to `openshift-rook`, `openshift-odf`, `openshift-longhorn`, or `openshift-lvm-storage` after ownership discovery. During authorized setup/remediation those skills configure supported snapshotting by default; this health check only reports the gap.
+
 ## vSphere CSI driver
 
 ```bash

@@ -88,7 +88,7 @@ oc -n my-app exec my-block-app -- sh -c 'test -b /dev/block-device && echo "bloc
 
 ## Block Volume Snapshots
 
-TopoLVM supports snapshots for thin pool-backed volumes. Create a `VolumeSnapshotClass`:
+TopoLVM supports snapshots for thin pool-backed volumes. Complete [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) during setup. Reuse the operator-managed `lvms-<device-class>` snapshot class first; confirm installed-release raw-block snapshot/restore support. The custom class below is only for deployments that require one, not an additional class to create beside a compatible managed class:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1
@@ -110,10 +110,12 @@ metadata:
   name: my-block-snapshot
   namespace: my-app
 spec:
-  volumeSnapshotClassName: lvms-snapshot-class
+  volumeSnapshotClassName: lvms-vg1
   source:
     persistentVolumeClaimName: my-block-pvc
 ```
+
+Use the discovered operator-managed `lvms-<device-class>` snapshot class (`lvms-vg1` in this example). Use `lvms-snapshot-class` only if a custom class was needed and created. Class and device-class names must be discovered on the target cluster.
 
 ## Safety Rules
 
