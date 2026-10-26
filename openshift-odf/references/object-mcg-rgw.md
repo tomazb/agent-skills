@@ -121,7 +121,8 @@ oc -n odf-rgw-smoke get secret odf-obc || exit 1
 oc -n odf-rgw-smoke get configmap odf-obc || exit 1
 
 # Trust the Bound claim's exact forward binding, not the optional reverse claimRef.
-bucket_name="$(oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o json | python3 -c '
+claim_json="$(oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o json)" || exit 1
+binding="$(printf '%s' "$claim_json" | python3 -c '
 import json, sys
 claim = json.load(sys.stdin)
 metadata, spec, status = (claim.get("metadata") or {}), (claim.get("spec") or {}), (claim.get("status") or {})
@@ -129,11 +130,14 @@ name = spec.get("objectBucketName")
 if not (metadata.get("namespace") == "odf-rgw-smoke" and metadata.get("name") == "odf-obc"
         and status.get("phase") == "Bound"
         and spec.get("storageClassName") == "ocs-storagecluster-ceph-rgw"
-        and isinstance(name, str) and name):
+        and isinstance(name, str) and name
+        and isinstance(metadata.get("uid"), str) and metadata["uid"]):
     sys.stderr.write("Bound ObjectBucketClaim forward binding is unverified\n")
     sys.exit(1)
-print(name)
+print(name + "\t" + metadata["uid"])
 ')" || exit 1
+IFS=$'\t' read -r bucket_name claim_uid <<<"$binding"
+[ -n "$bucket_name" ] && [ -n "$claim_uid" ] || exit 1
 
 # Refuse wrong object identity, Retain policy, or a contradictory reverse ref.
 oc get objectbucket "$bucket_name" -o json | python3 -c '
@@ -142,14 +146,16 @@ bucket = json.load(sys.stdin)
 spec = bucket.get("spec") or {}
 ref = spec.get("claimRef")
 bad_ref = ref not in (None, {}) and (
-    not isinstance(ref, dict) or ref.get("namespace") != "odf-rgw-smoke" or ref.get("name") != "odf-obc")
+    not isinstance(ref, dict) or ref.get("namespace") != "odf-rgw-smoke"
+    or ref.get("name") != "odf-obc"
+    or ("uid" in ref and ref["uid"] != sys.argv[2]))
 if ((bucket.get("metadata") or {}).get("name") != sys.argv[1]
         or (bucket.get("status") or {}).get("phase") != "Bound"
         or spec.get("storageClassName") != "ocs-storagecluster-ceph-rgw"
         or spec.get("reclaimPolicy") != "Delete" or bad_ref):
     sys.stderr.write("ObjectBucket identity or binding is unverified\n")
     sys.exit(1)
-' "$bucket_name" || exit 1
+' "$bucket_name" "$claim_uid" || exit 1
 
 bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object || exit 1
 # Reverse claimRef might be pruned during the cleanup audit: verify the exact
@@ -162,8 +168,9 @@ fi
 ```
 
 Create the test claim only in `odf-rgw-smoke`. The check uses the Bound
-claim's exact `spec.objectBucketName` and accepts an absent/pruned reverse
-`spec.claimRef`, but rejects a contradictory reference. It verifies the exact
+claim's exact `spec.objectBucketName` and UID from the same read. It accepts
+an absent/pruned reverse `spec.claimRef`, but rejects a contradictory name,
+namespace, or supplied UID. It verifies the exact
 ObjectBucket and its Delete policy before cleanup, then checks that bucket
 is absent afterward. This matters when the CRD prunes reverse references;
 the cleanup script does not manually delete ObjectBuckets.

@@ -256,11 +256,13 @@ def test_rgw_page_manual_forward_binding_and_cleanup_contract():
     """The executable smoke regressions live in openshift-odf/tests/test_object_smoke_helper.py."""
     text = (REPO_ROOT / "openshift-odf" / "references" / "object-mcg-rgw.md").read_text()
     assert "|| true" not in text and "|| echo ok" not in text
-    start = text.index('bucket_name="$(oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o json')
+    start = text.index('claim_json="$(oc -n odf-rgw-smoke get objectbucketclaim odf-obc -o json')
     cleanup = "bash scripts/cleanup_smoke_namespace.sh --namespace odf-rgw-smoke --object"
     cleanup_at = text.index(cleanup, start)
     check = text[start:cleanup_at]
     assert 'spec.get("objectBucketName")' in check
+    assert 'metadata["uid"]' in check
+    assert 'ref["uid"] != sys.argv[2]' in check
     assert 'status.get("phase") == "Bound"' in check
     assert 'oc get objectbucket "$bucket_name" -o json' in check
     assert 'spec.get("reclaimPolicy") != "Delete"' in check

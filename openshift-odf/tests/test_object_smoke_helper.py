@@ -389,6 +389,8 @@ def test_lost_forward_pointer_after_roundtrip_does_not_report_a_pass():
     ("claim_pending", False, False),
     ("missing_forward_binding", False, False),
     ("contradictory_reverse_binding", False, False),
+    ("different_reverse_uid", False, False),
+    ("missing_claim_uid", False, False),
     ("different_objectbucket", False, False),
     ("missing_objectbucket", False, False),
     ("retained_bucket_policy", False, False),
@@ -408,6 +410,10 @@ def test_manual_odf_object_check_handles_schema_pruning_and_exact_cleanup(case, 
               "status": {"phase": "Bound"}}
     if case == "matching_reverse_binding":
         bucket["spec"]["claimRef"] = {"namespace": "odf-rgw-smoke", "name": "odf-obc", "uid": "obc-uid"}
+    elif case == "different_reverse_uid":
+        bucket["spec"]["claimRef"] = {"namespace": "odf-rgw-smoke", "name": "odf-obc", "uid": "old-claim-uid"}
+    elif case == "missing_claim_uid":
+        claim["metadata"].pop("uid")
     elif case == "claim_pending":
         claim["status"]["phase"] = "Pending"
     elif case == "missing_forward_binding":
