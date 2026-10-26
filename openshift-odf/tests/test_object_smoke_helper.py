@@ -1,6 +1,7 @@
 import copy
 import importlib.util
 import json
+import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
@@ -379,3 +380,73 @@ def test_lost_forward_pointer_after_roundtrip_does_not_report_a_pass():
         return response
     with pytest.raises(module.Failure, match="cleanup"):
         module.Smoke(args(), runner=runner).run()
+
+
+
+@pytest.mark.parametrize("case,passed,cleanup_called", [
+    ("pruned_forward_binding", True, True),
+    ("matching_reverse_binding", True, True),
+    ("claim_pending", False, False),
+    ("missing_forward_binding", False, False),
+    ("contradictory_reverse_binding", False, False),
+    ("different_objectbucket", False, False),
+    ("retained_bucket_policy", False, False),
+    ("bucket_remains_after_cleanup", False, True),
+])
+def test_manual_odf_object_check_handles_schema_pruning_and_exact_cleanup(case, passed, cleanup_called):
+    doc = (SCRIPT.parents[1] / "references" / "object-mcg-rgw.md").read_text(encoding="utf-8")
+    marker = (chr(96) * 3) + "bash\noc -n odf-rgw-smoke get objectbucketclaim odf-obc -o wide"
+    begin = doc.index(marker) + len((chr(96) * 3) + "bash\n")
+    runbook = doc[begin:doc.index("\n" + chr(96) * 3, begin)]
+    name = "odf-claim-forward-bucket"
+    claim = {"metadata": {"name": "odf-obc", "namespace": "odf-rgw-smoke", "uid": "obc-uid"},
+             "spec": {"objectBucketName": name, "storageClassName": "ocs-storagecluster-ceph-rgw"},
+             "status": {"phase": "Bound"}}
+    bucket = {"metadata": {"name": name, "uid": "bucket-uid"},
+              "spec": {"storageClassName": "ocs-storagecluster-ceph-rgw", "reclaimPolicy": "Delete"},
+              "status": {"phase": "Bound"}}
+    if case == "matching_reverse_binding":
+        bucket["spec"]["claimRef"] = {"namespace": "odf-rgw-smoke", "name": "odf-obc", "uid": "obc-uid"}
+    elif case == "claim_pending":
+        claim["status"]["phase"] = "Pending"
+    elif case == "missing_forward_binding":
+        claim["spec"].pop("objectBucketName")
+    elif case == "contradictory_reverse_binding":
+        bucket["spec"]["claimRef"] = {"namespace": "another-team", "name": "odf-obc"}
+    elif case == "different_objectbucket":
+        bucket["metadata"]["name"] = "some-other-object"
+    elif case == "retained_bucket_policy":
+        bucket["spec"]["reclaimPolicy"] = "Retain"
+    fake = r'''
+oc() {
+  if [ "$1" = "-n" ]; then
+    if [ "$4" = "objectbucketclaim" ] && [ "$7" = "json" ]; then
+      printf '%s\n' "$FAKE_CLAIM"
+      return 0
+    fi
+    case "$4" in
+      objectbucketclaim|secret|configmap) echo OK; return 0 ;;
+    esac
+  fi
+  if [ "$1" = "get" ] && [ "$2" = "objectbucket" ]; then
+    if [ "$4" = "--ignore-not-found" ]; then
+      if [ "$FAKE_LEFTOVER" = "1" ]; then printf 'objectbucket/%s\n' "$3"; fi
+      return 0
+    fi
+    printf '%s\n' "$FAKE_BUCKET"
+    return 0
+  fi
+  echo "unexpected oc call: $*" >&2
+  return 99
+}
+bash() {
+  if [ "$1" != "scripts/cleanup_smoke_namespace.sh" ]; then return 99; fi
+  echo CLEANUP_CALLED
+}
+'''
+    env = {**os.environ, "FAKE_CLAIM": json.dumps(claim), "FAKE_BUCKET": json.dumps(bucket),
+           "FAKE_LEFTOVER": "1" if case == "bucket_remains_after_cleanup" else "0"}
+    result = subprocess.run(["bash", "-c", fake + runbook], env=env,
+                            capture_output=True, text=True, timeout=5)
+    assert (result.returncode == 0) is passed, result.stdout + result.stderr
+    assert ("CLEANUP_CALLED" in result.stdout) is cleanup_called
