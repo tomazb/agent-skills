@@ -400,6 +400,10 @@ python3 scripts/check_odf_health.py --context "<target-context>" \
   --observe-seconds 120 --interval-seconds 15 --timeout-seconds 180
 ```
 
+Without a toolbox, add `--client operator` to use the installed Rook operator's
+namespace-specific Ceph configuration read-only. This does not deploy a toolbox
+or modify operator configuration. The default remains `--client toolbox`.
+
 Every sample requires `HEALTH_OK`, all OSDs up/in, active+clean PGs, and no new
 crash IDs, including newly archived records. Query failures, malformed responses,
 and timeouts fail closed. The helper never changes policy or archives crashes.

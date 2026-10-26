@@ -69,3 +69,19 @@ def test_failures_never_pass_or_leak_command_output(failure):
 def test_invalid_observation_configuration_is_rejected(option, value):
     module = load()
     assert module.main(["--context", "target", option, value]) == 2
+
+
+def test_operator_client_does_not_require_a_toolbox_deployment():
+    module = load()
+    now = [0.0]
+    a = SimpleNamespace(context="target", namespace="rook-ceph", toolbox="rook-ceph-tools",
+                        client="operator", observe_seconds=1, interval_seconds=1, timeout_seconds=10)
+    def runner(command, **kwargs):
+        assert command[:3] == ["oc", "--context", "target"]
+        assert command[6:13] == ["exec", "deploy/rook-ceph-operator", "-c", "rook-ceph-operator", "--", "ceph", "-c"]
+        assert command[13] == "/var/lib/rook/rook-ceph/rook-ceph.config"
+        assert "deploy/rook-ceph-tools" not in command
+        return SimpleNamespace(returncode=0, stdout=json.dumps(status() if "status" in command else []))
+    def sleeper(seconds):
+        now[0] += seconds
+    assert module.observe(a, runner=runner, clock=lambda: now[0], sleeper=sleeper)["status"] == "passed"

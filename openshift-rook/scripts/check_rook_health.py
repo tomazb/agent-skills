@@ -23,8 +23,13 @@ def observe(args, runner=subprocess.run, clock=time.monotonic, sleeper=time.slee
         remaining = deadline - clock()
         if remaining <= 0:
             raise Failure("health observation timed out")
-        argv = ["oc", "--context", args.context, "--request-timeout=5s", "-n", args.namespace,
-                "exec", "deploy/" + args.toolbox, "--", "ceph", *command, "--format=json"]
+        argv = ["oc", "--context", args.context, "--request-timeout=5s", "-n", args.namespace]
+        if getattr(args, "client", "toolbox") == "operator":
+            argv += ["exec", "deploy/rook-ceph-operator", "-c", "rook-ceph-operator", "--", "ceph",
+                     "-c", "/var/lib/rook/" + args.namespace + "/" + args.namespace + ".config"]
+        else:
+            argv += ["exec", "deploy/" + args.toolbox, "--", "ceph"]
+        argv += [*command, "--format=json"]
         try:
             result = runner(argv, capture_output=True, text=True, timeout=min(10, remaining), check=False)
         except (OSError, subprocess.TimeoutExpired):
@@ -73,6 +78,8 @@ def main(argv=None):
     parser.add_argument("--context", required=True)
     parser.add_argument("--namespace", default="rook-ceph")
     parser.add_argument("--toolbox", default="rook-ceph-tools")
+    parser.add_argument("--client", choices=("toolbox", "operator"), default="toolbox",
+                        help="existing Ceph client; operator uses its read-only cluster config")
     parser.add_argument("--observe-seconds", type=float, default=120)
     parser.add_argument("--interval-seconds", type=float, default=15)
     parser.add_argument("--timeout-seconds", type=float, default=180)

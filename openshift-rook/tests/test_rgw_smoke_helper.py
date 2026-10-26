@@ -186,3 +186,139 @@ def test_create_timeout_after_commit_still_cleans_owned_resources(kind):
     with pytest.raises(module.Failure, match="smoke failed.*cleanup verified"):
         module.Smoke(args(), runner=runner).run()
     assert not any(key[1] in ("pod", "objectbucketclaim", "objectbucket", "secret") for key in kube.objects)
+
+
+def test_cli_accepts_the_standard_dotted_service_ca_configmap(monkeypatch):
+    module = load()
+    class Passed:
+        def __init__(self, a):
+            assert a.ca_configmap == "openshift-service-ca.crt"
+        def run(self):
+            return {"status": "passed"}
+    monkeypatch.setattr(module, "Smoke", Passed)
+    assert module.main(["--context", "target", "--namespace", "rook-ceph", "--image",
+        "example.test/python:1", "--tls-ca", "service-ca", "--ca-configmap", "openshift-service-ca.crt"]) == 0
+
+
+def pruned_reference_runner(kube, *, preserves=False, contradictory=False, pending_orphan=False):
+    kube.objects[(None, "customresourcedefinition", "objectbuckets.objectbucket.io")] = obj(
+        "CustomResourceDefinition", "objectbuckets.objectbucket.io", spec={"group": "objectbucket.io",
+        "names": {"kind": "ObjectBucket"}, "versions": [{"name": "v1alpha1", "served": True,
+        "schema": {"openAPIV3Schema": {"type": "object", "properties": {"spec": {"type": "object", "properties": {"claimRef": {
+            "type": "object", **({"x-kubernetes-preserve-unknown-fields": True} if preserves else {})}}}}}}}]})
+    kube.objects[(None, "customresourcedefinition", "objectbuckets.objectbucket.io")]["apiVersion"] = "apiextensions.k8s.io/v1"
+    def runner(command, **kwargs):
+        is_obc_create = "create" in command and json.loads(kwargs["input"])["kind"] == "ObjectBucketClaim"
+        orphan = None
+        if pending_orphan and "delete" in command and "objectbucketclaims" in " ".join(command):
+            orphan = copy.deepcopy(kube.objects.get((None, "objectbucket", "fake-global-object")))
+        response = kube(command, **kwargs)
+        if is_obc_create:
+            payload = json.loads(kwargs["input"]);name = payload["metadata"]["name"];ns = payload["metadata"]["namespace"]
+            claim = kube.objects[(ns, "objectbucketclaim", name)]
+            claim["spec"]["bucketName"] = name + "-generated"
+            bucket = kube.objects[(None, "objectbucket", "fake-global-object")]
+            bucket["apiVersion"] = "objectbucket.io/v1alpha1"
+            bucket["status"] = {"phase": "Bound"}
+            bucket["spec"].update({"claimRef": {"name": "other"} if contradictory else {},
+                "storageClassName": payload["spec"]["storageClassName"], "reclaimPolicy": "Delete",
+                "endpoint": {"bucketName": claim["spec"]["bucketName"]}})
+            if pending_orphan:
+                claim["status"]["phase"] = "Pending";claim["spec"].pop("objectBucketName")
+                raise subprocess.TimeoutExpired(command, 30)
+        if orphan:
+            kube.objects[(None, "objectbucket", "fake-global-object")] = orphan
+        return response
+    return runner
+
+
+def test_schema_pruned_reverse_reference_uses_verified_forward_binding():
+    module = load();kube = Kube()
+    result = module.Smoke(args(), runner=pruned_reference_runner(kube)).run()
+    assert result["status"] == "passed"
+    assert result["binding_source"] == "claim-forward-reference"
+    assert not any(key[1] in ("pod", "objectbucketclaim", "objectbucket", "secret") for key in kube.objects)
+
+
+@pytest.mark.parametrize("scenario", ["preserves", "contradictory"])
+def test_missing_or_contradictory_unpruned_reference_never_weakens_binding(scenario):
+    module = load();kube = Kube()
+    with pytest.raises(module.Failure):
+        module.Smoke(args(), runner=pruned_reference_runner(kube, **{scenario: True})).run()
+    assert not kube.executed
+
+
+def test_pending_failed_create_cannot_hide_a_pruned_reference_orphan():
+    module = load();kube = Kube()
+    with pytest.raises(module.Failure, match="cleanup"):
+        module.Smoke(args(), runner=pruned_reference_runner(kube, pending_orphan=True)).run()
+    assert any(key[1] == "objectbucket" for key in kube.objects)
+
+
+@pytest.mark.parametrize("scenario", ["preexisting", "bucket-name", "class", "policy", "claim-prefix", "replaced", "schema-change", "schema-properties"])
+def test_forward_binding_rejects_identity_intent_and_schema_changes(scenario):
+    module = load();kube = Kube()
+    if scenario == "preexisting":
+        kube.objects[(None, "objectbucket", "fake-global-object")] = obj("ObjectBucket", "fake-global-object", spec={"claimRef": {}})
+    base = pruned_reference_runner(kube)
+    reads = 0
+    def runner(command, **kwargs):
+        nonlocal reads
+        response = base(command, **kwargs)
+        if "create" in command and json.loads(kwargs["input"])["kind"] == "ObjectBucketClaim":
+            payload = json.loads(kwargs["input"])
+            claim = kube.objects[(payload["metadata"]["namespace"], "objectbucketclaim", payload["metadata"]["name"])]
+            bucket = kube.objects[(None, "objectbucket", "fake-global-object")]
+            if scenario == "bucket-name": bucket["spec"]["endpoint"]["bucketName"] = "different"
+            if scenario == "class": bucket["spec"]["storageClassName"] = "different"
+            if scenario == "policy": bucket["spec"]["reclaimPolicy"] = "Retain"
+            if scenario == "claim-prefix": claim["spec"]["generateBucketName"] = "different"
+            if scenario == "schema-properties":
+                crd = kube.objects[(None, "customresourcedefinition", "objectbuckets.objectbucket.io")]
+                crd["spec"]["versions"][0]["schema"]["openAPIV3Schema"]["properties"]["spec"]["properties"]["claimRef"]["properties"] = {"name": {"type": "string"}}
+        if "get" in command and "customresourcedefinition" in command:
+            reads += 1
+            if scenario == "schema-change" and reads > 1:
+                value = json.loads(response.stdout);value["metadata"]["uid"] = "replacement"
+                response.stdout = json.dumps(value)
+        if "get" in command and "objectbucket" in command and "fake-global-object" in command and kube.executed and scenario == "replaced":
+            value = json.loads(response.stdout);value["metadata"]["uid"] = "replacement"
+            response.stdout = json.dumps(value)
+        return response
+    with pytest.raises(module.Failure):
+        module.Smoke(args(), runner=runner).run()
+    if scenario not in ("schema-change", "replaced"):
+        assert not kube.executed
+
+
+@pytest.mark.parametrize("scenario", ["preserve-all", "foreign-orphan"])
+def test_pruning_and_orphan_gates_fail_closed(scenario):
+    module = load();kube = Kube()
+    base = pruned_reference_runner(kube, pending_orphan=scenario == "foreign-orphan")
+    if scenario == "preserve-all":
+        kube.objects[(None, "customresourcedefinition", "objectbuckets.objectbucket.io")]["spec"]["preserveUnknownFields"] = True
+    def runner(command, **kwargs):
+        try:
+            return base(command, **kwargs)
+        finally:
+            if scenario == "foreign-orphan":
+                bucket = kube.objects.get((None, "objectbucket", "fake-global-object"))
+                if bucket:
+                    bucket["spec"]["claimRef"] = {"name": "other", "namespace": "other"}
+    with pytest.raises(module.Failure, match="cleanup"):
+        module.Smoke(args(), runner=runner).run()
+    assert not kube.executed
+
+
+def test_lost_forward_pointer_after_roundtrip_does_not_report_a_pass():
+    module = load();kube = Kube()
+    base = pruned_reference_runner(kube)
+    def runner(command, **kwargs):
+        response = base(command, **kwargs)
+        if "exec" in command:
+            for (ns, kind, name), value in kube.objects.items():
+                if kind == "objectbucketclaim":
+                    value["spec"].pop("objectBucketName")
+        return response
+    with pytest.raises(module.Failure, match="cleanup"):
+        module.Smoke(args(), runner=runner).run()

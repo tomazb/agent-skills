@@ -36,7 +36,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Backup, DR, and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node eviction, OSD replacement, operator uninstall, cluster destruction, or leftovers of an interrupted uninstall**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
-- **Post-install acceptance**: after storage/snapshot smoke cleanup, run `scripts/check_rook_health.py` with an explicit context. Require sustained `HEALTH_OK`, active+clean PGs, and no new crash records, including newly archived ones.
+- **Post-install acceptance**: after storage/snapshot smoke cleanup, run `scripts/check_rook_health.py` (`--client operator` if no toolbox is installed) with an explicit context. Require sustained `HEALTH_OK`, active+clean PGs, and no new crash records, including newly archived ones.
 - **RGW smoke testing**: use `scripts/check_rgw_smoke.py`; it respects OBC watch scope, keeps credentials inside the pod, and verifies owned-resource cleanup on success or failure.
 - **Optional manager integration**: gate enablement with `scripts/check_rook_mgr_compatibility.py`. On affected Ceph releases keep only the optional `rook` manager module disabled; preserve Prometheus and genuine crash reporting.
 - **Volume-expansion credentials**: run `scripts/check_volume_expansion_secrets.py`. CSI secret-reference templates are **Not checked**, not invalid; verify the resolved PV `spec.csi.controllerExpandSecretRef` and its Secret before declaring credentials ready. The helper exits 2 for unverified templates, 1 for a failed check, and 0 when all applicable checks pass.

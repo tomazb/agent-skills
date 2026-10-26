@@ -237,6 +237,10 @@ python3 scripts/check_rook_health.py --context "<target-context>" \
   --namespace rook-ceph --observe-seconds 120 --interval-seconds 15 --timeout-seconds 180
 ```
 
+Without a toolbox, add `--client operator` to use the installed Rook operator's
+namespace-specific Ceph configuration read-only. This does not deploy a toolbox
+or modify operator configuration. The default remains `--client toolbox`.
+
 The read-only helper requires `HEALTH_OK`, every OSD up/in, and all PGs active+clean
 for every sample. It fails on access errors, malformed responses, and new crash
 IDs, including records archived during observation. Existing health warnings must

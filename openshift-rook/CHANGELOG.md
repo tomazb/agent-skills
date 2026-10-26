@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.20.2
+
+- Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.
+- Verify schema-pruned ObjectBucket reverse references through an owned, newly provisioned forward binding; preserve UID cleanup guards and detect orphan buckets after committed-create timeouts.
+
 ## 1.20.1
 
 - Clarify that namespace cleanup applies to disposable smoke namespaces. Object smoke helpers preserve their existing namespace and delete only owned test resources; never delete the operator namespace for smoke cleanup.

@@ -34,7 +34,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **ODF operator or Ceph version upgrades**: use `references/upgrade.md`.
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`. For leftovers of an interrupted or out-of-order uninstall (PVCs, PVs, or namespaces stuck deleting, a Pod the kubelet cannot release, stale ODF RBAC), or an uninstall next to an upstream Rook cluster, use its **Orphans After An Interrupted Uninstall** section and re-run the ownership gate before the CRD sweep.
-- **Post-install observation**: run `scripts/check_odf_health.py` with an explicit context after storage smoke cleanup. Its Ceph-only pass does not replace StorageCluster/OLM reconciliation checks or the SNO readiness gate.
+- **Post-install observation**: run `scripts/check_odf_health.py` with an explicit context after storage smoke cleanup. Use `--client operator` when no toolbox is installed. Its Ceph-only pass does not replace StorageCluster/OLM reconciliation checks or the SNO readiness gate.
 - **Object data-path smoke tests**: use `scripts/check_object_smoke.py` for ODF RGW or MCG. It checks the backend and watch scope, keeps credentials in the pod, and verifies scoped cleanup on failure as well as success.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md` (on SNO, run the SNO readiness gate before declaring ODF fully ready).
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.

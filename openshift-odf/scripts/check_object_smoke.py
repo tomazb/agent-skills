@@ -39,6 +39,9 @@ class Smoke:
         self.bucket = None
         self.buckets = {}
         self.namespace_uid = None
+        self.baseline_buckets = None
+        self.reference_schema = None
+        self.binding_source = "reverse-reference"
 
     def oc(self, *command, namespace=None, payload=None):
         argv = ["oc", "--context", self.args.context, "--request-timeout=5s"]
@@ -124,23 +127,122 @@ class Smoke:
             self.get("configmap", a.ca_configmap, a.namespace)
         self.scan_buckets()  # Prove global cleanup inventory access before creating anything.
 
+    def track_bucket(self, bucket):
+        metadata = bucket["metadata"]
+        name, uid = metadata["name"], metadata["uid"]
+        require(name not in self.baseline_buckets and uid not in self.baseline_buckets.values(),
+                "ObjectBucket existed before this run")
+        require(self.buckets.get(name, uid) == uid, "ObjectBucket identity changed")
+        self.buckets[name] = uid
+
     def scan_buckets(self):
         try:
             items = json.loads(self.oc("get", "objectbucket", "-o", "json"))["items"]
             require(isinstance(items, list), "ObjectBucket inventory unverified")
+            inventory = {}
             for bucket in items:
-                ref = bucket.get("spec", {}).get("claimRef", {})
+                metadata = bucket["metadata"]
+                name, uid = metadata["name"], metadata["uid"]
+                require(isinstance(name, str) and name and isinstance(uid, str) and uid
+                        and name not in inventory, "ObjectBucket identity missing or duplicated")
+                inventory[name] = uid
+            if self.baseline_buckets is None:
+                self.baseline_buckets = inventory
+                return
+            for bucket in items:
+                metadata = bucket["metadata"]
+                if metadata["name"] in self.baseline_buckets:
+                    require(self.baseline_buckets[metadata["name"]] == metadata["uid"],
+                            "baseline ObjectBucket identity changed")
+                    continue
+                spec = bucket.get("spec", {})
+                ref = spec.get("claimRef")
+                require(isinstance(ref, dict), "new ObjectBucket reference unverified")
+                endpoint_name = spec.get("endpoint", {}).get("bucketName")
+                run_bucket = isinstance(endpoint_name, str) and endpoint_name.startswith(self.name + "-")
+                require(not run_bucket or ref == {} or (ref.get("name") == self.name
+                        and ref.get("namespace") == self.args.namespace),
+                        "run-prefixed ObjectBucket has a contradictory reference")
                 if ref.get("name") == self.name and ref.get("namespace") == self.args.namespace:
-                    metadata = bucket["metadata"]
-                    require(metadata.get("name") and metadata.get("uid"), "ObjectBucket identity missing")
                     expected_uid = self.created[0]["uid"] if self.created else None
                     require(not expected_uid or ref.get("uid", expected_uid) == expected_uid,
                             "ObjectBucket claim UID mismatch")
-                    prior = self.buckets.get(metadata["name"])
-                    require(not prior or prior == metadata["uid"], "ObjectBucket identity changed")
-                    self.buckets[metadata["name"]] = metadata["uid"]
+                    self.track_bucket(bucket)
+                elif ref == {}:
+                    endpoint = spec.get("endpoint", {})
+                    bucket_name = endpoint.get("bucketName")
+                    require(isinstance(bucket_name, str) and bucket_name,
+                            "new empty-reference ObjectBucket identity unverified")
+                    if bucket_name.startswith(self.name + "-"):
+                        self.track_bucket(bucket)
+                else:
+                    require(ref.get("name") and ref.get("namespace"),
+                            "new ObjectBucket reference incomplete")
         except (ValueError, KeyError, TypeError, AttributeError):
             raise Failure("ObjectBucket inventory unverified") from None
+
+    def verify_pruned_schema(self, bucket):
+        crd = self.get("customresourcedefinition", "objectbuckets.objectbucket.io")
+        spec = crd.get("spec", {})
+        identity = (crd["metadata"]["uid"], spec)
+        require(self.reference_schema is None or self.reference_schema == identity,
+                "ObjectBucket schema changed")
+        require(spec.get("group") == "objectbucket.io" and spec.get("names", {}).get("kind") == "ObjectBucket",
+                "ObjectBucket schema identity unverified")
+        require(crd.get("apiVersion") == "apiextensions.k8s.io/v1"
+                and spec.get("preserveUnknownFields", False) is False
+                and not any(c.get("type") == "NonStructuralSchema" and c.get("status") == "True"
+                            for c in crd.get("status", {}).get("conditions", [])),
+                "ObjectBucket structural pruning unverified")
+        version = bucket.get("apiVersion", "").split("/")
+        require(len(version) == 2 and version[0] == "objectbucket.io", "ObjectBucket API version unverified")
+        versions = [v for v in spec.get("versions", []) if v.get("name") == version[1] and v.get("served") is True]
+        require(len(versions) == 1, "ObjectBucket served schema unverified")
+        root = versions[0].get("schema", {}).get("openAPIV3Schema", {})
+        parent = root.get("properties", {}).get("spec", {})
+        ref = parent.get("properties", {}).get("claimRef", {})
+        require(root.get("type") == "object" and parent.get("type") == "object"
+                and ref.get("type") == "object" and ref.get("properties", {}) == {}
+                and all(not node.get("x-kubernetes-preserve-unknown-fields")
+                        and node.get("additionalProperties", False) is False
+                        and not any(key in node for key in ("allOf", "anyOf", "oneOf", "$ref"))
+                        for node in (root, parent, ref)), "ObjectBucket schema does not prove reference pruning")
+        self.reference_schema = identity
+
+    def verify_claim_bucket(self, claim, *, bound=False):
+        spec = claim.get("spec", {})
+        record = self.created[0]
+        require(claim["metadata"].get("labels", {}).get(RUN) == self.run_id
+                and (record["uid"] is None or claim["metadata"]["uid"] == record["uid"])
+                and spec.get("storageClassName") == self.args.storage_class
+                and spec.get("generateBucketName") == self.name, "claim identity or intent changed")
+        name = spec.get("objectBucketName")
+        if not name:
+            require(not bound and self.bucket is None, "claim lost its ObjectBucket forward binding")
+            return
+        bucket = self.get("objectbucket", name)
+        self.track_bucket(bucket)
+        require(self.bucket is None or self.bucket["metadata"]["name"] == name,
+                "claim forward binding changed")
+        ref = bucket.get("spec", {}).get("claimRef")
+        if ref == {}:
+            self.verify_pruned_schema(bucket)
+            bucket_spec = bucket.get("spec", {})
+            bucket_name = spec.get("bucketName")
+            require(claim.get("status", {}).get("phase") == "Bound"
+                    and bucket.get("status", {}).get("phase") == "Bound"
+                    and bucket_spec.get("storageClassName") == self.args.storage_class
+                    and bucket_spec.get("reclaimPolicy") == "Delete"
+                    and isinstance(bucket_name, str) and bucket_name.startswith(self.name + "-")
+                    and bucket_spec.get("endpoint", {}).get("bucketName") == bucket_name,
+                    "ObjectBucket forward association unverified")
+            self.binding_source = "claim-forward-reference"
+        else:
+            require(isinstance(ref, dict) and ref.get("name") == self.name
+                    and ref.get("namespace") == self.args.namespace
+                    and ref.get("uid", claim["metadata"]["uid"]) == claim["metadata"]["uid"],
+                    "ObjectBucket claim association mismatch")
+        self.bucket = bucket
 
     def create(self, kind, obj):
         obj["metadata"] = {"name": self.name, "namespace": self.args.namespace,
@@ -164,14 +266,7 @@ class Smoke:
             require(claim["metadata"]["uid"] == self.created[0]["uid"], "claim identity changed")
             return claim
         claim = self.wait("bucket claim Bound", bound)
-        bucket_name = claim.get("spec", {}).get("objectBucketName")
-        require(bucket_name, "bound claim has no ObjectBucket")
-        self.bucket = self.get("objectbucket", bucket_name)
-        self.buckets[bucket_name] = self.bucket["metadata"]["uid"]
-        ref = self.bucket.get("spec", {}).get("claimRef", {})
-        require(ref.get("name") == self.name and ref.get("namespace") == a.namespace
-                and ref.get("uid", claim["metadata"]["uid"]) == claim["metadata"]["uid"],
-                "ObjectBucket claim association mismatch")
+        self.verify_claim_bucket(claim, bound=True)
         container = {"name": "s3", "image": a.image,
             "command": ["python3", "-c", "import time; time.sleep(3600)"],
             "envFrom": [{"configMapRef": {"name": self.name}}, {"secretRef": {"name": self.name}}],
@@ -216,6 +311,8 @@ class Smoke:
                 require(current["metadata"].get("labels", {}).get(RUN) == self.run_id
                         and (record["uid"] is None or current["metadata"]["uid"] == record["uid"]),
                         "cleanup object identity changed")
+                if kind == "objectbucketclaim":
+                    self.verify_claim_bucket(current)
                 # A separate GET/UID check cannot protect a name-based DELETE
                 # against replacement between requests. Enforce identity in the
                 # API transaction itself. Raw DELETE accepts DeleteOptions stdin.
@@ -257,7 +354,8 @@ class Smoke:
             raise Failure("smoke cleanup unverified; preserve namespace and inspect owned resources") from None
         if failure:
             raise Failure("S3 smoke failed; owned-resource cleanup verified") from None
-        return {"status": "passed", "put_get_compare_delete": True, "cleanup_verified": True}
+        return {"status": "passed", "put_get_compare_delete": True, "cleanup_verified": True,
+                "binding_source": self.binding_source}
 
 
 def main(argv=None):
@@ -273,10 +371,13 @@ def main(argv=None):
     parser.add_argument("--timeout-seconds", type=float, default=180)
     a = parser.parse_args(argv)
     label = r"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?"
-    names = [a.namespace, a.operator_namespace] + ([a.ca_configmap] if a.ca_configmap else [])
+    names = [a.namespace, a.operator_namespace]
+    subdomains = [a.storage_class] + ([a.ca_configmap] if a.ca_configmap else [])
+    valid_subdomains = all(len(value) <= 253 and all(re.fullmatch(label, part) and len(part) <= 63
+                           for part in value.split(".")) for value in subdomains)
     if (not a.context.strip() or not all(re.fullmatch(label, x) and len(x) <= 63 for x in names)
             or a.operator_namespace != "openshift-storage"
-            or len(a.storage_class) > 253 or not all(re.fullmatch(label, x) and len(x) <= 63 for x in a.storage_class.split(".")) or not math.isfinite(a.timeout_seconds) or a.timeout_seconds <= 0
+            or not valid_subdomains or not math.isfinite(a.timeout_seconds) or a.timeout_seconds <= 0
             or not ("@sha256:" in a.image or ":" in a.image.rsplit("/", 1)[-1]) or a.image.endswith(":latest")
             or (a.tls_ca != "public" and not a.ca_configmap)
             or (a.tls_ca not in ("public", "service-ca") and not a.tls_ca.startswith("/etc/rgw-ca/"))):

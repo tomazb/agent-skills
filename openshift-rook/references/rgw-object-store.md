@@ -414,3 +414,23 @@ spec:
     termination: passthrough
     insecureEdgeTerminationPolicy: Redirect
 ```
+
+
+### Schema-pruned bucket references
+
+Some OLM-managed ObjectBucket schemas prune every `spec.claimRef` field. The
+smoke helper accepts an exactly empty reference only when the served structural
+CRD schema proves pruning and field preservation is disabled. It verifies the
+run-owned Bound OBC's authoritative `spec.objectBucketName`, both object UIDs,
+a bucket absent from the pre-test inventory, matching Delete policy/StorageClass,
+and the exact generated bucket identity. The result reports
+`binding_source: claim-forward-reference`; retain a schema compatibility warning
+alongside the passing data-path result. Other schemas require a normal reverse
+reference, and contradictory references always fail. The helper never patches
+the shared CRD.
+
+Cleanup recovers the forward binding before deleting the owned claim and tracks
+new run-prefixed buckets even after a committed-create timeout. It requires their
+disappearance and never manually deletes global ObjectBuckets. Unverified identity
+or cleanup fails the test. This follows the library's
+[authoritative OBC binding contract](https://github.com/kube-object-storage/lib-bucket-provisioner/blob/master/pkg/apis/objectbucket.io/v1alpha1/objectbucket_types.go).

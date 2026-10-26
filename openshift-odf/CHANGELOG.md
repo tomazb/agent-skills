@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.29.1
+
+- Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.
+- Verify schema-pruned ObjectBucket reverse references through an owned, newly provisioned forward binding; preserve UID cleanup guards and detect orphan buckets after committed-create timeouts.
+
 ## 1.29.0
 
 - Port applicable lifecycle fixes from issue #38: dependency-ordered CSI finalization with a controller availability guard, explicit disk reuse versus sanitization planning, and protection for shared APIs owned by non-ODF OLM packages.
