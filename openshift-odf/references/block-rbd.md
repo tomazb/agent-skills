@@ -144,7 +144,7 @@ The cleanup command is the end of the smoke. It deletes `odf-rbd-smoke` and fail
 
 ## Snapshot Support
 
-ODF installs a ceph-rbd `VolumeSnapshotClass` (`ocs-storagecluster-rbdplugin-snapclass`). Verify and use it. Set this driver's `snapshotPolicy` to `volumeGroupSnapshot` as described in [Snapshot readiness](backup-restore-dr.md#snapshot-readiness):
+ODF installs a ceph-rbd `VolumeSnapshotClass` (`ocs-storagecluster-rbdplugin-snapclass`). Verify and use it. Set this driver's `snapshotPolicy` to `volumeSnapshot` for ordinary snapshots; use `volumeGroupSnapshot` only after the optional group-snapshot prerequisites and recovery checks pass as described in [Snapshot readiness](backup-restore-dr.md#snapshot-readiness):
 
 ```bash
 oc get volumesnapshotclass ocs-storagecluster-rbdplugin-snapclass

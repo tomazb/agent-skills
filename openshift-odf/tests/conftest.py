@@ -144,17 +144,19 @@ ODF 4.20.17 gotchas: `enableCephTools` is rejected as an `unknown field`, `ocs-o
 Clean uninstall also deletes `clientprofiles.csi.ceph.io` while the operator can still clear `csi.ceph.com/cleanup`, records `PRIOR_DEFAULT_STORAGE_CLASS`, and removes `rook-ceph-metrics` bound only to `openshift-monitoring/prometheus-k8s`, plus `odf-blackbox-scc` and the `noobaa-operator-service-auth-reader` and `cnpg-controller-manager-service-auth-reader` RoleBindings. Keep Role `extension-apiserver-authentication-reader`.
 
 snapshotPolicy: volumeGroupSnapshot
+Use `volumeSnapshot` by default
+group snapshot and restore
 --feature-gates=CSIVolumeGroupSnapshot=true
 Do not set `snapshotPolicy` on an NFS driver
 driverSpecDefaults.snapshotPolicy
 openshift-storage.rbd.csi.ceph.com
 openshift-storage.cephfs.csi.ceph.com
-Set this driver's `snapshotPolicy` to `volumeGroupSnapshot`
+Set this driver's `snapshotPolicy` to `volumeSnapshot`
 set `snapshotPolicy: volumeSnapshot` instead
 TechPreviewNoUpgrade
 kind: VolumeGroupSnapshotClass
 groupsnapshot.storage.k8s.io/v1beta2
-`csi-snapshotter` v8 lists `groupsnapshot/v1`
+group API client
 CustomNoUpgrade
 Do not enable feature gates.
 """

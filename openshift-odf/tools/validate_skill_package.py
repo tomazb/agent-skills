@@ -686,9 +686,11 @@ def check_required_reference_guidance(root: Path) -> list[str]:
     )
     require(
         "references/backup-restore-dr.md",
-        "volume group snapshot policy",
+        "ordinary snapshot policy with verified optional groups",
         [
             "snapshotPolicy: volumeGroupSnapshot",
+            "Use `volumeSnapshot` by default",
+            "group snapshot and restore",
             "--feature-gates=CSIVolumeGroupSnapshot=true",
             "Do not set `snapshotPolicy` on an NFS driver",
             "driverSpecDefaults.snapshotPolicy",
@@ -698,23 +700,23 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "TechPreviewNoUpgrade",
             "kind: VolumeGroupSnapshotClass",
             "groupsnapshot.storage.k8s.io/v1beta2",
-            "`csi-snapshotter` v8 lists `groupsnapshot/v1`",
+            "group API client",
             "CustomNoUpgrade",
             "Do not enable feature gates.",
         ],
     )
     require(
         "references/block-rbd.md",
-        "RBD volume group snapshot policy",
+        "RBD ordinary snapshot policy",
         [
-            "snapshotPolicy` to `volumeGroupSnapshot`",
+            "snapshotPolicy` to `volumeSnapshot`",
         ],
     )
     require(
         "references/cephfs-filesystem.md",
-        "CephFS volume group snapshot policy",
+        "CephFS ordinary snapshot policy",
         [
-            "snapshotPolicy` to `volumeGroupSnapshot`",
+            "snapshotPolicy` to `volumeSnapshot`",
         ],
     )
     require(

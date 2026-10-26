@@ -140,17 +140,19 @@ python3 scripts/check_volume_expansion_secrets.py
 no `userID` or `userKey`
 
 snapshotPolicy: volumeGroupSnapshot
+Use `volumeSnapshot` by default
+group snapshot and restore
 --feature-gates=CSIVolumeGroupSnapshot=true
 Do not set `snapshotPolicy` on an NFS driver
 driverSpecDefaults.snapshotPolicy
 rook-ceph.rbd.csi.ceph.com
 rook-ceph.cephfs.csi.ceph.com
-Set this driver's `snapshotPolicy` to `volumeGroupSnapshot`
+Set this driver's `snapshotPolicy` to `volumeSnapshot`
 set `snapshotPolicy: volumeSnapshot` instead
 TechPreviewNoUpgrade
 kind: VolumeGroupSnapshotClass
 groupsnapshot.storage.k8s.io/v1beta2
-`csi-snapshotter` v8 lists `groupsnapshot/v1`
+group API client
 CustomNoUpgrade
 Do not enable feature gates.
 """

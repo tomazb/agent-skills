@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.19.7
+
+- Default ordinary RBD/CephFS snapshots to `volumeSnapshot`; require verified API/sidecar compatibility and group recovery before using optional group mode or classes. Correct executable examples and validation contracts to preserve ordinary snapshot readiness. Replace the blanket snapshotter-major-version claim with exact client/API-version discovery. Accept checker exit 2 as Not checked in both credential-validation checklists until resolved-PV/Secret evidence is recorded, and pin standalone CephFS cleanup to the target context.
+
 ## 1.19.6
 
 - Report templated CSI expansion-secret references as Not checked with exit code 2 instead of rejecting them as invalid names. Continue verifying literal references and preserve failures for missing parameters, invalid literal fields, and missing Secret keys. Document resolved-PV verification and add command-level regression coverage without exposing Secret data.

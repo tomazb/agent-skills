@@ -1,13 +1,23 @@
 """Snapshot setup must respect ODF ownership and verify recovery."""
 
 from pathlib import Path
+import json
+import re
+import shlex
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_rbd_and_cephfs_drivers_use_volume_group_snapshot_policy():
+def test_rbd_and_cephfs_default_to_ordinary_snapshots_with_optional_groups():
     text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")
+    patches = [shlex.split(line) for block in re.findall(r"```bash\n(.*?)```", text, re.S)
+               for line in block.splitlines() if "patch driver.csi.ceph.io" in line]
+    assert len(patches) == 2
+    for command in patches:
+        assert json.loads(command[command.index("-p") + 1])["spec"]["snapshotPolicy"] == "volumeSnapshot"
+    assert "Use `volumeSnapshot` by default" in text
+    assert "group snapshot and restore" in text
     assert 'snapshotPolicy: volumeGroupSnapshot' in text
     assert "openshift-storage.rbd.csi.ceph.com" in text
     assert "openshift-storage.cephfs.csi.ceph.com" in text

@@ -47,6 +47,8 @@ For installation, configuration, and remediation, configure supported snapshotti
 
 Validation-only requests remain read-only. Report supported but unconfigured snapshotting as **Warning**, unsupported combinations as **N/A** with a version-specific reason, and inaccessible or unverified capability as **Not checked**. Report **Supported**, **Configured**, **Scheduled**, and **Restore-tested** separately for each StorageClass. Configure classes during authorized setup even when no PVC exists; create recurring jobs only with a workload, retention, and consistency policy. Local snapshots do not replace off-cluster backups. Smoke tests must run `python3 scripts/check_snapshot_smoke.py` for supported modes and verify restored data and cleanup before a full pass; see `references/validation-hardening.md`.
 
+For ordinary RBD/CephFS snapshots, use `volumeSnapshot`. Use optional group mode only for a group-snapshot requirement with verified target API/sidecar compatibility and group snapshot/restore evidence; API presence alone is insufficient. Preserve an existing verified group configuration. See the Snapshot readiness runbook for the gates.
+
 ## Core Safety Rules
 
 - Never run or recommend destructive disk-wiping commands such as `ceph-volume lvm zap`, `wipefs -a`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.

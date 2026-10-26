@@ -104,17 +104,17 @@ Create a test PVC and pod. Confirm:
 - CephFS mount is active and healthy.
 - MDS is in `active` state.
 - `oc get sc` shows exactly one default StorageClass when defaulting is expected.
-- `python3 scripts/check_volume_expansion_secrets.py` exits 0.
+- For literal expansion-secret references, `python3 scripts/check_volume_expansion_secrets.py` exits 0. For templated references, record exit 2 as **Not checked** until separate verification of the resolved PV references and Secret succeeds. Record that evidence before a full credential-validation pass; the checker itself continues to exit 2 for templates.
 
 Use the complete CephFS snapshot/restore smoke flow in `references/validation-hardening.md`. It verifies the restored token and then deletes and audits the smoke namespace; a provisioning-only check is not a full smoke pass:
 
 ```bash
-bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke
+bash scripts/cleanup_smoke_namespace.sh --namespace rook-cephfs-smoke --context "<target-context>"
 ```
 
 ## Snapshot Support
 
-Configure supported CephFS snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Set this driver's `snapshotPolicy` to `volumeGroupSnapshot` there. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
+Configure supported CephFS snapshotting before declaring storage setup complete. Follow [Snapshot readiness](backup-restore-dr.md#snapshot-readiness) for controller/CSI prerequisites, class selection, and restore verification. Set this driver's `snapshotPolicy` to `volumeSnapshot` for ordinary snapshots; use `volumeGroupSnapshot` only after the optional group-snapshot prerequisites and recovery checks pass there. Reuse a matching class; create the class below only when it is missing, substituting discovered driver/backend values:
 
 ```yaml
 apiVersion: snapshot.storage.k8s.io/v1
