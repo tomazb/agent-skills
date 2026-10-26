@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.29.1
+
+- Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.
+- Verify schema-pruned ObjectBucket reverse references through an owned, newly provisioned forward binding; preserve UID cleanup guards and detect orphan buckets after committed-create timeouts.
+
+## 1.29.0
+
+- Port applicable lifecycle fixes from issue #38: dependency-ordered CSI finalization with a controller availability guard, explicit disk reuse versus sanitization planning, and protection for shared APIs owned by non-ODF OLM packages.
+- Add UID-bound shared ObjectBucket API audit expectations, an explicit interim default policy, dependency-free RGW/MCG object roundtrip testing with scoped cleanup, and sustained read-only Ceph health observation.
+- Keep ODF changes under StorageCluster/OLM ownership; document manager regression diagnosis without importing upstream Rook patches. Preserve snapshot restore coverage and distinguish Ceph health from ODF/SNO readiness.
+
 ## 1.28.5
 
 - Default ordinary RBD/CephFS snapshots to `volumeSnapshot`; require verified API/sidecar compatibility and group recovery before using optional group mode or classes. Correct executable examples and validation contracts to preserve ordinary snapshot readiness. Replace the blanket snapshotter-major-version claim with exact client/API-version discovery.

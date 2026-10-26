@@ -15,6 +15,7 @@ OC_GLOBAL_ARGS=()
 # kubeconfig's current context even when --context overrides the request target,
 # so it cannot be trusted to name the cluster actually being audited.
 OC_CONTEXT_LABEL=""
+RETAINED_OBJECTBUCKET_KINDS=""
 
 # printf, not `cat <<EOF`: usage must still work when PATH holds nothing but oc
 # and jq, which is how this script is invoked in constrained environments.
@@ -31,6 +32,9 @@ usage() {
     'PRIOR_DEFAULT_STORAGE_CLASS, when set, is the default StorageClass recorded' \
     'before uninstall (empty means there was none). The audit then warns only when' \
     'that policy changed. When the variable is unset, exactly one default is required.' \
+    'EXPECTED_DEFAULT_STORAGE_CLASS overrides only the interim expected state (empty means none).' \
+    'ODF_RETAINED_OBJECTBUCKET_CRDS_FILE is a target/UID-bound JSON inventory for' \
+    'empty ObjectBucket APIs with verified non-ODF OLM ownership.' \
     '' \
     'Unknown arguments are rejected. This script previously ignored them' \
     'silently, so a "--context other-cluster" that looked accepted actually' \
@@ -45,6 +49,8 @@ esac
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=odf_common.sh
 source "$SCRIPT_DIR/odf_common.sh"
+# shellcheck source=odf_audit_expectations.sh
+source "$SCRIPT_DIR/odf_audit_expectations.sh"
 
 parse_oc_args "$@"
 
@@ -495,6 +501,10 @@ check_rook_shared_group() {
   local group="$1"
 
   if ! upstream_rook_present; then
+    if [ "$group" = objectbucket.io ] && [ -n "$RETAINED_OBJECTBUCKET_KINDS" ]; then
+      api_resources "$group" || return 0
+      if check_retained_objectbucket_group "$API_RESOURCES"; then return 0; fi
+    fi
     check_api_group "$group"
     return 0
   fi
@@ -972,6 +982,7 @@ fi
 echo "auditing $AUDIT_SERVER" \
   "(context: ${OC_CONTEXT_LABEL:-unknown})"
 
+check_retained_objectbucket_inventory || exit 1
 detect_upstream_rook
 
 check_storage_namespace
@@ -1127,7 +1138,14 @@ if query_json \
     # PRIOR_DEFAULT_STORAGE_CLASS is recorded before uninstall. Unset keeps the
     # historical check (exactly one default). An empty value means the cluster
     # had no default, which is a valid end state.
-    if [ -z "${PRIOR_DEFAULT_STORAGE_CLASS+x}" ]; then
+    if [ -n "${EXPECTED_DEFAULT_STORAGE_CLASS+x}" ]; then
+      if { [ "$COUNT" -eq 0 ] && [ -z "$EXPECTED_DEFAULT_STORAGE_CLASS" ]; } ||
+         { [ "$COUNT" -eq 1 ] && [ "$DEFAULT_SCS" = "$EXPECTED_DEFAULT_STORAGE_CLASS" ]; }; then
+        ok "default StorageClass '$found', matching the expected post-uninstall policy"
+      else
+        warn "default StorageClass '$found' does not match the expected post-uninstall policy"
+      fi
+    elif [ -z "${PRIOR_DEFAULT_STORAGE_CLASS+x}" ]; then
       if [ "$COUNT" -eq 1 ]; then
         ok "exactly one default StorageClass: $DEFAULT_SCS"
       elif [ "$COUNT" -eq 0 ]; then

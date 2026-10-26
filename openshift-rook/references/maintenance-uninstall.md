@@ -243,7 +243,7 @@ rook_delete_ceph_crs() {
 rook_delete_ceph_crs
 ```
 
-Wait for the operator to clean up OSDs, mons, and mgrs (the poll above returns once the `CephCluster` is gone). Then remove the CSI custom resources **before** the CSI operator (otherwise their finalizers block the operator and namespace teardown), then the operators and the namespace.
+Wait for the operator to clean up OSDs, mons, and mgrs (the poll above returns once the `CephCluster` is gone). Then remove the CSI custom resources **before** the CSI operator (otherwise their finalizers block the operator and namespace teardown), then the operators and the namespace. Delete ClientProfileMappings and ClientProfiles, and wait for each to disappear, before deleting their CephConnections. API discovery order is not a safe deletion order.
 
 **Never `oc delete -f` the install manifests.** The CRD manifest and `csi-operator.yaml` define CustomResourceDefinitions (without `csi-operator.yaml` a new `CephCluster` stalls on `no matches for kind "CephConnection"`), so deleting them by file removes the `csi.ceph.io` and `ceph.rook.io` CRDs cluster-wide, with every `Driver`, `CephConnection`, and `ClientProfile` of another Rook or a standalone ceph-csi-operator. `common.yaml` and `operator-openshift.yaml` carry cluster-scoped ClusterRoles, bindings, and the SCCs `rook-ceph`/`rook-ceph-csi`, whose names ODF and a second Rook share. This function deletes by kind, in `$ROOK_NAMESPACE` only, after a fresh "upstream Rook only, in: `$ROOK_NAMESPACE`" verdict, and refuses while a ValidatingWebhookConfiguration, MutatingWebhookConfiguration, or APIService is served from that namespace; cluster-scoped RBAC and SCCs are decided by **Cluster RBAC left by Rook** and `rook_remove_sccs`, and every CRD by `rook_delete_crds`:
 
@@ -270,16 +270,22 @@ rook_delete_operator() {
     echo "served from $ns:${served//$'\n'/} - remove them first (after confirming they are this Rook's); nothing deleted" >&2
     return 1
   fi
-  # ceph-csi CRs (drivers, operatorconfigs, cephconnections, clientprofiles.csi.ceph.io,
-  # clientprofilemappings) first, so the csi-operator can finalize them.
+  # Finalization loads the CephConnection before it can clean a ClientProfile.
+  # Refuse unknown resource types before deleting anything; discovery order is
+  # not dependency order. Keep both operators running through every wait.
   kinds=$(oc api-resources --api-group=csi.ceph.io --namespaced=true --verbs=list -o name) || return 1
   for kind in $kinds; do
-    oc -n "$ns" delete "$kind" --all --ignore-not-found --wait=false || return 1
+    case "$kind" in
+      clientprofilemappings.csi.ceph.io|clientprofiles.csi.ceph.io|drivers.csi.ceph.io|cephconnections.csi.ceph.io|operatorconfigs.csi.ceph.io) ;;
+      *) echo "unverified CSI deletion dependency: $kind; nothing deleted" >&2; return 1 ;;
+    esac
   done
-  if [ -n "$kinds" ]; then
-    # one argument per kind
-    rook_wait_gone "$ns" $kinds || return 1
-  fi
+  for kind in clientprofilemappings.csi.ceph.io clientprofiles.csi.ceph.io \
+      drivers.csi.ceph.io cephconnections.csi.ceph.io operatorconfigs.csi.ceph.io; do
+    case $'\n'"$kinds"$'\n' in *$'\n'"$kind"$'\n'*) ;; *) continue ;; esac
+    oc -n "$ns" delete "$kind" --all --ignore-not-found --wait=false || return 1
+    rook_wait_gone "$ns" "$kind" || return 1
+  done
   # The operators and their namespaced RBAC, by kind, in this namespace only.
   for kind in deployments daemonsets serviceaccounts roles rolebindings; do
     oc -n "$ns" delete "$kind" --all --ignore-not-found --wait=false || return 1
@@ -573,6 +579,23 @@ bash scripts/post_uninstall_audit.sh
 bash scripts/post_uninstall_audit.sh --namespace <rook-namespace> --csi-prefix <csi-driver-name-prefix>
 ```
 
+For an explicitly planned reinstall gap, set `EXPECTED_DEFAULT_STORAGE_CLASS=''`
+only on the interim audit invocation. Keep `PRIOR_DEFAULT_STORAGE_CLASS` unchanged
+for restoration. Omit the override for final acceptance; a wrong or multiple
+default still fails. This does not waive the default policy after reinstall.
+
+OLM-owned ObjectBucket APIs may be shared even when no ODF installation is active.
+Do not delete them just to silence the audit. A reviewed, private JSON inventory
+can explicitly retain only those two CRDs. It must contain `apiServer` and
+`crds: [{name, uid}]`, recorded from the target before cleanup. Store it with mode
+600; it contains cluster identity and must never be committed or pasted into a PR.
+Pass its path as `ROOK_RETAINED_OBJECTBUCKET_CRDS_FILE` on the audit invocation.
+The helper verifies the server, exact UIDs, OLM ownership labels, API discovery,
+and absence of all instances. Replacements, absent CRDs, unknown ownership,
+malformed inventories, and access failures fail closed. Other Ceph/CSI APIs and
+all unrelated residue remain strict failures. Omit this inventory unless the
+retention decision has been made explicitly; labels alone never grant an exemption.
+
 It is read-only and needs only `oc`, `jq`, and bash; it names the cluster it audited and accepts `--context` and `--kubeconfig`. Any `WARN` or `FAIL` line exits nonzero, so it can gate a pipeline. `OK: ... retained: <reason>` lines name objects that look like Rook's but are not (ODF's SCCs, OLM-labelled `rook-ceph-*` RBAC, roles in use); they do not fail the audit. Objects are matched by driver, provisioner, StorageClass, and ownership, never by a `rook-ceph` name alone. "Terminating" for a PVC or PV is only how `oc get` prints it — the phase stays `Bound` or `Released` and the deletion shows as `metadata.deletionTimestamp`, which is what the audit tests. ConfigMaps and Secrets are read as names and finalizers only, never their data; a user who may not list Secrets gets a `FAIL: could not check ...` line naming the missing permission.
 
 Equivalent manual checks:
@@ -792,7 +815,7 @@ oc -n "$ROOK_NAMESPACE" get pods -l app=rook-ceph-cleanup
 If `cleanupPolicy` was not used (or you need to reclaim disks after the fact):
 
 1. Follow the operator uninstall steps above.
-2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. The script first proves that the first and last MiB of the disk can be read, because a signature probe that cannot read reports "nothing found" just like an empty disk. A check that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry, and the only signature `wipefs` and `blkid -p` may find on it is `ceph_bluestore`. Any other signature blocks it, a partition table included, even an empty one: its backup copy or a hybrid MBR can still list partitions that neither the primary table nor the kernel shows, so inspect such a disk and clear it by hand. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. `wipefs -af` and `sgdisk --zap-all` are not sufficient on a disk that held a BlueStore OSD: the label is also stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. The function zeroes those copies before `wipefs`. `lsblk -f` and `wipefs -n` can still look clean while `ceph-volume raw list` reports `osd.0 belonging to a different ceph cluster`. Do not reuse the disk until that list prints `{}`. A full-disk zero is only for total erasure. When Identify Controller shows a cryptographic erase or sanitize block erase, use that path in `references/osd-disk-prep.md` instead of the offset wipe. The other commands are there too. If the wipe fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
+2. After the namespace is removed, collect the `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the disk (`references/osd-disk-prep.md`), then clean it. Nothing else on the node may be using or claiming the disk while you do: no one formatting it, mounting it, or adding it to LVM. The function takes only a stable `/dev/disk/by-id/` path of a whole disk (never a `-part<N>` link), needs `ROOK_CONFIRM_WIPE_DISK` set to exactly that path, and refuses unless a fresh classification says "no Rook or ODF". It then runs **one** script on the node that checks the disk and wipes it right after the last check, only if every check passed; that narrows the window between check and wipe but does not lock the disk. The script first proves that the first and last MiB of the disk can be read, because a signature probe that cannot read reports "nothing found" just like an empty disk. A check that cannot run (a failed `readlink`, `blockdev`, read, `lsblk`, holders listing, `wipefs` probe, `findmnt`, `swapon`, or `pvs`, `blkid -p` with any status but 0 or 2, or no `pvs` at all) blocks the wipe: unknown is never read as unused. The disk must resolve to a device of type `disk` with no partitions or child devices, no holders, no mount in the host's mount table, no active swap, and no `pvs` entry, and the only signature `wipefs` and `blkid -p` may find on it is `ceph_bluestore`. Any other signature blocks it, a partition table included, even an empty one: its backup copy or a hybrid MBR can still list partitions that neither the primary table nor the kernel shows, so inspect such a disk and clear it by hand. On a node shared with LVMS, that is what keeps the boot disk and LVMS volume-group disks safe. The wipe runs on the resolved device, not on the link. `wipefs -af` and `sgdisk --zap-all` are not sufficient on a disk that held a BlueStore OSD: the label is also stored at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. The function zeroes those copies before `wipefs`. `lsblk -f` and `wipefs -n` can still look clean while `ceph-volume raw list` reports `osd.0 belonging to a different ceph cluster`. Do not reuse the disk until that list prints `{}`. A full-disk zero is only for total erasure. Only for explicit whole-device sanitization intent, choose a supported cryptographic erase or sanitize block erase using `scripts/plan_osd_disk_prep.py --intent sanitize` and `references/osd-disk-prep.md`. Disk reuse defaults to the guarded metadata reset below. The other commands are there too. If the wipe fails after it started, the function says the disk may be partly wiped instead of "disk not wiped":
 
 ```bash
 rook_wipe_osd_disk() {

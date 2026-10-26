@@ -18,6 +18,7 @@ OC_GLOBAL_ARGS=()
 # kubeconfig's current context even when --context overrides the request target,
 # so it cannot be trusted to name the cluster actually being audited.
 OC_CONTEXT_LABEL=""
+RETAINED_OBJECTBUCKET_KINDS=""
 
 # printf, not `cat <<EOF`: usage must still work when PATH holds nothing but oc
 # and jq, which is how this script is invoked in constrained environments.
@@ -38,6 +39,10 @@ usage() {
     'PRIOR_DEFAULT_STORAGE_CLASS, when set, is the default StorageClass recorded' \
     'before uninstall (empty means there was none). The audit then warns only when' \
     'that policy changed. When the variable is unset, exactly one default is required.'
+  printf '%s\n' \
+    'EXPECTED_DEFAULT_STORAGE_CLASS overrides the expected end state only (empty means none).' \
+    'ROOK_RETAINED_OBJECTBUCKET_CRDS_FILE names a JSON inventory with apiServer and' \
+    'crds [{name,uid}]. Only matching, empty, OLM-labelled ObjectBucket APIs may remain.'
 }
 
 case "${BASH_SOURCE[0]}" in
@@ -47,6 +52,8 @@ esac
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=rook_common.sh
 source "$SCRIPT_DIR/rook_common.sh"
+# shellcheck source=rook_audit_expectations.sh
+source "$SCRIPT_DIR/rook_audit_expectations.sh"
 
 parse_oc_args "$@"
 
@@ -522,10 +529,17 @@ check_shared_group() {
 
   api_resources "$group" || return 0
   if [ -z "$API_RESOURCES" ]; then
+    if [ "$group" = objectbucket.io ] && [ -n "$RETAINED_OBJECTBUCKET_KINDS" ]; then
+      fail "retained ObjectBucket APIs missing from discovery"
+      return 0
+    fi
     ok "no $group API resources found"
     return 0
   fi
   all_kinds="$API_RESOURCES"
+  if [ "$group" = objectbucket.io ] && [ -n "$RETAINED_OBJECTBUCKET_KINDS" ] && ! odf_present; then
+    if check_retained_objectbucket_group "$all_kinds"; then return 0; fi
+  fi
   api_resources "$group" --namespaced=true || return 0
   namespaced=$'\n'"$API_RESOURCES"$'\n'
   while IFS= read -r kind; do
@@ -926,6 +940,8 @@ if [ "$RUN_RC" -ne 0 ] || [ -z "$RUN_OUT" ]; then
 fi
 echo "auditing ${RUN_OUT}${OC_CONTEXT_LABEL:+ (context: $OC_CONTEXT_LABEL)}" \
   "for Rook in $ROOK_NAMESPACE, CSI driver prefix $ROOK_CSI_PREFIX"
+AUDIT_SERVER="$RUN_OUT"
+check_retained_objectbucket_inventory || exit 1
 
 detect_ownership
 check_ownership
@@ -1073,7 +1089,14 @@ if query_json \
     # PRIOR_DEFAULT_STORAGE_CLASS is recorded before uninstall. Unset keeps the
     # historical check (exactly one default). An empty value means the cluster
     # had no default, which is a valid end state.
-    if [ -z "${PRIOR_DEFAULT_STORAGE_CLASS+x}" ]; then
+    if [ -n "${EXPECTED_DEFAULT_STORAGE_CLASS+x}" ]; then
+      if { [ "$COUNT" -eq 0 ] && [ -z "$EXPECTED_DEFAULT_STORAGE_CLASS" ]; } ||
+         { [ "$COUNT" -eq 1 ] && [ "$DEFAULT_SCS" = "$EXPECTED_DEFAULT_STORAGE_CLASS" ]; }; then
+        ok "default StorageClass '$found', matching the expected post-uninstall policy"
+      else
+        warn "default StorageClass '$found' does not match the expected post-uninstall policy"
+      fi
+    elif [ -z "${PRIOR_DEFAULT_STORAGE_CLASS+x}" ]; then
       if [ "$COUNT" -eq 1 ]; then
         ok "exactly one default StorageClass: $DEFAULT_SCS"
       elif [ "$COUNT" -eq 0 ]; then

@@ -262,6 +262,9 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
         (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
+        for helper in ("plan_osd_disk_prep.py", "check_odf_health.py", "check_object_smoke.py",
+                       "rgw_s3_roundtrip.py", "odf_audit_expectations.sh", "odf_common.sh", "classify_rook_ownership.sh"):
+            (root / "scripts" / helper).write_text("", encoding="utf-8")
         (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")

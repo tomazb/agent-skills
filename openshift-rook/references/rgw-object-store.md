@@ -136,7 +136,57 @@ If an OpenShift Route was deployed (see the TLS and Ingress section below), also
 oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
-Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that namespace. Verify:
+### Repeatable object roundtrip
+
+Prefer the shipped helper with an approved, digest-pinned Python 3 client image.
+Its standard-library SigV4 client requires no runtime pip installation or local SDK. It
+signs Content-Type as well as the required host and x-amz headers. Credentials
+come from `envFrom` inside the test pod and are never read by the local helper.
+
+```bash
+SMOKE_IMAGE="<approved-python3-image>@sha256:<verified-digest>"
+python3 scripts/check_rgw_smoke.py --context "<target-context>" \
+  --namespace rook-ceph --operator-namespace rook-ceph \
+  --storage-class rook-ceph-rgw-obc --image "$SMOKE_IMAGE" --allow-http
+```
+
+Use `--allow-http` only for a trusted in-cluster pod-to-gateway path. For HTTPS,
+omit it. Public certificates use the default trust store; an OpenShift serving
+certificate uses `--tls-ca service-ca --ca-configmap <injected-ca-configmap>`;
+a private CA uses `--tls-ca /etc/rgw-ca/ca-bundle.crt --ca-configmap <ca-configmap>`.
+Prepare the CA ConfigMap as described below. TLS verification stays enabled.
+Verify the image supplies a working `python3` and declares a numeric non-zero
+OCI `USER` (check `.config.User` via
+`skopeo inspect --config docker://"$SMOKE_IMAGE" | jq -r '.config.User'`).
+Confirm admission under the target namespace's SCC. Do not assume a Ceph image
+using a root/default user can satisfy `runAsNonRoot` without an SCC-injected UID.
+The helper does not request elevated SCC access. Feature gates and server
+authentication settings are not changed.
+
+The default OBC watch scope is the operator namespace. The helper checks that
+scope and creates uniquely labelled OBC/pod resources there, never deleting the
+namespace. If the operator watches all namespaces, it also accepts an existing
+namespace ending in `-smoke` with `app.kubernetes.io/part-of: storage-smoke`.
+Do not broaden the operator watch scope just to run a test.
+
+Pass requires PUT, GET byte comparison, DELETE, confirmation the object is gone,
+and removal of the owned pod, OBC, ObjectBucket, Secret, and ConfigMap. Cleanup
+also runs after ordinary failure or a single Ctrl-C, and a failed test remains
+failed. `SIGKILL`, node loss, or repeated interrupts can still strand resources.
+Inspect `oc -n rook-ceph get pod,objectbucketclaim -l storage-smoke/run -o json`
+and verify run labels, exact UIDs, and bucket associations before targeted
+recovery; never bulk-delete the operator namespace.
+UID/ownership changes stop cleanup and report failure. Query failures or timeouts
+are unverified, never clean. The helper preserves the StorageClass and namespace.
+
+### Manual object roundtrip
+
+The manual `rook-rgw-smoke` example below requires the operator's effective
+`ROOK_OBC_WATCH_OPERATOR_NAMESPACE` to be `false`. If it is `true` or unverified,
+use the helper above in the operator namespace. Never run namespace-deletion
+cleanup against the operator namespace.
+
+Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that disposable namespace. Verify:
 
 - OBC is `Bound`.
 - Secret with S3 credentials is created.
@@ -374,3 +424,23 @@ spec:
     termination: passthrough
     insecureEdgeTerminationPolicy: Redirect
 ```
+
+
+### Schema-pruned bucket references
+
+Some OLM-managed ObjectBucket schemas prune every `spec.claimRef` field. The
+smoke helper accepts an exactly empty reference only when the served structural
+CRD schema proves pruning and field preservation is disabled. It verifies the
+run-owned Bound OBC's authoritative `spec.objectBucketName`, both object UIDs,
+a bucket absent from the pre-test inventory, matching Delete policy/StorageClass,
+and the exact generated bucket identity. The result reports
+`binding_source: claim-forward-reference`; retain a schema compatibility warning
+alongside the passing data-path result. Other schemas require a normal reverse
+reference, and contradictory references always fail. The helper never patches
+the shared CRD.
+
+Cleanup recovers the forward binding before deleting the owned claim and tracks
+new run-prefixed buckets even after a committed-create timeout. It requires their
+disappearance and never manually deletes global ObjectBuckets. Unverified identity
+or cleanup fails the test. This follows the library's
+[authoritative OBC binding contract](https://github.com/kube-object-storage/lib-bucket-provisioner/blob/master/pkg/apis/objectbucket.io/v1alpha1/objectbucket_types.go).

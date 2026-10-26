@@ -20,6 +20,17 @@ ODF_PACKAGES_RE="^($ODF_PACKAGES)\$"
 ODF_CSV_PREFIX_RE="^($ODF_PACKAGES)[.]"
 # OLM labels what it installs "operators.coreos.com/<package>.<namespace>".
 ODF_PACKAGE_LABEL_RE="^operators[.]coreos[.]com/($ODF_PACKAGES)[.]"
+# Shared APIs may be owned by another OLM package. Treat that as a protection
+# signal, never permission to delete an unknown owner's resources.
+ODF_NON_ODF_OLM_OWNER_JQ='
+def non_odf_olm_owner:
+  (.metadata.labels // {}) as $labels |
+  (($labels | has("olm.owner")) and
+    ((($labels["olm.owner"] // "") | test("'"$ODF_CSV_PREFIX_RE"'") | not)
+      or (($labels["olm.owner.namespace"] // "") == "")))
+  or (($labels | has("olm.owner.namespace")) and (($labels["olm.owner"] // "") == ""))
+  or any($labels | keys[]; startswith("operators.coreos.com/") and (test("'"$ODF_PACKAGE_LABEL_RE"'") | not));
+'
 # Object names ODF creates in openshift-storage.
 ODF_NAME_RE='rook|ceph|noobaa|ocs-|odf'
 ODF_CSI_DRIVER_RE='^openshift-storage[.](rbd|cephfs)[.]csi[.]ceph[.]com$'

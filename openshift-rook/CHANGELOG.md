@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.20.2
+
+- Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.
+- Verify schema-pruned ObjectBucket reverse references through an owned, newly provisioned forward binding; preserve UID cleanup guards and detect orphan buckets after committed-create timeouts.
+
+## 1.20.1
+
+- Clarify that namespace cleanup applies to disposable smoke namespaces. Object smoke helpers preserve their existing namespace and delete only owned test resources; never delete the operator namespace for smoke cleanup.
+
+## 1.20.0
+
+- Fix CSI resource teardown dependency ordering and wait for normal finalization before removing controllers.
+- Default reinstall disk planning to metadata reset; require explicit sanitization intent before selecting whole-device erasure. Gate optional Rook manager integration on Ceph compatibility.
+- Support target/UID-bound, ownership-verified shared ObjectBucket API retention and an explicit interim default StorageClass policy in the uninstall audit.
+- Add dependency-free signed RGW roundtrip testing with watch-scope checks and verified cleanup, plus bounded Ceph health and crash observation. Preserve snapshot restore coverage and add failure-path regressions.
+
 ## 1.19.7
 
 - Default ordinary RBD/CephFS snapshots to `volumeSnapshot`; require verified API/sidecar compatibility and group recovery before using optional group mode or classes. Correct executable examples and validation contracts to preserve ordinary snapshot readiness. Replace the blanket snapshotter-major-version claim with exact client/API-version discovery. Accept checker exit 2 as Not checked in both credential-validation checklists until resolved-PV/Secret evidence is recorded, and pin standalone CephFS cleanup to the target context.
