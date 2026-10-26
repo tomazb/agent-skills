@@ -128,6 +128,31 @@ bash scripts/cleanup_smoke_namespace.sh --namespace rook-vm-smoke
 `oc get sc` shows exactly one default StorageClass when defaulting is expected.
 ## Post-Reboot Drift
 one default if defaulting is expected
+
+csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner
+csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+csi.storage.k8s.io/node-stage-secret-name: rook-csi-rbd-node
+csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+The external-resizer does not fall back to the provisioner-secret parameters.
+python3 scripts/check_volume_expansion_secrets.py
+no `userID` or `userKey`
+
+snapshotPolicy: volumeGroupSnapshot
+--feature-gates=CSIVolumeGroupSnapshot=true
+Do not set `snapshotPolicy` on an NFS driver
+driverSpecDefaults.snapshotPolicy
+rook-ceph.rbd.csi.ceph.com
+rook-ceph.cephfs.csi.ceph.com
+Set this driver's `snapshotPolicy` to `volumeGroupSnapshot`
+set `snapshotPolicy: volumeSnapshot` instead
+TechPreviewNoUpgrade
+kind: VolumeGroupSnapshotClass
+groupsnapshot.storage.k8s.io/v1beta2
+`csi-snapshotter` v8 lists `groupsnapshot/v1`
+CustomNoUpgrade
+Do not enable feature gates.
 """
 
 SKILL_TEMPLATE = """\
@@ -229,6 +254,7 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "rook_common.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "render_smoke_manifest.py").write_text("", encoding="utf-8")
         (root / "scripts" / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
+        (root / "scripts" / "check_volume_expansion_secrets.py").write_text("", encoding="utf-8")
         (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()

@@ -111,7 +111,7 @@ The cleanup command is the end of the smoke. It deletes `odf-cephfs-smoke` and f
 
 ## Snapshot Support
 
-ODF installs a cephfs `VolumeSnapshotClass` (`ocs-storagecluster-cephfsplugin-snapclass`). Verify and use it:
+ODF installs a cephfs `VolumeSnapshotClass` (`ocs-storagecluster-cephfsplugin-snapclass`). Verify and use it. Set this driver's `snapshotPolicy` to `volumeGroupSnapshot` as described in [Snapshot readiness](backup-restore-dr.md#snapshot-readiness):
 
 ```bash
 oc get volumesnapshotclass ocs-storagecluster-cephfsplugin-snapclass

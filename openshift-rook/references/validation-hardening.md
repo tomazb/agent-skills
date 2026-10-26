@@ -27,6 +27,15 @@ oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph dashboard get-prometheus-api
 
 Confirm exactly one default StorageClass when defaulting is expected.
 
+An RBD or CephFS StorageClass with `allowVolumeExpansion: true` must set `csi.storage.k8s.io/controller-expand-secret-name` and `csi.storage.k8s.io/controller-expand-secret-namespace` to the provisioner Secret. The external-resizer does not fall back to the provisioner-secret parameters. Run this from the skill directory. A failed check during read-only validation is reported, not patched.
+
+```bash
+# Reject expandable RBD and CephFS classes that omit resizer credentials.
+python3 scripts/check_volume_expansion_secrets.py
+```
+
+The checker fails when either parameter is missing or the Secret has no `userID` or `userKey`. It prints Secret names, never Secret data. Pass `--context <target-context>` when the current context is not the target cluster.
+
 ## Snapshot readiness
 
 Run the read-only [snapshot readiness inventory](backup-restore-dr.md#snapshot-readiness) during every validation, including clusters with no PVCs. Report supported but unconfigured drivers as **Warning**, alongside Ceph runtime health; a healthy cluster can still lack snapshot protection. Record Supported, Configured, Scheduled, and Restore-tested for each StorageClass. Configure missing supported classes during authorized setup/remediation; validation alone does not authorize mutations or production-volume tests.

@@ -1,5 +1,25 @@
 # Changelog
 
+## 1.19.5
+
+- Storage setup does not enable feature gates. Create a VolumeGroupSnapshotClass only when the group-snapshot API is already served.
+
+## 1.19.4
+
+- Create an RBD and a CephFS `VolumeGroupSnapshotClass` when the group-snapshot API is served. On OpenShift 4.22 that API is `groupsnapshot.storage.k8s.io/v1beta2`. Leave `snapshotPolicy` at `volumeSnapshot` when `csi-snapshotter` v8 cannot list that version, because its v1 watch never syncs and ordinary VolumeSnapshots stay unready.
+
+## 1.19.3
+
+- Set `snapshotPolicy` to `volumeGroupSnapshot` only when the group-snapshot API is served. Without those CRDs the snapshotter never syncs and ordinary VolumeSnapshots stay unready. Leave `TechPreviewNoUpgrade` unchanged unless the user accepts that it cannot be undone and blocks minor upgrades.
+
+## 1.19.2
+
+- Set ceph-csi-operator `Driver.spec.snapshotPolicy` to `volumeGroupSnapshot` for RBD and CephFS. That keeps VolumeSnapshot and enables the group-snapshot sidecar feature gate. Leave NFS drivers and the operator-wide default unchanged.
+
+## 1.19.1
+
+- Require controller-expand Secret parameters on expandable RBD and CephFS StorageClasses. The external-resizer does not use the provisioner-secret parameters. `scripts/check_volume_expansion_secrets.py` fails closed when those parameters or the Secret's `userID` and `userKey` are missing, without printing Secret data.
+
 ## 1.19.0
 
 - Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.

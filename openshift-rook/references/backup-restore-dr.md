@@ -29,6 +29,41 @@ oc get volumesnapshotcontents
 
 A failed discovery or Forbidden query is **Not checked**, never evidence that snapshots are absent or unsupported. Verify the OpenShift snapshot-controller operator and controller workloads are healthy, and the product's CSI snapshotter is ready. Reuse distribution-managed snapshot APIs/controllers; do not install duplicate upstream controllers on OpenShift. For OKD or missing prerequisites, use the installed distribution/version's supported installation path and report a blocker until it is ready.
 
+With the ceph-csi-operator, set `spec.snapshotPolicy: volumeGroupSnapshot` on each RBD and CephFS `Driver` only when a group-snapshot API is served (`volumegroupsnapshotclasses.groupsnapshot.storage.k8s.io`). That deploys `csi-snapshotter` and adds `--feature-gates=CSIVolumeGroupSnapshot=true`. Ordinary VolumeSnapshot stays enabled. When that API is not served, set `snapshotPolicy: volumeSnapshot` instead. The snapshotter waits for the group informers to sync, so the group feature gate without those CRDs stops ordinary VolumeSnapshots from becoming ready. An empty policy defaults to `volumeSnapshot` and leaves the group feature gate off. Read `snapshotPolicy.enum` on the served `drivers.csi.ceph.io` CRD and patch `volumeGroupSnapshot` only when it is listed and the group API is served. Do not set `snapshotPolicy` on an NFS driver. Do not set `OperatorConfig.spec.driverSpecDefaults.snapshotPolicy`; an empty Driver inherits that default, including NFS. A deployed CSIDriver or snapshotter without the selected policy is not sufficient. After the controller plugin rolls out, the `csi-snapshotter` args must contain `--feature-gates=CSIVolumeGroupSnapshot=true` when the policy is `volumeGroupSnapshot`, and must not contain that gate when the policy is `volumeSnapshot`. Keep the VolumeSnapshotClass. Create a VolumeGroupSnapshotClass for each RBD and CephFS driver when a group-snapshot API is served; it does not replace the VolumeSnapshotClass. Use the CRD storage version. On OpenShift 4.22 that version is `groupsnapshot.storage.k8s.io/v1beta2`, and `driver`, `parameters`, and `deletionPolicy` are fields of the object. Point `csi.storage.k8s.io/group-snapshotter-secret-name` at the same provisioner Secret the VolumeSnapshotClass uses. Set `pool` for RBD and `fsName` for CephFS from the StorageClass. `csi-snapshotter` v8 lists `groupsnapshot/v1`. If the cluster serves only `v1beta2`, leave `snapshotPolicy: volumeSnapshot`: the v1 informer never syncs and ordinary VolumeSnapshots stay unready. Do not enable feature gates. Storage setup does not change `FeatureGate` `featureSet`, including `CustomNoUpgrade` and `TechPreviewNoUpgrade`. When the group-snapshot API is not served, leave it unserved and do not create a VolumeGroupSnapshotClass.
+
+```yaml
+apiVersion: groupsnapshot.storage.k8s.io/v1beta2
+kind: VolumeGroupSnapshotClass
+metadata:
+  name: rook-ceph-block-groupsnapclass
+driver: rook-ceph.rbd.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  pool: replicapool
+  csi.storage.k8s.io/group-snapshotter-secret-name: rook-csi-rbd-provisioner
+  csi.storage.k8s.io/group-snapshotter-secret-namespace: rook-ceph
+deletionPolicy: Delete
+---
+apiVersion: groupsnapshot.storage.k8s.io/v1beta2
+kind: VolumeGroupSnapshotClass
+metadata:
+  name: rook-cephfs-groupsnapclass
+driver: rook-ceph.cephfs.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  fsName: rook-cephfs
+  csi.storage.k8s.io/group-snapshotter-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/group-snapshotter-secret-namespace: rook-ceph
+deletionPolicy: Delete
+```
+
+```bash
+oc -n rook-ceph patch driver.csi.ceph.io rook-ceph.rbd.csi.ceph.com --type=merge -p '{"spec":{"snapshotPolicy":"volumeGroupSnapshot"}}'
+oc -n rook-ceph patch driver.csi.ceph.io rook-ceph.cephfs.csi.ceph.com --type=merge -p '{"spec":{"snapshotPolicy":"volumeGroupSnapshot"}}'
+```
+
+Substitute the discovered Driver name when the prefix is not `rook-ceph`.
+
 Match `StorageClass.provisioner` to `VolumeSnapshotClass.driver` using the **same driver**, then check backend identity such as `clusterID`, pool, and snapshotter-secret references where required. A class for another backend using the same driver does not establish coverage. Verify referenced Secrets exist without printing their contents. Preserve operator ownership and existing `deletionPolicy`; use `Delete` for disposable test snapshots and choose `Delete` or `Retain` deliberately for persistent protection. Do not delete/recreate a class in use just to change immutable fields; use a new reviewed class when a custom policy is needed.
 
 Configure selection with explicit `volumeSnapshotClassName`, or set `snapshot.storage.kubernetes.io/is-default-class: "true"` on the intended class with **at most one** default per CSI driver. Snapshot defaults are independent of StorageClass defaults. When several backends share a driver, use explicit selection instead of choosing an arbitrary global default. With CDI/KubeVirt, verify `StorageProfile.spec.snapshotClass` or an unambiguous supported default for VM disks.
@@ -49,7 +84,7 @@ Snapshots on the source backend do not provide off-cluster disaster recovery. Co
 
 Rook supports Kubernetes VolumeSnapshot for RBD. Discover the actual Rook CSI driver prefix, namespace/clusterID, and snapshotter Secrets from the installed StorageClass. The examples below use the standard `rook-ceph` names; substitute discovered values. Reuse a matching class when present; otherwise create the missing RBD and CephFS classes as part of setup, even with no claims.
 
-Verify CSI snapshot support and the installed CSI operator's driver configuration. With the ceph-csi-operator, inspect `Driver.spec.snapshotPolicy` for each driver and reconcile it to `volumeSnapshot` where supported; a deployed driver or CSIDriver object alone is insufficient. Check the installed-version schema before changing it. Do not assume NFS CSI or an RGW bucket StorageClass supports Kubernetes VolumeSnapshot because RBD/CephFS do. Report unsupported or unknown service/mode combinations separately.
+Verify CSI snapshot support and the installed CSI operator's driver configuration. Set `snapshotPolicy: volumeGroupSnapshot` as described in Snapshot readiness. Do not assume NFS CSI or an RGW bucket StorageClass supports Kubernetes VolumeSnapshot because RBD/CephFS do. Report unsupported or unknown service/mode combinations separately.
 
 Sources: [Rook snapshot guide](https://rook.io/docs/rook/latest/Storage-Configuration/Ceph-CSI/ceph-csi-snapshot/) and [Kubernetes snapshot class selection](https://kubernetes.io/docs/concepts/storage/volume-snapshot-classes/). Use the installed-version Rook guide when applying changes.
 

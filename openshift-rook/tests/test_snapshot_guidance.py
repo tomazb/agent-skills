@@ -34,6 +34,29 @@ def test_each_rook_snapshot_driver_has_a_matching_restore_example():
             "rook-ceph-block" if ".rbd." in cls["driver"] else "rook-cephfs"
         )
 
+def test_rbd_and_cephfs_drivers_use_volume_group_snapshot_policy():
+    text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")
+    assert 'snapshotPolicy: volumeGroupSnapshot' in text
+    assert "rook-ceph.rbd.csi.ceph.com" in text
+    assert "rook-ceph.cephfs.csi.ceph.com" in text
+    assert "--feature-gates=CSIVolumeGroupSnapshot=true" in text
+    assert "Do not set `snapshotPolicy` on an NFS driver" in text
+    assert "set `snapshotPolicy: volumeSnapshot` instead" in text
+    assert "TechPreviewNoUpgrade" in text
+    assert "Do not enable feature gates." in text
+    assert "kind: VolumeGroupSnapshotClass" in text
+    assert "groupsnapshot.storage.k8s.io/v1beta2" in text
+    assert "`csi-snapshotter` v8 lists `groupsnapshot/v1`" in text
+    assert "reconcile it to `volumeSnapshot`" not in text
+    docs = [doc for block in re.findall(r"```yaml\n(.*?)```", text, re.S)
+            for doc in yaml.safe_load_all(block) if isinstance(doc, dict)]
+    groups = [d for d in docs if d.get("kind") == "VolumeGroupSnapshotClass"]
+    assert {d["driver"] for d in groups} == {
+        "rook-ceph.rbd.csi.ceph.com", "rook-ceph.cephfs.csi.ceph.com",
+    }
+    assert all(d["apiVersion"] == "groupsnapshot.storage.k8s.io/v1beta2" for d in groups)
+
+
 def test_manual_cephfs_snapshot_cleanup_uses_the_target_context():
     """Namespace cleanup must be scoped to the intended cluster."""
     text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")

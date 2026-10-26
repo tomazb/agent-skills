@@ -685,6 +685,39 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/backup-restore-dr.md",
+        "volume group snapshot policy",
+        [
+            "snapshotPolicy: volumeGroupSnapshot",
+            "--feature-gates=CSIVolumeGroupSnapshot=true",
+            "Do not set `snapshotPolicy` on an NFS driver",
+            "driverSpecDefaults.snapshotPolicy",
+            "openshift-storage.rbd.csi.ceph.com",
+            "openshift-storage.cephfs.csi.ceph.com",
+            "set `snapshotPolicy: volumeSnapshot` instead",
+            "TechPreviewNoUpgrade",
+            "kind: VolumeGroupSnapshotClass",
+            "groupsnapshot.storage.k8s.io/v1beta2",
+            "`csi-snapshotter` v8 lists `groupsnapshot/v1`",
+            "CustomNoUpgrade",
+            "Do not enable feature gates.",
+        ],
+    )
+    require(
+        "references/block-rbd.md",
+        "RBD volume group snapshot policy",
+        [
+            "snapshotPolicy` to `volumeGroupSnapshot`",
+        ],
+    )
+    require(
+        "references/cephfs-filesystem.md",
+        "CephFS volume group snapshot policy",
+        [
+            "snapshotPolicy` to `volumeGroupSnapshot`",
+        ],
+    )
+    require(
         "SKILL.md",
         "smoke namespace cleanup",
         [

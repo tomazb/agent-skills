@@ -1,5 +1,21 @@
 # Changelog
 
+## 1.28.4
+
+- Storage setup does not enable feature gates. Create a VolumeGroupSnapshotClass only when the group-snapshot API is already served.
+
+## 1.28.3
+
+- Create an RBD and a CephFS `VolumeGroupSnapshotClass` when the group-snapshot API is served. On OpenShift 4.22 that API is `groupsnapshot.storage.k8s.io/v1beta2`. Leave `snapshotPolicy` at `volumeSnapshot` when `csi-snapshotter` v8 cannot list that version, because its v1 watch never syncs and ordinary VolumeSnapshots stay unready.
+
+## 1.28.2
+
+- Set `snapshotPolicy` to `volumeGroupSnapshot` only when the group-snapshot API is served. Without those CRDs the snapshotter never syncs and ordinary VolumeSnapshots stay unready. Leave `TechPreviewNoUpgrade` unchanged unless the user accepts that it cannot be undone and blocks minor upgrades.
+
+## 1.28.1
+
+- Set ceph-csi-operator `Driver.spec.snapshotPolicy` to `volumeGroupSnapshot` for the ODF RBD and CephFS drivers. That keeps VolumeSnapshot and enables the group-snapshot sidecar feature gate. Leave NFS drivers and the operator-wide default unchanged.
+
 ## 1.28.0
 
 - Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.

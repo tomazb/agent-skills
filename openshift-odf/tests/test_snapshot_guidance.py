@@ -6,6 +6,22 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_rbd_and_cephfs_drivers_use_volume_group_snapshot_policy():
+    text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")
+    assert 'snapshotPolicy: volumeGroupSnapshot' in text
+    assert "openshift-storage.rbd.csi.ceph.com" in text
+    assert "openshift-storage.cephfs.csi.ceph.com" in text
+    assert "--feature-gates=CSIVolumeGroupSnapshot=true" in text
+    assert "Do not set `snapshotPolicy` on an NFS driver" in text
+    assert "set `snapshotPolicy: volumeSnapshot` instead" in text
+    assert "TechPreviewNoUpgrade" in text
+    assert "Do not enable feature gates." in text
+    assert "kind: VolumeGroupSnapshotClass" in text
+    assert "groupsnapshot.storage.k8s.io/v1beta2" in text
+    assert "openshift-storage.rbd.csi.ceph.com" in text
+    assert "openshift-storage.cephfs.csi.ceph.com" in text
+
+
 def test_odf_recovers_managed_snapshot_classes_through_the_operator():
     text = (ROOT / "references/backup-restore-dr.md").read_text(encoding="utf-8")
     assert "operator-managed" in text

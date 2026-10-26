@@ -65,6 +65,20 @@ def test_missing_smoke_namespace_cleanup_fails(validator, package_factory, refer
     assert any("smoke namespace cleanup" in issue for issue in issues)
 
 
+def test_missing_volume_expansion_credentials_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    rbd = root / "references" / "rbd-block-pools.md"
+    rbd.write_text(
+        rbd.read_text(encoding="utf-8").replace(
+            "csi.storage.k8s.io/controller-expand-secret-name: rook-csi-rbd-provisioner",
+            "expansion without a resizer secret",
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("RBD volume expansion credentials" in issue for issue in issues)
+
+
 def test_missing_smoke_helper_invocation_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     validation = root / "references" / "validation-hardening.md"
