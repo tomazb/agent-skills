@@ -137,7 +137,7 @@ def _write_helm(bin_dir: Path, log: Path, releases: dict) -> None:
 
 
 def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, omit=(), blocking=False, groups=None,
-         releases=None, debug="", node=None):
+         releases=None, debug="", node=None, csi_dependencies=False):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
     for name in ("classify_ceph_ownership.sh", "rook_common.sh"):
@@ -151,7 +151,8 @@ def _run(tmp_path: Path, call: str, objects=None, errors=None, env=None, omit=()
     (bin_dir / "bash").symlink_to(found)
     log = tmp_path / "argv.log"
     world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": groups or GROUPS, "errors": errors or {}}
-    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, debug=debug, node=node, **world)
+    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, debug=debug, node=node,
+                     csi_dependencies=csi_dependencies, **world)
     _write_helm(bin_dir, log, RELEASES if releases is None else releases)
     script = "\n".join(
         [
@@ -469,8 +470,8 @@ def test_operator_deletion_deletes_by_kind_in_its_namespace_only(tmp_path):
 
     assert "rc=0" in result.stdout, result.stderr
     assert mutations == [
-        "-n rook-ceph delete drivers.csi.ceph.io --all --ignore-not-found --wait=false",
         "-n rook-ceph delete clientprofiles.csi.ceph.io --all --ignore-not-found --wait=false",
+        "-n rook-ceph delete drivers.csi.ceph.io --all --ignore-not-found --wait=false",
         "-n rook-ceph delete deployments --all --ignore-not-found --wait=false",
         "-n rook-ceph delete daemonsets --all --ignore-not-found --wait=false",
         "-n rook-ceph delete serviceaccounts --all --ignore-not-found --wait=false",

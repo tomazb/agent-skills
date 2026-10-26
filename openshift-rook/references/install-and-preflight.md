@@ -619,15 +619,35 @@ After creating RBD/CephFS StorageClasses, complete [snapshot setup and verificat
 
 ## Enable The Rook Orchestrator Backend
 
-The dashboard Orchestrator page and `ceph orch` commands stay unavailable until
-the mgr uses the Rook backend. Run this after the CephCluster is Ready and the
-mgr is active:
+This manager integration is optional. The Rook Kubernetes operator does not need
+it. Enable it only when dashboard orchestrator features or `ceph orch` are needed,
+after checking the exact running Ceph release with the read-only compatibility
+gate below. Ceph 20.2.3 and 20.2.4 raise `node_proxy_fullreport` NotImplementedError
+on Prometheus scrapes. Later Tentacle patches remain unverified until an upstream
+fix is confirmed. See [Rook issue 18124](https://github.com/rook/rook/issues/18124).
+A failed gate must prevent both enablement and backend changes:
 
 ```bash
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+(
+set -euo pipefail
+TARGET_CONTEXT="<target-context>"
+ROOK_CEPH_VERSION=$(oc --context "$TARGET_CONTEXT" -n rook-ceph exec deploy/rook-ceph-tools -- ceph version)
+ROOK_CEPH_VERSION=${ROOK_CEPH_VERSION#ceph version }
+ROOK_CEPH_VERSION=${ROOK_CEPH_VERSION%% *}
+python3 scripts/check_rook_mgr_compatibility.py --version "$ROOK_CEPH_VERSION"
+oc --context "$TARGET_CONTEXT" -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
+oc --context "$TARGET_CONTEXT" -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
+oc --context "$TARGET_CONTEXT" -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+)
 ```
+
+On an affected release, keep the `rook` entry in `spec.mgr.modules` disabled.
+Preserve all other entries and leave Prometheus enabled. If this module is already
+causing crashes, follow the authorized-remediation instructions in
+[validation-hardening.md](validation-hardening.md#optional-rook-manager-regression).
+Do not hide the symptom by muting crash health checks, archiving arbitrary crashes,
+or downgrading Ceph. Some dashboard features and `ceph orch` remain unavailable
+while the optional module is disabled.
 
 ## MachineConfig Discipline
 

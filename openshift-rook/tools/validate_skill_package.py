@@ -40,6 +40,12 @@ REQUIRED_FILES = [
     "scripts/check_volume_expansion_secrets.py",
     "scripts/cleanup_smoke_namespace.sh",
     "scripts/select_erase_method.py",
+    "scripts/plan_osd_disk_prep.py",
+    "scripts/check_rook_mgr_compatibility.py",
+    "scripts/check_rook_health.py",
+    "scripts/check_rgw_smoke.py",
+    "scripts/rgw_s3_roundtrip.py",
+    "scripts/rook_audit_expectations.sh",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]

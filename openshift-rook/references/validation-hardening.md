@@ -192,14 +192,59 @@ On OpenShift, make smoke pods compatible with restricted PodSecurity by setting 
   Prometheus in the `rook-ceph` namespace and point `PROMETHEUS_API_HOST` at it.
 - If dashboard history must survive pod restarts, run that internal Prometheus as
   a PVC-backed StatefulSet rather than an ephemeral Deployment.
-- If users rely on the dashboard Orchestrator page or `ceph orch`, enable the
-  Rook backend once per cluster:
+- If users rely on the dashboard Orchestrator page or `ceph orch`, first use
+  `python3 scripts/check_rook_mgr_compatibility.py` with the exact running version.
+  Follow the guarded [optional integration](install-and-preflight.md#enable-the-rook-orchestrator-backend)
+  before `ceph mgr module enable rook` or `ceph orch set backend rook`.
+
+## Optional Rook manager regression
+
+Ceph 20.2.3/20.2.4 can record repeated `node_proxy_fullreport` NotImplementedError
+crashes when the optional Rook manager module is active. This is not an OSD or
+snapshot failure. Verify the crash module, caller, and exception with `ceph crash
+info <crash-id>` before attributing a warning to this regression. The
+[upstream workaround](https://github.com/rook/rook/issues/18124) disables only the
+`rook` manager module; Prometheus continues collecting metrics.
+
+During authorized remediation, preserve other manager module entries and persist
+the disabled state before disabling the running module:
 
 ```bash
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module enable rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch set backend rook
-oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph orch status
+(
+set -euo pipefail
+TARGET_CONTEXT="<target-context>"
+ROOK_MGR_PATCH=$(oc --context "$TARGET_CONTEXT" -n rook-ceph get cephcluster rook-ceph -o json |
+  jq -c '{spec:{mgr:{modules:((.spec.mgr.modules // []) | map(select(.name != "rook")) + [{name:"rook",enabled:false}])}}}')
+oc --context "$TARGET_CONTEXT" -n rook-ceph patch cephcluster rook-ceph --type=merge -p "$ROOK_MGR_PATCH"
+oc --context "$TARGET_CONTEXT" -n rook-ceph exec deploy/rook-ceph-tools -- ceph mgr module disable rook
+)
 ```
+
+Some dashboard/orchestrator functionality is unavailable with this module disabled.
+Archive only individually inspected historical crash IDs matching this regression,
+then observe that no new crashes occur. Do not mute the health check, use a blanket
+`archive-all`, disable Prometheus, or relax authentication. Validation-only work
+reports the finding without applying the patch.
+
+## Sustained post-install acceptance
+
+After all storage and snapshot smoke tests have passed and cleaned up, require a
+bounded observation window. Pod Ready and an immediate `ceph -s` are insufficient:
+manager failures can appear on later Prometheus scrapes.
+
+```bash
+python3 scripts/check_rook_health.py --context "<target-context>" \
+  --namespace rook-ceph --observe-seconds 120 --interval-seconds 15 --timeout-seconds 180
+```
+
+The read-only helper requires `HEALTH_OK`, every OSD up/in, and all PGs active+clean
+for every sample. It fails on access errors, malformed responses, and new crash
+IDs, including records archived during observation. Existing health warnings must
+be resolved or reported as an explicit acceptance exception; the helper never
+silently treats them as a full pass. It never archives records or patches policy.
+Tune the observation interval and timeout for the cluster, without replacing this
+check with a fixed sleep. Keep runtime readiness, snapshot restore evidence, and
+resource cleanup as separate acceptance requirements.
 
 ## Post-Reboot Drift
 

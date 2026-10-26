@@ -259,6 +259,9 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "check_volume_expansion_secrets.py").write_text("", encoding="utf-8")
         (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
+        for helper in ("plan_osd_disk_prep.py", "check_rook_mgr_compatibility.py", "check_rook_health.py",
+                       "check_rgw_smoke.py", "rgw_s3_roundtrip.py", "rook_audit_expectations.sh"):
+            (root / "scripts" / helper).write_text("", encoding="utf-8")
         (root / "tools").mkdir()
         (root / "tools" / "validate_skill_package.py").write_text("", encoding="utf-8")
         (root / "tools" / "validate_skill_package.sh").write_text("", encoding="utf-8")

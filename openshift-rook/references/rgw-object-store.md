@@ -136,7 +136,47 @@ If an OpenShift Route was deployed (see the TLS and Ingress section below), also
 oc -n rook-ceph get route rook-ceph-rgw -o wide
 ```
 
-Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that namespace. Verify:
+### Repeatable object roundtrip
+
+Prefer the shipped helper. It uses a pinned Python-capable image and a standard
+library SigV4 client, so no runtime pip installation or local SDK is needed. It
+signs Content-Type as well as the required host and x-amz headers. Credentials
+come from `envFrom` inside the test pod and are never read by the local helper.
+
+```bash
+python3 scripts/check_rgw_smoke.py --context "<target-context>" \
+  --namespace rook-ceph --operator-namespace rook-ceph \
+  --storage-class rook-ceph-rgw-obc --image quay.io/ceph/ceph:v20.2.4 --allow-http
+```
+
+Use `--allow-http` only for a trusted in-cluster pod-to-gateway path. For HTTPS,
+omit it. Public certificates use the default trust store; an OpenShift serving
+certificate uses `--tls-ca service-ca --ca-configmap <injected-ca-configmap>`;
+a private CA uses `--tls-ca /etc/rgw-ca/ca-bundle.crt --ca-configmap <ca-configmap>`.
+Prepare the CA ConfigMap as described below. TLS verification stays enabled.
+Select a pinned client image compatible with the installed release and restricted
+SCC. Feature gates and server authentication settings are not changed.
+
+The default OBC watch scope is the operator namespace. The helper checks that
+scope and creates uniquely labelled OBC/pod resources there, never deleting the
+namespace. If the operator watches all namespaces, it also accepts an existing
+namespace ending in `-smoke` with `app.kubernetes.io/part-of: storage-smoke`.
+Do not broaden the operator watch scope just to run a test.
+
+Pass requires PUT, GET byte comparison, DELETE, confirmation the object is gone,
+and removal of the owned pod, OBC, ObjectBucket, Secret, and ConfigMap. Cleanup
+also runs after failure; successful cleanup never turns a failed test green.
+UID/ownership changes stop cleanup and report failure. Query failures or timeouts
+are unverified, never clean. The helper preserves the StorageClass and namespace.
+
+### Manual object roundtrip
+
+The manual `rook-rgw-smoke` example below requires the operator's effective
+`ROOK_OBC_WATCH_OPERATOR_NAMESPACE` to be `false`. If it is `true` or unverified,
+use the helper above in the operator namespace. Never run namespace-deletion
+cleanup against the operator namespace.
+
+Create the test claim in `rook-rgw-smoke`, not in an application namespace. Cleanup deletes that disposable namespace. Verify:
 
 - OBC is `Bound`.
 - Secret with S3 credentials is created.

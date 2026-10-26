@@ -27,6 +27,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 
 - **Discovery, install, or prerequisite planning**: start with `references/install-and-preflight.md`.
 - **Dedicated disk preparation for OSDs**: use `references/osd-disk-prep.md`.
+- **Disk reuse versus sanitization**: run `python3 scripts/plan_osd_disk_prep.py` first. Reinstall defaults to BlueStore metadata reset. Only explicit `--intent sanitize` selects a whole-device erase.
 - **RBD block storage pools and StorageClasses**: use `references/rbd-block-pools.md`.
 - **CephFS filesystem pools and StorageClasses**: use `references/cephfs-filesystem.md`.
 - **CephObjectStore (RGW/S3) setup**: use `references/rgw-object-store.md`.
@@ -35,6 +36,9 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 - **Backup, DR, and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node eviction, OSD replacement, operator uninstall, cluster destruction, or leftovers of an interrupted uninstall**: use `references/maintenance-uninstall.md`.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md`.
+- **Post-install acceptance**: after storage/snapshot smoke cleanup, run `scripts/check_rook_health.py` with an explicit context. Require sustained `HEALTH_OK`, active+clean PGs, and no new crash records, including newly archived ones.
+- **RGW smoke testing**: use `scripts/check_rgw_smoke.py`; it respects OBC watch scope, keeps credentials inside the pod, and verifies owned-resource cleanup on success or failure.
+- **Optional manager integration**: gate enablement with `scripts/check_rook_mgr_compatibility.py`. On affected Ceph releases keep only the optional `rook` manager module disabled; preserve Prometheus and genuine crash reporting.
 - **Volume-expansion credentials**: run `scripts/check_volume_expansion_secrets.py`. CSI secret-reference templates are **Not checked**, not invalid; verify the resolved PV `spec.csi.controllerExpandSecretRef` and its Secret before declaring credentials ready. The helper exits 2 for unverified templates, 1 for a failed check, and 0 when all applicable checks pass.
 - **Ceph `AUTH_*` cipher warnings**: use the strict full-record audit (`scripts/check_cephx_key_types.py`) and staged policy checks in `references/validation-hardening.md`. These warnings are not a SNO replica-count issue; audit rotating keys as well as client keys before tightening `allowedCiphers`.
 - **VM storage defaults, CDI StorageProfiles, or `CDIStorageProfilesIncomplete`**: use `references/vm-storage-profiles.md`.
@@ -52,7 +56,7 @@ For ordinary RBD/CephFS snapshots, use `volumeSnapshot`. Use optional group mode
 - Never run or recommend `ceph-volume lvm zap`, `wipefs`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.
 - Before every destructive disk action, require `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the target.
 - `wipefs -af` and `sgdisk --zap-all` do not clear a former BlueStore OSD. Also zero the labels at 1 GiB, 10 GiB, 100 GiB, and 1000 GiB when they fit, and do not reuse the disk until `ceph-volume raw list` prints `{}`. See `references/osd-disk-prep.md`.
-- SSDs and NVMe devices often support a media-key change (cryptographic erase) or a sanitize block erase. Discover `fna` and `sanicap` read-only, then run `scripts/select_erase_method.py` and use the fastest method that erases the whole device. Virtio and generic virtual disks use `blkdiscard --zeroout` when write zeroes is advertised, and writing zeroes when it is not. `fstrim` only trims a mounted filesystem. The BlueStore offset wipe is not that test. See `references/osd-disk-prep.md`.
+- Reinstall disk reuse requires clearing every BlueStore label and partition metadata, then verifying `ceph-volume raw list` is empty. This is not media sanitization. Only when the user requires whole-device sanitization, use `scripts/plan_osd_disk_prep.py --intent sanitize`, which delegates to `scripts/select_erase_method.py`. SSDs/NVMe may support cryptographic erase or sanitize block erase; discover `fna` and `sanicap` read-only. For that sanitization intent, virtio and generic virtual disks use `blkdiscard --zeroout` when write zeroes is advertised, and writing zeroes when it is not. `fstrim` only trims a mounted filesystem. See `references/osd-disk-prep.md`.
 - Use stable `/dev/disk/by-id/*` or `/dev/disk/by-path/*` paths for destructive block-device targeting. Never use `/dev/sdX`, `/dev/nvmeXnY`, or guessed paths.
 - Warn that MachineConfig changes and node drains can reboot nodes. On SNO, that removes API access until the single node returns; wait for MCP recovery and node readiness before continuing.
 - Rook Ceph on SNO requires `mon.count: 1`, `mgr.count: 1`, `allowMultiplePerNode: true` under both `spec.mon` and `spec.mgr`, and reduced replica counts. Do not copy these SNO-only settings into multi-node production plans without explicit direction.
