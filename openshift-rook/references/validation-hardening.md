@@ -36,6 +36,10 @@ python3 scripts/check_volume_expansion_secrets.py
 
 The checker fails when either parameter is missing or the Secret has no `userID` or `userKey`. It prints Secret names, never Secret data. Pass `--context <target-context>` when the current context is not the target cluster.
 
+CSI secret references can use templates such as `${pvc.namespace}`, `${pv.name}`, or PVC annotations. The external-provisioner resolves them during provisioning. The checker does not expand templates or query them as literal Secret names. It reports those classes as **NOT CHECKED**, continues checking literal references on other classes, and exits 2 when only template verification remains. A definite failure still exits 1; exit 0 means all applicable checks passed, including when no expandable Ceph classes exist.
+
+For each templated class, inspect existing PVs with matching `spec.storageClassName` and CSI driver, then validate their resolved `spec.csi.controllerExpandSecretRef` namespace/name and Secret `userID`/`userKey` without printing Secret data. If no matching PV exists or access is insufficient, leave credentials **Not checked**. Never substitute the current namespace, infer a template value, or report the class as verified solely because its parameters are present. See the [CSI template rules](https://kubernetes-csi.github.io/docs/secrets-and-credentials-storage-class.html#controller-expand-volume-resize-secret).
+
 ## Snapshot readiness
 
 Run the read-only [snapshot readiness inventory](backup-restore-dr.md#snapshot-readiness) during every validation, including clusters with no PVCs. Report supported but unconfigured drivers as **Warning**, alongside Ceph runtime health; a healthy cluster can still lack snapshot protection. Record Supported, Configured, Scheduled, and Restore-tested for each StorageClass. Configure missing supported classes during authorized setup/remediation; validation alone does not authorize mutations or production-volume tests.

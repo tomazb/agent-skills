@@ -4,6 +4,7 @@
 The external-resizer authorizes ControllerExpandVolume only with
 controller-expand-secret-name and controller-expand-secret-namespace. It does
 not read the provisioner-secret parameters. Secret data is never printed.
+CSI templates are left unverified, with exit code 2, for a resolved-PV check.
 """
 
 from __future__ import annotations
@@ -69,9 +70,17 @@ def secret_ref(parameters, name):
         raise Failure(name + " allowVolumeExpansion is true without controller-expand secret parameters")
     secret_name = secret_name.strip()
     namespace = namespace.strip()
-    require(DNS_LABEL.fullmatch(namespace) is not None and len(namespace) <= 63
-            and DNS_SUBDOMAIN.fullmatch(secret_name) is not None and len(secret_name) <= 253,
-            name + " has an invalid controller-expand secret reference")
+    templated = False
+    for value, pattern, limit in ((namespace, DNS_LABEL, 63), (secret_name, DNS_SUBDOMAIN, 253)):
+        # The external-provisioner resolves CSI templates at provision time.
+        # Do not treat them as literal names, query them, or claim verification.
+        if "${" in value:
+            templated = True
+            continue
+        require(pattern.fullmatch(value) is not None and len(value) <= limit,
+                name + " has an invalid controller-expand secret reference")
+    if templated:
+        return None
     return namespace, secret_name
 
 
@@ -103,11 +112,16 @@ def check(context, kubeconfig):
     listed = oc(["get", "sc", "-o", "json"], context, kubeconfig)
     require(listed.returncode == 0 and listed.stdout.strip(), "oc get sc failed")
     found = []
+    unchecked = []
     for item in load_classes(listed.stdout):
         name = expandable(item)
         if name is None:
             continue
-        namespace, secret_name = secret_ref(item.get("parameters"), name)
+        reference = secret_ref(item.get("parameters"), name)
+        if reference is None:
+            unchecked.append(name)
+            continue
+        namespace, secret_name = reference
         found.append((name, namespace, secret_name))
     verified = set()
     for _, namespace, secret_name in found:
@@ -118,11 +132,15 @@ def check(context, kubeconfig):
                 "cannot read secret " + namespace + "/" + secret_name)
         require_user_keys(fetched.stdout, namespace, secret_name)
         verified.add((namespace, secret_name))
-    if not found:
+    if not found and not unchecked:
         print("no expandable RBD or CephFS StorageClasses")
-        return
+        return 0
     for name, namespace, secret_name in found:
         print("OK " + name + " secret " + namespace + "/" + secret_name)
+    for name in unchecked:
+        print("NOT CHECKED " + name + " controller-expand secret reference uses CSI templates; "
+              "verify resolved PV controllerExpandSecretRef credentials")
+    return 2 if unchecked else 0
 
 
 def main(argv=None):
@@ -131,11 +149,10 @@ def main(argv=None):
     parser.add_argument("--kubeconfig", default="")
     args = parser.parse_args(argv)
     try:
-        check(args.context, args.kubeconfig)
+        return check(args.context, args.kubeconfig)
     except Failure as error:
         print("STOP: " + str(error), file=sys.stderr)
         return 1
-    return 0
 
 
 if __name__ == "__main__":

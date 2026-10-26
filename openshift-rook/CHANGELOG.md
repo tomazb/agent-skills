@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.19.6
+
+- Report templated CSI expansion-secret references as Not checked with exit code 2 instead of rejecting them as invalid names. Continue verifying literal references and preserve failures for missing parameters, invalid literal fields, and missing Secret keys. Document resolved-PV verification and add command-level regression coverage without exposing Secret data.
+
 ## 1.19.5
 
 - Storage setup does not enable feature gates. Create a VolumeGroupSnapshotClass only when the group-snapshot API is already served.

@@ -91,6 +91,8 @@ volumeBindingMode: Immediate
 
 Keep exactly one default StorageClass unless the user explicitly requests another policy.
 
+CSI template references are **Not checked**, not invalid. The expansion checker exits 2 for them; verify the resolved PV references as described in [validation-hardening.md](validation-hardening.md) before recording a full credential-validation pass.
+
 For VirtualMachine disks on CephFS, configure `StorageProfile` `claimPropertySets` (`Filesystem` mode) — see `references/vm-storage-profiles.md`.
 
 ## Validation

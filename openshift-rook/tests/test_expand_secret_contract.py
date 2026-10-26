@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import yaml
+import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 VALIDATION = ROOT / "references/validation-hardening.md"
@@ -192,3 +193,52 @@ def test_context_is_forwarded_and_optimize_does_not_skip_the_check(tmp_path):
     assert run.returncode != 0
     assert calls == [["--context", "target-context", "get", "sc", "-o", "json"]]
     assert "without controller-expand secret parameters" in run.stderr
+
+
+@pytest.mark.parametrize("reference", [
+    ("${pvc.namespace}", "resizer-key"),
+    ("rook-ceph", "${pv.name}"),
+    ("${pv.name}", "${pvc.name}"),
+    ("team-${pvc.namespace}", "resizer-${pvc.name}"),
+    ("rook-ceph", "${pvc.annotations['example.com/key']}"),
+])
+def test_template_references_are_unverified_without_literal_secret_queries(tmp_path, reference):
+    items = [storage_class("dynamic-rbd", "custom.rbd.csi.ceph.com", secret=reference)]
+    run, calls = execute(tmp_path, items, {}, context="target-context", optimize="2")
+    assert run.returncode == 2, run.stderr
+    assert "NOT CHECKED dynamic-rbd" in run.stdout
+    assert "resolved PV" in run.stdout
+    assert "OK " not in run.stdout and "invalid" not in run.stderr
+    assert calls == [["--context", "target-context", "get", "sc", "-o", "json"]]
+
+
+def test_template_warning_does_not_skip_literal_secret_validation(tmp_path):
+    items = [
+        storage_class("dynamic-rbd", "custom.rbd.csi.ceph.com", secret=("${pvc.namespace}", "key")),
+        storage_class("static-cephfs", "custom.cephfs.csi.ceph.com", secret=("rook-ceph", "resizer-key")),
+    ]
+    run, calls = execute(tmp_path, items, {"rook-ceph/resizer-key": secret_body()})
+    assert run.returncode == 2, run.stderr
+    assert "NOT CHECKED dynamic-rbd" in run.stdout
+    assert "OK static-cephfs secret rook-ceph/resizer-key" in run.stdout
+    assert "DO-NOT-PRINT" not in run.stdout + run.stderr
+    assert calls == [["get", "sc", "-o", "json"],
+                     ["-n", "rook-ceph", "get", "secret", "resizer-key", "-o", "json"]]
+    failed, _ = execute(tmp_path, items, {})
+    assert failed.returncode == 1
+    assert "cannot read secret rook-ceph/resizer-key" in failed.stderr
+
+
+@pytest.mark.parametrize("reference", [
+    ("${pvc.namespace}", ""),
+    ("", "${pv.name}"),
+    ("${pvc.namespace}", "../admin"),
+    ("-invalid", "${pvc.name}"),
+])
+def test_templates_do_not_hide_missing_parameters_or_invalid_literal_fields(tmp_path, reference):
+    items = [storage_class("dynamic-rbd", "custom.rbd.csi.ceph.com", secret=reference)]
+    run, calls = execute(tmp_path, items, {})
+    assert run.returncode == 1
+    assert "without controller-expand" in run.stderr or "invalid controller-expand" in run.stderr
+    assert "OK " not in run.stdout
+    assert calls == [["get", "sc", "-o", "json"]]
