@@ -307,6 +307,16 @@ On OpenShift, make smoke pods compatible with restricted PodSecurity by setting 
 
 ### Object storage
 
+Use `python3 scripts/check_object_smoke.py` for the repeatable RGW/MCG roundtrip.
+It selects the backend from the ODF StorageClass, checks RGW's effective OBC watch
+scope, and verifies NooBaa readiness for MCG. The standard-library SigV4 client
+signs Content-Type and requires no runtime pip installation. Credentials stay in
+the pod via `envFrom`. See the [object runbook](object-mcg-rgw.md#repeatable-object-smoke).
+The helper never deletes a namespace; it removes only UID-bound owned resources
+and verifies ObjectBucket and credential/config cleanup, including after failure.
+Keep the manual disposable-namespace flow below for explicitly prepared clients;
+do not use its namespace cleanup against `openshift-storage`.
+
 The renderer covers block and file only. When object storage is enabled — a `CephObjectStore` (RGW) or the MCG `NooBaa` system exists — exercise it too, or a validation pass silently reports success on a cluster whose object path was never touched. Use the `ObjectBucketClaim` flow in `references/object-mcg-rgw.md`, against either the RGW StorageClass (`ocs-storagecluster-ceph-rgw`) or the MCG one (`openshift-storage.noobaa.io`).
 
 Create the claim in a **dedicated, disposable namespace** — `odf-object-smoke`, matching the `odf-rbd-smoke` / `odf-cephfs-smoke` convention — because the cleanup step deletes that namespace. Never run this in an application namespace.
@@ -365,6 +375,41 @@ bash scripts/cleanup_smoke_namespace.sh --namespace odf-object-smoke --object --
 - ODF integrates Ceph metrics with OpenShift monitoring automatically; use the OpenShift console **Storage → Data Foundation** dashboards and the built-in cluster Prometheus. You do not need to stand up a separate Prometheus for ODF as you would on upstream Rook.
 - If a user relies on `ceph orch` or the Ceph mgr dashboard directly, that dashboard is managed by ODF; prefer the OpenShift console views and the toolbox for CLI checks.
 - Alert on degraded/faulted volumes, failed snapshots, capacity pressure, OSD failures, mon quorum loss, and MDS laggy using the ODF/OpenShift monitoring stack.
+
+### Optional manager compatibility
+
+ODF does not need the upstream Rook manager enablement commands. Upstream Ceph
+20.2.3/20.2.4 can record repeated `node_proxy_fullreport` NotImplementedError
+crashes when that optional module is enabled. Match the installed vendor build,
+module, caller, and exception against vendor errata and
+[upstream issue 18124](https://github.com/rook/rook/issues/18124); the ODF release
+number alone does not prove applicability or absence of a backported fix.
+
+Report this as a real health warning. Use a vendor-supported ODF remediation or
+upgrade through StorageCluster/OLM; do not copy the upstream skill's direct
+CephCluster manager-module patch into ODF. Preserve Prometheus and genuine crash
+reporting. Do not mute the health check, blanket-archive crashes, or downgrade Ceph
+to make validation green.
+
+## Sustained Ceph observation
+
+After storage/snapshot/object smoke tests and cleanup, run a bounded observation:
+
+```bash
+python3 scripts/check_odf_health.py --context "<target-context>" \
+  --observe-seconds 120 --interval-seconds 15 --timeout-seconds 180
+```
+
+Every sample requires `HEALTH_OK`, all OSDs up/in, active+clean PGs, and no new
+crash IDs, including newly archived records. Query failures, malformed responses,
+and timeouts fail closed. The helper never changes policy or archives crashes.
+For MCG-only deployments with no Ceph cluster, this check is N/A; test NooBaa and
+its object data path separately. External Ceph access that cannot be verified is
+Not checked, never a full pass.
+
+This is a Ceph-only check. It does not replace StorageCluster Ready, OLM/operator
+health, the SNO Readiness Gate, platform health, or snapshot restore evidence.
+In particular, a healthy Ceph daemon does not excuse blocked ODF reconciliation.
 
 ## Post-Reboot Drift
 

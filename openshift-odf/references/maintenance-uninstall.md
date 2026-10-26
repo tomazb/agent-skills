@@ -110,6 +110,9 @@ NooBaa itself holds a `noobaa.io/graceful_finalizer` and keeps the `noobaa-ceph-
 ```bash
 # Stop only the reconcilers that recreate CephClients (NOT rook-ceph-operator):
 OC="oc --request-timeout=30s"
+OCS_CLIENT_REPLICAS=$($OC -n openshift-storage get deploy/ocs-client-operator-controller-manager -o jsonpath='{.spec.replicas}')
+CSI_MANAGER_REPLICAS=$($OC -n openshift-storage get deploy/ceph-csi-controller-manager -o jsonpath='{.spec.replicas}')
+: "${OCS_CLIENT_REPLICAS:?record original replicas}" "${CSI_MANAGER_REPLICAS:?record original replicas}"
 $OC -n openshift-storage scale deploy/ocs-client-operator-controller-manager deploy/ceph-csi-controller-manager --replicas=0
 
 $OC -n openshift-storage patch noobaa noobaa --type merge -p '{"metadata":{"finalizers":[]}}'
@@ -145,7 +148,7 @@ remaining="$($OC -n openshift-storage get ${KINDS// /,} --no-headers -o name)" |
 [ -z "$remaining" ] || { printf '%s\n' "$remaining"; echo "dependents did not converge" >&2; exit 1; }
 ```
 
-Once the `CephCluster` is deleted, scale `rook-ceph-operator` back to its original replica count if you changed it, and re-enable the reconcilers you stopped after the namespace teardown completes.
+Once the `CephCluster` is deleted, restore `rook-ceph-operator` if it was changed and restore the recorded `ceph-csi-controller-manager` replicas before step 4 so CSI finalizers can complete. The OCS client reconciler can stay stopped during removal; restore its recorded replicas if uninstall is aborted. Do not wait until after deleting the namespace to restore a controller needed for finalization.
 
 **`StorageClient` status-reporter CrashLoop during teardown.** After the `CephCluster` is gone, the cluster-scoped `StorageClient` (and its CronJob `storageclient-*-status-reporter`) keeps trying to report client state and CrashLoops with `failed to produce client state hash`. That is noise from a half-torn-down cluster, not a separate outage — but leaving the CRs around can also keep the `StorageCluster` finalizer from clearing. Delete them (and the CronJob) as soon as Ceph is gone:
 
@@ -230,7 +233,7 @@ oc debug node/<node> --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
 '
 ```
 
-If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md`. When Identify Controller shows a cryptographic erase or sanitize block erase, run `scripts/select_erase_method.py` before the BlueStore label wipe at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** or a full-disk zero. Destructive confirmation for that exact by-id path is still required. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
+If `ceph-volume raw list` is non-empty, or `lsblk -f` still shows a filesystem, run **Disk Cleanup** in `references/local-storage-disks.md`. Default to reuse metadata cleanup. Only for explicit sanitization intent, use `scripts/plan_osd_disk_prep.py --intent sanitize` instead of the BlueStore label wipe at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** or a full-disk zero. Destructive confirmation for that exact by-id path is still required. Also remove the LSO symlink dir if present: `rm -rf /mnt/local-storage/<storageclass>`.
 
 **If the cleanup pod left host processes in D-state (`sgdisk`, `lvs`) on the OSD disk**, `kill -9` will not free the device and a later OSD prepare hangs forever inside `ceph-volume raw prepare` / `lvs`. Confirm with `oc debug node/<node> -- chroot /host bash -c 'fuser -v /dev/disk/by-id/<id>; ps -eo pid,stat,comm | awk "\$2 ~ /D/"'`.
 
@@ -246,10 +249,62 @@ oc debug node/<node> -- chroot /host bash -c 'ls /dev/rbd[0-9]* 2>/dev/null || e
 
 Delete `csi.ceph.io` objects while the ceph-csi operator is still running. `clientprofiles.csi.ceph.io` carries finalizer `csi.ceph.com/cleanup`. Once the operator CSV is gone, that finalizer never clears and the namespace stays Terminating on the ClientProfile.
 
+Keep the CSI operator running until every CSI CR has finalized. If the SNO
+workaround above temporarily scaled `ceph-csi-controller-manager` to zero, restore
+its recorded replica count and wait for availability now, after the StorageCluster
+and CephCluster are gone. Do not remove its CSV while ClientProfiles remain.
+Delete and wait in dependency order; a bulk comma-separated delete can remove
+CephConnections before ClientProfile cleanup loads them.
+
 ```bash
-oc -n openshift-storage delete \
-  drivers.csi.ceph.io,operatorconfigs.csi.ceph.io,cephconnections.csi.ceph.io,clientprofiles.csi.ceph.io,clientprofilemappings.csi.ceph.io \
-  --all --wait=false --ignore-not-found
+if [ -n "${CSI_MANAGER_REPLICAS+x}" ]; then
+  # Set only by the temporary SNO scale-down above; never guess a replica count.
+  oc -n openshift-storage scale deploy/ceph-csi-controller-manager --replicas="$CSI_MANAGER_REPLICAS"
+  oc -n openshift-storage rollout status deploy/ceph-csi-controller-manager --timeout=120s
+fi
+odf_delete_csi_resources() {
+  local kinds kind left controller deadline need_controller=0
+  bash scripts/classify_rook_ownership.sh >/dev/null || return 1
+  for kind in storageclusters.ocs.openshift.io cephclusters.ceph.rook.io; do
+    left=$(oc get "$kind" -n openshift-storage -o name) || return 1
+    if [ -n "$left" ]; then
+      echo "StorageCluster/CephCluster teardown must finish before manual CSI cleanup" >&2
+      return 1
+    fi
+  done
+  kinds=$(oc api-resources --api-group=csi.ceph.io --namespaced=true --verbs=list -o name) || return 1
+  for kind in $kinds; do
+    case "$kind" in
+      clientprofilemappings.csi.ceph.io|clientprofiles.csi.ceph.io|drivers.csi.ceph.io|cephconnections.csi.ceph.io|operatorconfigs.csi.ceph.io) ;;
+      *) echo "unverified CSI deletion dependency; nothing deleted" >&2; return 1 ;;
+    esac
+    left=$(oc get "$kind" -n openshift-storage -o name) || return 1
+    [ -z "$left" ] || need_controller=1
+  done
+  if [ "$need_controller" -eq 1 ]; then
+    controller=$(oc get deployments -n openshift-storage --field-selector metadata.name=ceph-csi-controller-manager -o json) || return 1
+    if ! jq -e '.items | any(.spec.replicas > 0 and (.status.availableReplicas // 0) > 0)' <<<"$controller" >/dev/null; then
+      echo "CSI controller unavailable; restore its recorded replicas before cleanup" >&2
+      return 1
+    fi
+  fi
+  for kind in clientprofilemappings.csi.ceph.io clientprofiles.csi.ceph.io \
+      drivers.csi.ceph.io cephconnections.csi.ceph.io operatorconfigs.csi.ceph.io; do
+    case $'\n'"$kinds"$'\n' in *$'\n'"$kind"$'\n'*) ;; *) continue ;; esac
+    oc -n openshift-storage delete "$kind" --all --ignore-not-found --wait=false || return 1
+    deadline=$((SECONDS + ${ODF_DELETE_WAIT:-60}))
+    while :; do
+      left=$(oc get "$kind" -n openshift-storage -o name) || return 1
+      [ -n "$left" ] || break
+      if [ "$SECONDS" -ge "$deadline" ]; then
+        echo "CSI finalization incomplete; keep controllers and connections running" >&2
+        return 1
+      fi
+      sleep 2
+    done
+  done
+}
+odf_delete_csi_resources || exit 1
 ```
 
 If those objects are already stuck and the ceph-csi operator is gone, inspect them, then clear the finalizer on the confirmed ones:
@@ -554,6 +609,23 @@ odf_list_shared_instances
 ODF's cluster-scoped `ObjectBucket`s and its bucket claims in consumer namespaces are decided by their StorageClass, not by group: a claim or bucket is ODF's when its class uses an ODF provisioner (`openshift-storage.noobaa.io/obc`, `openshift-storage.ceph.rook.io/bucket`), or when its class is missing and no upstream Rook runs — the same rule as the audit. With upstream Rook present a claim whose class is missing could be Rook's, so it is listed for you to decide, not deleted. Claims of any other bucket provisioner (a running Rook, a standalone MCG) are listed and kept, and so are the `objectbucket.io` CRDs while any remain. The function classifies itself, so it is safe to call on its own. Anything about a running Rook cluster itself — its health, its CRDs, its SCCs — is the `openshift-rook` skill's job; hand it off rather than changing it from this runbook.
 
 ```bash
+odf_shared_olm_guard() {
+  local group="$1" json protected
+  case "$group" in ceph.rook.io|csi.ceph.io|objectbucket.io) ;; *) return 1 ;; esac
+  [ -n "${ODF_NON_ODF_OLM_OWNER_JQ:-}" ] || { echo "shared ownership definitions unavailable" >&2; return 1; }
+  json=$(oc get crd -o json) || return 1
+  if ! protected=$(jq -r --arg g "$group" "$ODF_NON_ODF_OLM_OWNER_JQ"'
+      if (.items | type) != "array" then error("malformed ownership inventory")
+      else .items[] | select(.spec.group == $g) | select(non_odf_olm_owner) | .metadata.name end
+      ' <<<"$json"); then
+    echo "shared CRD ownership unverified; nothing in $group deleted" >&2
+    return 1
+  fi
+  if [ -n "$protected" ]; then
+    echo "non-ODF OLM or incomplete ownership in $group; preserve instances and CRDs for review" >&2
+    return 1
+  fi
+}
 odf_delete_odf_buckets() {
   if [ -z "${ODF_BUCKET_PROVISIONER_RE:-}" ]; then
     echo "ODF patterns not loaded - source scripts/odf_common.sh from the skill directory" >&2
@@ -563,6 +635,7 @@ odf_delete_odf_buckets() {
     echo "ownership could not be classified - no bucket deleted" >&2
     return 1
   fi
+  odf_shared_olm_guard objectbucket.io || return 1
   local classes claims buckets plan owner kind ns name foreign=0
   classes=$(oc get sc -o json) || return 1
   claims=$(oc get objectbucketclaims.objectbucket.io -A -o json) || return 1
@@ -631,6 +704,15 @@ odf_crd_sweep() {
     fi
   fi
   for group in $groups; do
+    # Never sweep another OLM product's shared APIs, even without upstream Rook.
+    # Refuse before instance deletion, not only before deleting the CRDs.
+    case "$group" in
+      ceph.rook.io|csi.ceph.io|objectbucket.io)
+        if ! odf_shared_olm_guard "$group"; then
+          failed=1
+          continue
+        fi ;;
+    esac
     # 1. Discover the group's kinds. Fail closed: a suppressed discovery error
     #    returns an empty list, which would silently skip instance deletion and
     #    then delete the CRDs anyway, with instances still live.
@@ -763,6 +845,25 @@ PRIOR_DEFAULT_STORAGE_CLASS="$(oc get sc -o jsonpath='{range .items[?(@.metadata
 export PRIOR_DEFAULT_STORAGE_CLASS
 bash scripts/post_uninstall_audit.sh
 ```
+
+For a planned reinstall gap, set `EXPECTED_DEFAULT_STORAGE_CLASS=''` on the
+interim audit invocation only. Keep `PRIOR_DEFAULT_STORAGE_CLASS` for restoration,
+and omit the override for final acceptance. Wrong or multiple defaults still fail.
+
+An empty shared ObjectBucket API can remain for another OLM product, such as LVMS.
+The CRD sweep refuses non-ODF OLM ownership before deleting any instances. For an
+explicit retention decision, pass `ODF_RETAINED_OBJECTBUCKET_CRDS_FILE` pointing to
+a private mode-600 JSON inventory with `apiServer` and
+`crds: [{name, uid, ownerPackage, ownerNamespace, ownerCSV}]`. Retention currently
+recognizes only `lvms-operator` and `local-storage-operator`. The recorded owner
+must match live CRD labels, its live Subscription/installed CSV, and a Succeeded
+CSV in the recorded namespace. Unknown owners remain protected from deletion but
+cannot qualify for a clean audit without an explicit policy extension.
+The audit verifies target, exact UIDs, discovery, and empty instance lists.
+ODF-only labels cannot exempt ODF residue. Stale identity or owner versions,
+malformed lists, access failures, and unrelated residue remain failures. Never
+commit this inventory or paste its server address into an issue or PR. Live
+upstream Rook API retention continues to use the existing ownership classifier.
 
 Any `WARN` or `FAIL` line exits nonzero. `OK: ... retained: <reason>` lines name objects that look like ODF's but are in use (upstream Rook, a live RBAC subject, platform-owned group-snapshot CRDs); they do not fail the audit. "Terminating" for a PVC or PV is only how `oc get` prints it — the phase stays `Bound` or `Released` and the deletion shows as `metadata.deletionTimestamp`, which is what the audit tests. Namespaces, pods, PVCs, and PVs are reported only after they have been deleting for more than 10 minutes; younger deletions are in progress, not stuck. Bucket-finalizer ConfigMaps and Secrets are read only in `openshift-storage` and in Terminating namespaces, as names and finalizers; a user who may not list Secrets there gets a `FAIL: could not check ...` line naming the missing permission. Bucket finalizers in **Active** namespaces are not scanned; check them by hand (this reads every Secret, so run it with care): `oc get cm,secret -A -o jsonpath='{range .items[*]}{.kind} {.metadata.namespace}/{.metadata.name} {.metadata.finalizers[*]}{"\n"}{end}' | grep objectbucket.io/finalizer`, and compare each name with a live claim of the same name. The audit assumes ODF ran in the default `openshift-storage` namespace; an ODF install in another namespace is not recognised.
 
@@ -1052,7 +1153,7 @@ Repeat for each stuck namespace (`rook-ceph`, `openshift-local-storage`, smoke/t
 
 ## Disk Cleanup (Data Loss)
 
-An uninstall with `cleanup-policy="delete"` wipes OSD metadata automatically. That job is not an NVMe sanitize or a media-key change. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. When `fna` or `sanicap` shows a cryptographic erase or sanitize block erase, run `scripts/select_erase_method.py` as `references/local-storage-disks.md` describes. Otherwise `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed). Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
+An uninstall with `cleanup-policy="delete"` wipes OSD metadata automatically. That job is not an NVMe sanitize or a media-key change. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. Default to the guarded metadata reset for reuse. Only explicit sanitization intent selects `scripts/plan_osd_disk_prep.py --intent sanitize` with the discovered `fna` / `sanicap` capabilities, as `references/local-storage-disks.md` describes. Otherwise `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed). Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
 
 ```bash
 NODE="<node>"

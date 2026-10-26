@@ -175,6 +175,20 @@ if args[:1] == ["get"]:
         if (ns is None or item["metadata"].get("namespace") == ns)
         and (not selector.startswith("metadata.name=") or item["metadata"]["name"] == selector.split("=", 1)[1])
     ]
+    # Model the controller dependency independently of discovery order. A deleted
+    # ClientProfile finalizes only while its CephConnection still exists.
+    if WORLD["csi_dependencies"] and res.endswith(".csi.ceph.io"):
+        deleted = set()
+        profile_cleaned = False
+        for call in [json.loads(line) for line in open(WORLD["log"])]:
+            if call[:2] != ["-n", ns] or call[2:3] != ["delete"]:
+                continue
+            resource = call[3]
+            if resource == "clientprofiles.csi.ceph.io":
+                profile_cleaned = "cephconnections.csi.ceph.io" not in deleted
+            deleted.add(resource)
+        if res in deleted and (res != "clientprofiles.csi.ceph.io" or profile_cleaned):
+            items = []
     jsonpath = [a for a in args if a.startswith("jsonpath=")]
     if jsonpath:
         if jsonpath != [WORLD["finalizer_jsonpath"]]:
@@ -214,6 +228,7 @@ def write_cluster_oc(
     log: Path | None = None,
     console_plugins: tuple = (),
     blocking_deletes: bool = False,
+    csi_dependencies: bool = False,
     storage_classes: list | None = None,
     empty: tuple = (),
 ) -> None:
@@ -233,6 +248,7 @@ def write_cluster_oc(
         "finalizer_jsonpath": FINALIZER_JSONPATH,
         "server": SHOW_SERVER,
         "blocking_deletes": blocking_deletes,
+        "csi_dependencies": csi_dependencies,
         "empty": list(empty),
     }
     write_oc(bin_dir, _CLUSTER_OC.replace("__WORLD__", repr(json.dumps(world))))

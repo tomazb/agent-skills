@@ -26,7 +26,7 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 ## Routing
 
 - **Discovery, install, or prerequisite planning**: start with `references/install-and-preflight.md`.
-- **Dedicated disk preparation with the Local Storage Operator**: use `references/local-storage-disks.md`.
+- **Dedicated disk preparation with the Local Storage Operator**: use `references/local-storage-disks.md`. Run `scripts/plan_osd_disk_prep.py` first; reuse defaults to metadata reset and only explicit `--intent sanitize` selects a whole-device erase.
 - **ceph-rbd block StorageClasses and pools**: use `references/block-rbd.md`.
 - **cephfs shared filesystem StorageClasses**: use `references/cephfs-filesystem.md`.
 - **Object storage with MCG/NooBaa and RGW**: use `references/object-mcg-rgw.md`.
@@ -34,6 +34,8 @@ Never recommend installing ODF on top of unmanaged Rook, applying upstream Rook 
 - **ODF operator or Ceph version upgrades**: use `references/upgrade.md`.
 - **Backup, DR (Regional/Metro-DR), and snapshot planning**: use `references/backup-restore-dr.md`.
 - **Maintenance, node drain, OSD replacement, operator uninstall, or cluster removal**: use `references/maintenance-uninstall.md`. For leftovers of an interrupted or out-of-order uninstall (PVCs, PVs, or namespaces stuck deleting, a Pod the kubelet cannot release, stale ODF RBAC), or an uninstall next to an upstream Rook cluster, use its **Orphans After An Interrupted Uninstall** section and re-run the ownership gate before the CRD sweep.
+- **Post-install observation**: run `scripts/check_odf_health.py` with an explicit context after storage smoke cleanup. Its Ceph-only pass does not replace StorageCluster/OLM reconciliation checks or the SNO readiness gate.
+- **Object data-path smoke tests**: use `scripts/check_object_smoke.py` for ODF RGW or MCG. It checks the backend and watch scope, keeps credentials in the pod, and verifies scoped cleanup on failure as well as success.
 - **Validation, hardening, post-reboot drift checks, or troubleshooting**: use `references/validation-hardening.md` (on SNO, run the SNO readiness gate before declaring ODF fully ready).
 - **ODF console plugin enablement, Storage → Data Foundation missing, or Console plugin Disabled**: use `references/console-plugin.md`.
 - **CDI/KubeVirt VM storage defaults or StorageProfile configuration**: use `references/vm-storage-profiles.md`.
@@ -53,7 +55,7 @@ For ordinary RBD/CephFS snapshots, use `volumeSnapshot`. Use optional group mode
 
 - Never run or recommend destructive disk-wiping commands such as `ceph-volume lvm zap`, `wipefs -a`, `sgdisk --zap-all`, `dd`, `mkfs`, or any OSD disk partitioning before the user gives explicit destructive confirmation for the exact target disk and intent.
 - Before every destructive disk action, require `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence for the target.
-- SSDs and NVMe devices often support a media-key change (cryptographic erase) or a sanitize block erase. Discover `fna` and `sanicap` read-only, then run `scripts/select_erase_method.py` and use the fastest method that erases the whole device. Virtio and generic virtual disks use `blkdiscard --zeroout` when write zeroes is advertised, and writing zeroes when it is not. `fstrim` only trims a mounted filesystem. The BlueStore offset wipe is not that test. See `references/local-storage-disks.md`. ODF `cleanup-policy=delete` is a metadata wipe, not this controller command.
+- Disk reuse during reinstall needs complete BlueStore-label and partition-metadata cleanup, not automatic media sanitization. ODF `cleanup-policy=delete` performs metadata cleanup; verify the result and use the guarded Disk Cleanup runbook only if residue remains. For explicit whole-device sanitization, `scripts/plan_osd_disk_prep.py --intent sanitize` delegates to `scripts/select_erase_method.py`. SSDs/NVMe may support cryptographic erase or sanitize block erase; discover `fna` and `sanicap` read-only. Virtio and generic virtual disks use `blkdiscard --zeroout` when write zeroes is advertised, otherwise writing zeroes. `fstrim` only trims a mounted filesystem. See `references/local-storage-disks.md`. Never sanitize a disk owned by LSO or another workload before releasing its claims and rechecking identity.
 - Use stable `/dev/disk/by-id/*` or `/dev/disk/by-path/*` paths for destructive block-device targeting. Never use `/dev/sdX`, `/dev/nvmeXnY`, or guessed paths. Prefer the Local Storage Operator `LocalVolumeSet`/`LocalVolumeDiscovery` to select disks by stable device attributes instead of naming raw kernel devices.
 - Install and upgrade ODF only through OLM: an OperatorHub `Subscription` in the `openshift-storage` namespace. Never apply upstream Rook `operator.yaml`/`crds.yaml` on top of an ODF-managed cluster; it corrupts the CSV/operator state.
 - Do not edit the Rook `CephCluster`, `CephBlockPool`, `CephFilesystem`, or `CephObjectStore` CRs directly on an ODF cluster. `ocs-operator` owns and reconciles them from the `StorageCluster` CR; hand edits are reverted and can break reconciliation. Change behavior through `StorageCluster` (and documented overrides) instead.
@@ -91,5 +93,5 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 - Show commands with placeholders for cluster-specific values instead of fabricating node, disk, or version identifiers.
 - Drive changes through the `StorageCluster` CR and OLM Subscription; never hand-edit the ODF-owned Rook CRs except for the version-scoped ODF 4.20 and 4.22 SNO pool, `topologyKey`, and resource workarounds in Core Safety Rules and `references/validated-odf-sno.md`.
 - Include post-change validation and rollback or stop conditions.
-- After a smoke test is recorded, delete its namespace with `scripts/cleanup_smoke_namespace.sh`. A passing check left in place is not finished.
+- After a smoke test is recorded, remove its disposable namespace with `scripts/cleanup_smoke_namespace.sh` when that test created one. The object helper uses an existing namespace and deletes only its owned pod/OBC and verifies bucket/credential cleanup. Never delete `openshift-storage` to clean a smoke test. A passing check left in place is not finished.
 - For production work, include backup, monitoring, and restore validation guidance.

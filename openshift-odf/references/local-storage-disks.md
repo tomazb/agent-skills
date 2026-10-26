@@ -236,9 +236,32 @@ Use `LocalVolumeDiscovery` results and `ls -la /dev/disk/by-id/ | grep <kernel-d
 
 The `StorageCluster` in `references/install-and-preflight.md` then references `storageClassName: localblock` in its `dataPVCTemplate`.
 
+## Choose reuse or sanitization first
+
+For reinstall, the default is complete BlueStore metadata reset. ODF's authorized
+`cleanup-policy=delete` normally performs that cleanup; verify all label copies
+and `ceph-volume raw list` before reuse. It is not a media-sanitization claim.
+Release the ODF/LSO PVC/PV claims, stop cleanup/prepare pods, and recheck the exact
+stable device identity before any manual Disk Cleanup command.
+
+```bash
+python3 scripts/plan_osd_disk_prep.py
+```
+
+Only an explicit requirement to sanitize the whole device selects the following
+secure-erase section. The planner delegates capability selection to the unchanged
+`scripts/select_erase_method.py`; its output does not grant permission to erase:
+
+```bash
+python3 scripts/plan_osd_disk_prep.py --intent sanitize --device-class virtio
+```
+
+Do not benchmark zero writes or run another erase after successful reuse cleanup.
+Keep exact-disk destructive approval and every unused-disk gate in both paths.
+
 ## NVMe and SATA secure erase
 
-SSDs and NVMe devices often destroy previous contents by changing the media encryption key (cryptographic erase) or by a sanitize / secure-erase command. Either one covers the whole device, which the BlueStore offset wipe does not. A device can support one, both, or neither. Discover that read-only, then run `scripts/select_erase_method.py` and use the fastest method that erases the whole device. Run an erase only after explicit destructive confirmation for the exact `/dev/disk/by-id/` path.
+For explicit sanitization intent, SSDs and NVMe devices often destroy previous contents by changing the media encryption key (cryptographic erase) or by a sanitize / secure-erase command. Either one covers the whole device, which the BlueStore offset wipe does not. A device can support one, both, or neither. Discover that read-only, then run `scripts/select_erase_method.py` and use the fastest method that erases the whole device. Run an erase only after explicit destructive confirmation for the exact `/dev/disk/by-id/` path.
 
 This is the controller command `nvme sanitize` / `nvme format`. It is not ODF's `cleanup-policy=delete` job, which only quick-wipes OSD metadata. Delete any released local PV for the disk first, and do not start an erase while an LSO volume or a cleanup pod still holds the device.
 
@@ -281,7 +304,7 @@ From Identify Controller:
 `fna` 0 with `sanicap` 2 means the device cannot change an encryption key and can block-erase. Do not walk the commands below until a bit is set. Pass the identify bits and the estimated seconds from `nvme sanitize-log` to the selector, then run only the method it prints. `4294967295` is not a duration. Time that one command until the erase is proper (`SSTAT` bits 2:0 equal to `1`, or zero reads at the BlueStore offsets and `ceph-volume raw list` printing `{}`). Do not run a second method after that succeeds.
 
 ```bash
-python3 scripts/select_erase_method.py \
+python3 scripts/plan_osd_disk_prep.py --intent sanitize \
   --fna <fna> --sanicap <sanicap> --nn <nn> \
   --crypto-seconds <estimated> \
   --block-seconds <estimated> \
@@ -375,7 +398,7 @@ udevadm info -q property -n "$d" | awk -F= "/^(ID_VENDOR|ID_MODEL|ID_BUS|DEVTYPE
 Pass that class and `write_zeroes_max_bytes`. Target the stable `/dev/disk/by-id/` or `/dev/disk/by-path/` path, never `/dev/vdX` or `/dev/sdX`.
 
 ```bash
-python3 scripts/select_erase_method.py \
+python3 scripts/plan_osd_disk_prep.py --intent sanitize \
   --device-class <virtio|virtual> \
   --write-zeroes-max-bytes <write_zeroes_max_bytes>
 ```

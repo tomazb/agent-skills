@@ -57,6 +57,41 @@ For an RGW-backed bucket instead of MCG, set `storageClassName: ocs-storageclust
 
 ## Validation
 
+### Repeatable object smoke
+
+After the product ownership gate, use the packaged helper with an approved,
+pinned image containing Python 3 and compatible with restricted SCC:
+
+```bash
+python3 scripts/check_object_smoke.py --context "<target-context>" \
+  --namespace openshift-storage --storage-class ocs-storagecluster-ceph-rgw \
+  --image "<approved-python-image>@sha256:<digest>" \
+  --tls-ca service-ca --ca-configmap "<injected-service-ca-configmap>"
+```
+
+For MCG, replace the class with `openshift-storage.noobaa.io`. The helper uses the
+NooBaa provisioner/readiness path, not RGW's namespace watch configuration. For
+RGW it resolves the operator's effective OBC watch scope, including ConfigMap
+references. It never broadens the scope to run a test.
+
+The CA ConfigMap must already contain the correct injected service CA, or use
+`--tls-ca /etc/rgw-ca/ca-bundle.crt --ca-configmap <private-ca-configmap>` for a
+private CA. Publicly trusted endpoints use `--tls-ca public` without a CA mount.
+Verify TLS; do not assume that a service-account projection contains the required
+CA on every platform. Only a trusted in-cluster HTTP path permits `--allow-http`.
+
+Pass requires PUT, GET byte comparison, DELETE, confirmation of object deletion,
+and verified cleanup of the owned pod, OBC, ObjectBucket, Secret, and ConfigMap.
+Credentials remain inside the pod. Failed tests stay failed after successful
+cleanup; UID changes or unverified cleanup stop with an error. No namespace,
+StorageClass, StorageCluster, existing bucket, or supplied CA ConfigMap is deleted.
+
+### Manual provisioning checks
+
+The following checks establish provisioning only; they do not replace the S3
+roundtrip. Their namespace-deletion cleanup applies only to disposable smoke
+namespaces, never the operator namespace used by the helper above.
+
 Check object store health and OBC binding:
 
 ```bash

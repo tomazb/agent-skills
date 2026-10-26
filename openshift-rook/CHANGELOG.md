@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.20.1
+
+- Clarify that namespace cleanup applies to disposable smoke namespaces. Object smoke helpers preserve their existing namespace and delete only owned test resources; never delete the operator namespace for smoke cleanup.
+
 ## 1.20.0
 
 - Fix CSI resource teardown dependency ordering and wait for normal finalization before removing controllers.

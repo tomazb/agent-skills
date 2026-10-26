@@ -68,7 +68,7 @@ def test_runbook_defines_the_tested_functions():
 
 def _run(
     tmp_path: Path, call: str, objects=None, errors=None, env=None, source_common=True, omit=(), blocking=False,
-    tools=("bash", "grep"),
+    tools=("bash", "grep"), groups=None, csi_dependencies=False,
 ):
     skill = tmp_path / "skill"
     (skill / "scripts").mkdir(parents=True)
@@ -83,8 +83,8 @@ def _run(
             pytest.skip(f"{tool} is required for the runbook function tests")
         (bin_dir / tool).symlink_to(found)
     log = tmp_path / "argv.log"
-    world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": GROUPS, "errors": errors or {}}
-    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, **world)
+    world = {"objects": {"crd": CRDS, **(objects or {})}, "groups": groups or GROUPS, "errors": errors or {}}
+    write_cluster_oc(bin_dir, log=log, blocking_deletes=blocking, csi_dependencies=csi_dependencies, **world)
     script = "\n".join(
         [
             ". scripts/odf_common.sh" if source_common else "",
