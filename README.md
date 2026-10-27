@@ -114,6 +114,18 @@ Red Hat cert-manager Operator and Let's Encrypt lifecycle skill for OpenShift/OK
 - Encodes DNS-01 requirements (`*.apps` wildcards and API serving certs must use DNS-01) and keeps `router-certs-default` for rollback
 - Ships discovery helpers (`scripts/discover_tls.py`, `scripts/check_http01_reachability.py`) with unit-tested timeout and JSON-parsing guards
 
+### [OpenShift SNO Registry](openshift-sno-registry/)
+
+Single-replica internal image registry for Single Node OpenShift. Selects a filesystem StorageClass, or hands off to LVM Storage when none exists, and stores the registry on a 100Gi ReadWriteOnce PVC.
+
+**Key capabilities:**
+
+- Pre-creates `image-registry-storage` as a filesystem ReadWriteOnce claim so the OpenShift 4.18 operator does not generate a ReadWriteMany claim that cannot bind on LVM Storage
+- Pins `replicas: 1` and `rolloutStrategy: Recreate` on `configs.imageregistry.operator.openshift.io/cluster`
+- Validates with a local image import and a pull back through the in-cluster registry service
+- Removes the registry by setting `managementState: Removed` while leaving storage management `Managed`, which is what deletes the PVC
+- Ships StorageClass selection and manifest renderers with unit tests
+
 ### [PR Comments](pr-comments/)
 
 Fetch and display GitHub PR review comments for the current branch in the code review UI, enabling inspection of feedback before deciding how to respond.
