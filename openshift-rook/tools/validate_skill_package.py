@@ -441,6 +441,21 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "node leftover inspection failed; do not reuse the disk",
         ],
     )
+    require(
+        "references/install-and-preflight.md",
+        "empty LVM inventory and CSI install probes",
+        [
+            "No valid Ceph lvm devices found",
+            "empty `plugin` value",
+            "quay.io/cephcsi/cephcsi:v3.18.1",
+            "driverSpecDefaults",
+            "kubernetes.io/hostname",
+            "restricted:latest",
+            "status.ceph.health",
+            "5.14.0-427.151.1.el9_4",
+            "cephVersion.image",
+        ],
+    )
     require_order(
         "references/install-and-preflight.md",
         "CSI/operator manifest ordering",
@@ -742,6 +757,16 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "cryptographic erase",
             "sanicap",
             "select_erase_method.py",
+            "ceph_bluestore",
+            "Either result alone is incomplete",
+        ],
+    )
+    require(
+        "references/osd-disk-prep.md",
+        "both OSD reuse probes",
+        [
+            "Either result alone is incomplete",
+            "Has BlueStore device label",
         ],
     )
     require(
@@ -792,6 +817,9 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "mon_max_pg_per_osd",
             "rook-ceph-rgw-obc",
             "Backend: rook",
+            "4.18.56",
+            "v1.21.1",
+            "5.14.0-427.151.1.el9_4",
         ],
     )
     require(

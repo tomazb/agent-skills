@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.20.3
+
+- Treat `ceph-volume lvm list` exit 1 with `No valid Ceph lvm devices found` as an empty LVM inventory, and still run `ceph-volume raw list`. Reuse a disk only when that list is `{}` and `wipefs` / `lsblk` no longer report `ceph_bluestore`.
+- Document the Rook v1.21 empty CSI image-set default, toolbox image pinning, SNO CSI controller replicas, the expected PodSecurity `restricted:latest` warning, and a bootstrap `HEALTH_WARN` that can outlive `phase: Ready`.
+- Record an OpenShift 4.18.56 SNO AES256K probe on kernel `5.14.0-427.151.1.el9_4` with Rook v1.21.1, Ceph v20.2.4, and ceph-csi v3.18.1.
+
 ## 1.20.2
 
 - Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.

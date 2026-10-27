@@ -116,7 +116,9 @@ During uninstall, clear stuck `clientprofiles.csi.ceph.io` finalizers (`csi.ceph
 
 Stale krbd Devices: check `/sys/bus/rbd/devices`, `rbd device unmap` leftovers, and note a wedged `ceph-volume raw list` hang needs a reboot.
 
-BlueStore label cleanup: `wipefs -af` and `sgdisk --zap-all` are not sufficient. Clear labels at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB with `for mult in 0 1 10 100 1000`, or full-disk zero when required. `ceph-volume raw list` must print `{}`. See `references/osd-disk-prep.md`. NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem.
+BlueStore label cleanup: `wipefs -af` and `sgdisk --zap-all` are not sufficient. Clear labels at 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB with `for mult in 0 1 10 100 1000`, or full-disk zero when required. `ceph-volume raw list` must print `{}`. Either result alone is incomplete. OSD prepare skips a `Has BlueStore device label`. See `references/osd-disk-prep.md`.
+
+Empty LVM inventory prints `No valid Ceph lvm devices found`. An empty `plugin` value uses `quay.io/cephcsi/cephcsi:v3.18.1`. Set `driverSpecDefaults` and pin `cephVersion.image`. Controller anti-affinity uses `kubernetes.io/hostname`. PodSecurity `restricted:latest` can warn. Read `status.ceph.health`. OpenShift `4.18.56` on kernel `5.14.0-427.151.1.el9_4` with Rook `v1.21.1` is field evidence. NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem.
 
 If `timeout 30 rbd device unmap` times out, skip sysfs remove* (it can block in D-state where `timeout` cannot help) and escalate to reboot or power-cycle. Re-check `/dev/rbd[0-9]*` and `/sys/bus/rbd/devices/*`. If either path is still populated, reboot or power-cycle before pool deletion or reinstall.
 
@@ -182,7 +184,7 @@ Routing guidance.
 
 ## Core Safety Rules
 
-Safety guidance. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. A former BlueStore OSD also keeps labels at 10 GiB, 100 GiB, and 1000 GiB; do not reuse the disk until `ceph-volume raw list` prints `{}`. SSDs often support cryptographic erase or a sanitize block erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. See `references/osd-disk-prep.md`.
+Safety guidance. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. A former BlueStore OSD also keeps labels at 10 GiB, 100 GiB, and 1000 GiB; do not reuse the disk until `ceph-volume raw list` prints `{}`. Either result alone is incomplete when wipefs or lsblk still reports ceph_bluestore. SSDs often support cryptographic erase or a sanitize block erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. See `references/osd-disk-prep.md`.
 
 ## Required Source Checks
 

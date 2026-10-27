@@ -173,6 +173,19 @@ def test_missing_helper_container_etc_lvm_mount_fails(validator, package_factory
     assert any("helper-container LVM residue audit" in issue for issue in issues)
 
 
+def test_missing_empty_lvm_inventory_guidance_fails(validator, package_factory, reference_text):
+    root = package_factory(reference_content=reference_text())
+    install = root / "references" / "install-and-preflight.md"
+    install.write_text(
+        install.read_text(encoding="utf-8").replace(
+            "No valid Ceph lvm devices found", "lvm list produced no output"
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("empty LVM inventory and CSI install probes" in issue for issue in issues)
+
+
 def test_missing_fail_closed_candidate_disk_inspection_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     install = root / "references" / "install-and-preflight.md"
