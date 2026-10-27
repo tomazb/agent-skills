@@ -12,6 +12,7 @@ This repository stores reusable agent skills. Each skill should live in its own 
 
 ### OpenShift platform
 - `openshift-cert-manager` — Use when installing, configuring, validating, renewing, replacing OpenShift default ingress or API certificates, or troubleshooting cert-manager / Let's Encrypt / ACME HTTP-01 or DNS-01 on OpenShift/OKD.
+- `openshift-sno-registry` — Use when installing, configuring, validating, redeploying, removing, or troubleshooting the OpenShift/OKD internal image registry on Single Node OpenShift, including persistent storage selection and an LVM Storage fallback when no filesystem StorageClass is available.
 - `openshift-cluster-health-check` — Use when assessing OpenShift cluster health, explaining degraded status, troubleshooting control-plane issues, or producing a health report.
 - `openshift-versions` — Use when asking about available OpenShift versions, latest patches, upgrade paths, ROSA/OSD versions, channels, or end-of-life dates.
 
