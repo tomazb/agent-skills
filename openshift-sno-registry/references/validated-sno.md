@@ -20,4 +20,4 @@ An `oc` 4.9 client rejects `oc wait --for=jsonpath`. Poll `.status.phase` instea
 
 Setting `Managed` again before the previous `kube-apiserver` revision finished started another revision. Wait for that operator to stop progressing between deploy, remove, and redeploy.
 
-On the fresh PVC, `du -s /registry` was `0` before the push and `7092` after it. The pull pod used `image-registry.openshift-image-registry.svc:5000/<smoke-namespace>/pushed:9.5` and logged `registry-smoke-ok`.
+On the fresh PVC, `du -s /registry` was `0` before the push and `7092` after it. Those numbers are diagnostics from an empty volume. A later push of the same blob does not have to grow the filesystem; the smoke passes on `registry-push-ok` and a pull of the pushed tag. The pull pod used `image-registry.openshift-image-registry.svc:5000/<smoke-namespace>/pushed:9.5` and logged `registry-smoke-ok`.

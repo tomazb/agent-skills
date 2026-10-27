@@ -44,7 +44,13 @@ Create the claim first, with ReadWriteOnce and `volumeMode: Filesystem`, and set
 
 Confirm `openshift-image-registry` exists. The registry operator creates that namespace; do not invent a replacement.
 
-If `image-registry-storage` already exists, keep it only when it is ReadWriteOnce, Filesystem, at least 100Gi, and uses the selected StorageClass. Any other existing claim is a stop: do not delete it without explicit confirmation.
+A fresh deploy has no `image-registry-storage` claim. Render 100Gi and apply it. A redeploy after `Removed` is the same case, because that removal deletes the claim and the operator does not recreate an explicitly named ReadWriteOnce claim.
+
+If the claim is still there, do not apply the 100Gi manifest over it. `python3 scripts/decide_registry_pvc.py` returns `create`, `reuse`, or `stop`:
+
+- `create`: no claim. Apply the rendered manifest.
+- `reuse`: the claim is `image-registry-storage` in `openshift-image-registry`, `ReadWriteOnce`, filesystem, the selected StorageClass, and at least 100Gi. Skip apply. Leave its data, requested capacity, StorageClass, and access modes as they are. A request larger than 100Gi is reusable; applying 100Gi would try to shrink it.
+- `stop`: the claim exists but is smaller than 100Gi, is a block volume, has another access mode, uses another class, or is in a bad phase. Exit. Do not apply and do not delete the claim.
 
 ```bash
 python3 scripts/render_registry_pvc.py \
@@ -52,10 +58,59 @@ python3 scripts/render_registry_pvc.py \
   --size 100Gi \
   --output /tmp/image-registry-storage.yaml
 
-oc --context="$target_context" apply -f /tmp/image-registry-storage.yaml
+pvc_file=/tmp/image-registry-storage-existing.json
+pvc_err=/tmp/image-registry-storage-existing.err
+if oc --context="$target_context" -n openshift-image-registry get pvc image-registry-storage -o json >"$pvc_file" 2>"$pvc_err"; then
+  if ! decision=$(python3 scripts/decide_registry_pvc.py --storage-class "<storage-class>" --input "$pvc_file"); then
+    printf '%s\n' "$decision" >&2
+    echo "existing image-registry-storage claim is incompatible; not applying and not deleting" >&2
+    exit 1
+  fi
+elif grep -q 'NotFound' "$pvc_err"; then
+  decision=$(python3 scripts/decide_registry_pvc.py --storage-class "<storage-class>" --missing)
+else
+  cat "$pvc_err" >&2
+  echo "could not read image-registry-storage; not applying a claim" >&2
+  exit 1
+fi
+action=$(printf '%s' "$decision" | python3 -c 'import json,sys; print(json.load(sys.stdin)["action"])')
+case "$action" in
+  create)
+    oc --context="$target_context" apply -f /tmp/image-registry-storage.yaml
+    ;;
+  reuse)
+    echo "keeping the existing image-registry-storage claim; not applying a new size"
+    ;;
+  *)
+    printf '%s\n' "$decision" >&2
+    echo "existing image-registry-storage claim is incompatible; not applying and not deleting" >&2
+    exit 1
+    ;;
+esac
 ```
 
-A `Pending` PVC here is expected when the class uses `WaitForFirstConsumer`.
+A `Pending` PVC here is expected when the class uses `WaitForFirstConsumer`. Pending is still reusable when the spec checks pass.
+
+## Confirm the API is quiet
+
+Do this immediately before the Managed patch. That patch rolls `openshift-apiserver` on a single node and can start a `kube-apiserver` revision. Do not patch while `kube-apiserver` is unavailable, degraded, or still progressing. The loop below polls for up to five minutes and exits nonzero when the gate does not pass.
+
+```bash
+ready=0
+for _ in $(seq 1 60); do
+  if oc --context="$target_context" get clusteroperator kube-apiserver -o json > /tmp/kube-apiserver.json \
+    && python3 scripts/check_api_readiness.py --input /tmp/kube-apiserver.json; then
+    ready=1
+    break
+  fi
+  sleep 5
+done
+if [ "$ready" != 1 ]; then
+  echo "kube-apiserver is not ready; not patching the registry" >&2
+  oc --context="$target_context" get clusteroperator kube-apiserver || true
+  exit 1
+fi
+```
 
 ## Patch the registry config
 
@@ -84,6 +139,10 @@ for _ in $(seq 1 60); do
   fi
   sleep 5
 done
+if [ "$generation" != "$observed" ] || [ -z "$deploy_name" ]; then
+  echo "registry did not observe the Managed patch or the deployment was not created" >&2
+  exit 1
+fi
 oc --context="$target_context" -n openshift-image-registry rollout status deploy/image-registry --timeout=10m
 oc --context="$target_context" -n openshift-image-registry get pvc image-registry-storage
 oc --context="$target_context" -n openshift-image-registry get pods -l docker-registry=default

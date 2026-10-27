@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+import yaml
+
 EXPECTED_NAME = "openshift-sno-registry"
 FENCE_RE = re.compile(r"^\s*```")
 FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
@@ -25,6 +27,11 @@ REQUIRED_FILES = [
     "scripts/render_registry_config.py",
     "scripts/render_registry_smoke.py",
     "scripts/render_registry_push.py",
+    "scripts/internal_image.py",
+    "scripts/decide_registry_pvc.py",
+    "scripts/check_api_readiness.py",
+    "scripts/registry_pv_audit.py",
+    "scripts/check_registry_smoke.py",
     "tools/validate_skill_package.py",
     "tools/validate_skill_package.sh",
 ]
@@ -53,6 +60,11 @@ REQUIRED_PHRASES = [
     "python3 scripts/render_registry_config.py",
     "python3 scripts/render_registry_smoke.py",
     "python3 scripts/render_registry_push.py",
+    "python3 scripts/decide_registry_pvc.py",
+    "python3 scripts/check_api_readiness.py",
+    "python3 scripts/registry_pv_audit.py",
+    "python3 scripts/check_registry_smoke.py",
+    "--skopeo-image",
     "--remove-signatures",
 ]
 
@@ -74,24 +86,46 @@ def fence_count_ok(text: str) -> bool:
     return fences % 2 == 0
 
 
-def parse_frontmatter(skill_text: str) -> dict[str, str] | None:
+def parse_frontmatter(skill_text: str) -> dict | None:
     match = FRONTMATTER_RE.match(skill_text)
     if not match:
         return None
-    data: dict[str, str] = {}
-    for line in match.group("body").splitlines():
-        if ":" not in line:
-            continue
-        key, value = line.split(":", 1)
-        data[key.strip()] = value.strip().strip('"')
-    return data
+    try:
+        loaded = yaml.safe_load(match.group("body"))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    if any(not isinstance(key, str) for key in loaded):
+        return None
+    return loaded
+
+
+def frontmatter_issues(skill_text: str) -> list[str]:
+    frontmatter = parse_frontmatter(skill_text)
+    if not isinstance(frontmatter, dict):
+        return ["SKILL.md: missing or invalid YAML frontmatter"]
+    issues: list[str] = []
+    name = frontmatter.get("name")
+    description = frontmatter.get("description")
+    if not isinstance(name, str) or not isinstance(description, str):
+        issues.append("SKILL.md: frontmatter name and description must be strings")
+    if isinstance(name, str) and name != EXPECTED_NAME:
+        issues.append(
+            f"SKILL.md: frontmatter name '{name}' does not match '{EXPECTED_NAME}'"
+        )
+    if isinstance(description, str) and not description.startswith("Use when"):
+        issues.append("SKILL.md: description must start with 'Use when'")
+    if "tools" in frontmatter:
+        issues.append("SKILL.md: unexpected legacy frontmatter field 'tools'")
+    return issues
 
 
 def heading_lines(text: str) -> list[str]:
     headings: list[str] = []
     in_fence = False
     for line in text.splitlines():
-        if line.startswith("```"):
+        if FENCE_RE.match(line):
             in_fence = not in_fence
             continue
         if in_fence:
@@ -120,22 +154,7 @@ def check_frontmatter(root: Path) -> list[str]:
     skill_file = root / "SKILL.md"
     if not skill_file.exists():
         return ["Missing SKILL.md at package root."]
-    frontmatter = parse_frontmatter(read_text(skill_file))
-    if frontmatter is None:
-        return ["SKILL.md: missing or invalid YAML frontmatter"]
-    issues: list[str] = []
-    if frontmatter.get("name") != EXPECTED_NAME:
-        issues.append(
-            f"SKILL.md: frontmatter name '{frontmatter.get('name', '')}' does not match '{EXPECTED_NAME}'"
-        )
-    description = frontmatter.get("description", "")
-    if not description:
-        issues.append("SKILL.md: missing frontmatter description")
-    elif not description.startswith("Use when"):
-        issues.append("SKILL.md: description must start with 'Use when'")
-    if "tools" in (frontmatter or {}):
-        issues.append("SKILL.md: unexpected legacy frontmatter field 'tools'")
-    return issues
+    return frontmatter_issues(read_text(skill_file))
 
 
 def check_required_sections(skill_text: str) -> list[str]:

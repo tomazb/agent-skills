@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-"""Render the in-cluster push used to prove registry PVC writes."""
+"""Render the in-cluster push used to prove registry PVC writes.
+
+The service-account token is read inside the pod and passed to
+``skopeo --dest-creds``. Destination is limited to the OpenShift internal
+registry service in the smoke namespace. The source and skopeo images are
+pull references supplied by the caller and are not credential targets.
+"""
 
 from __future__ import annotations
 
@@ -7,8 +13,9 @@ import argparse
 import re
 from pathlib import Path
 
+from internal_image import ImageReferenceError, parse_internal_image, parse_source_image
+
 DNS1123_LABEL = re.compile(r"^[a-z0-9]([-a-z0-9]*[a-z0-9])?$")
-IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]*$")
 
 PUSH_TEMPLATE = """\
 apiVersion: v1
@@ -43,7 +50,7 @@ spec:
   serviceAccountName: registry-smoke
   containers:
     - name: push
-      image: registry.access.redhat.com/ubi9/skopeo:latest
+      image: {skopeo_image}
       command: ["sh", "-c"]
       args:
         - |
@@ -68,37 +75,42 @@ spec:
 
 
 def parse_namespace(value: str) -> str:
-    if len(value) > 63 or DNS1123_LABEL.fullmatch(value) is None:
-        raise argparse.ArgumentTypeError(f"namespace must be a DNS-1123 label, got {value!r}")
+    if not isinstance(value, str) or len(value) > 63 or DNS1123_LABEL.fullmatch(value) is None:
+        raise argparse.ArgumentTypeError("namespace must be a DNS-1123 label")
     return value
 
 
-def parse_image(value: str) -> str:
-    if IMAGE_RE.fullmatch(value) is None or "://" in value:
-        raise argparse.ArgumentTypeError(
-            f"image must be a registry reference without a scheme, got {value!r}"
-        )
-    return value
-
-
-def render_registry_push(namespace: str, source: str, destination: str) -> str:
+def render_registry_push(namespace: str, source: str, destination: str, skopeo_image: str) -> str:
     parse_namespace(namespace)
-    parse_image(source)
-    parse_image(destination)
-    return PUSH_TEMPLATE.format(namespace=namespace, source=source, destination=destination)
+    source = parse_source_image(source)
+    destination = parse_internal_image(destination, namespace)
+    skopeo_image = parse_source_image(skopeo_image)
+    return PUSH_TEMPLATE.format(
+        namespace=namespace,
+        source=source,
+        destination=destination,
+        skopeo_image=skopeo_image,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--namespace", required=True, type=parse_namespace)
-    parser.add_argument("--source", required=True, type=parse_image)
-    parser.add_argument("--destination", required=True, type=parse_image)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--destination", required=True)
+    parser.add_argument("--skopeo-image", required=True)
     parser.add_argument("--output", required=True, type=Path)
     args = parser.parse_args(argv)
-    args.output.write_text(
-        render_registry_push(args.namespace, args.source, args.destination),
-        encoding="utf-8",
-    )
+    try:
+        body = render_registry_push(
+            args.namespace,
+            args.source,
+            args.destination,
+            args.skopeo_image,
+        )
+    except ImageReferenceError as exc:
+        parser.error(str(exc))
+    args.output.write_text(body, encoding="utf-8")
     print(f"Rendered registry push manifest to {args.output}")
     return 0
 

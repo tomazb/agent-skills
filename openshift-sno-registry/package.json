@@ -1,6 +1,6 @@
 {
   "name": "openshift-sno-registry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Single Node OpenShift internal image registry skill. Selects a filesystem StorageClass, pre-creates a ReadWriteOnce PVC, and runs one Recreate replica of the OpenShift registry.",
   "scripts": {
     "validate": "bash tools/validate_skill_package.sh",

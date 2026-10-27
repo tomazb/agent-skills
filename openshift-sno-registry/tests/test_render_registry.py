@@ -75,21 +75,114 @@ def test_push_manifest_copies_without_signatures_or_a_baked_token():
         "registry-smoke",
         "registry.access.redhat.com/ubi9/ubi-micro:9.5",
         "image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:9.5",
+        "registry.access.redhat.com/ubi9/skopeo:latest",
     )
+    references = [
+        line.strip().rstrip("\\").strip()
+        for line in text.splitlines()
+        if "docker://" in line
+    ]
+    assert references == [
+        "docker://registry.access.redhat.com/ubi9/ubi-micro:9.5",
+        "docker://image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:9.5",
+    ]
     assert "name: system:image-builder" in text
     assert "serviceAccountName: registry-smoke" in text
     assert "--remove-signatures" in text
     assert "service-ca.crt" in text
-    assert "${token}" in text
+    assert '${token}' in text
     assert "echo registry-push-ok" in text
     assert "runAsNonRoot: true" in text
+    assert "set -x" not in text
 
 
-def test_smoke_pod_rejects_a_schemed_image():
+def test_push_api_and_cli_reject_other_destinations(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
+    secret = "super-secret-token-value"
+    rejected = [
+        f"user:{secret}@registry.example.com/registry-smoke/pushed:9.5",
+        f"registry.example.com/registry-smoke/pushed:9.5?token={secret}",
+        f"image-registry.openshift-image-registry.svc.example.com:5000/registry-smoke/pushed:{secret}",
+        f"image-registry.openshift-image-registry.svc:5000.example.com/registry-smoke/pushed:{secret}",
+        f"image-registry.openshift-image-registry.svc:5001/registry-smoke/pushed:{secret}",
+        f"image-registry.openshift-image-registry.svc:5000/other-namespace/pushed:{secret}",
+        f"image-registry.openshift-image-registry.svc:5000/registry-smoke/../pushed:{secret}",
+        f"image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:{secret}@sha256:abcd",
+        f"docker://image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:{secret}",
+        "image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed",
+        "IMAGE-REGISTRY.openshift-image-registry.svc:5000/registry-smoke/pushed:9.5",
+    ]
+    for destination in rejected:
+        with pytest.raises(Exception) as caught:
+            push.render_registry_push(
+                "registry-smoke",
+                "registry.example.com/library/micro:9.5",
+                destination,
+                "registry.example.com/ubi9/skopeo:latest",
+            )
+        assert secret not in str(caught.value)
+
+    output = tmp_path / "push.yaml"
+    with pytest.raises(SystemExit) as exc:
+        push.main(
+            [
+                "--namespace",
+                "registry-smoke",
+                "--source",
+                "registry.example.com/library/micro:9.5",
+                "--destination",
+                f"user:{secret}@registry.example.com/registry-smoke/pushed:9.5",
+                "--skopeo-image",
+                "registry.example.com/ubi9/skopeo:latest",
+                "--output",
+                str(output),
+            ]
+        )
+    assert exc.value.code == 2
+    assert not output.exists()
+    captured = capsys.readouterr()
+    assert secret not in captured.out
+    assert secret not in captured.err
+
+    assert (
+        push.main(
+            [
+                "--namespace",
+                "registry-smoke",
+                "--source",
+                "registry.example.com/library/micro:9.5",
+                "--destination",
+                "image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:9.5",
+                "--skopeo-image",
+                "registry.example.com/ubi9/skopeo:latest",
+                "--output",
+                str(output),
+            ]
+        )
+        == 0
+    )
+    written = output.read_text(encoding="utf-8")
+    assert "docker://image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:9.5" in written
+    assert secret not in written
+    assert secret not in capsys.readouterr().out
+
+
+def test_smoke_pod_rejects_a_schemed_or_external_image():
     with pytest.raises(Exception):
         smoke.render_registry_smoke(
             "registry-smoke",
             "docker://example.com/smoke:9.5",
+            "registry-smoke-ok",
+        )
+    with pytest.raises(Exception):
+        smoke.render_registry_smoke(
+            "registry-smoke",
+            "registry.example.com/smoke:9.5",
+            "registry-smoke-ok",
+        )
+    with pytest.raises(Exception):
+        smoke.render_registry_smoke(
+            "registry-smoke",
+            "image-registry.openshift-image-registry.svc:5000/other-namespace/smoke:9.5",
             "registry-smoke-ok",
         )
 

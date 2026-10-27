@@ -11,6 +11,21 @@ Change only the registry management state. Leave `spec.storage` in place for thi
 ```bash
 target_context="<target-context>"
 
+ready=0
+for _ in $(seq 1 60); do
+  if oc --context="$target_context" get clusteroperator kube-apiserver -o json > /tmp/kube-apiserver.json \
+    && python3 scripts/check_api_readiness.py --input /tmp/kube-apiserver.json; then
+    ready=1
+    break
+  fi
+  sleep 5
+done
+if [ "$ready" != 1 ]; then
+  echo "kube-apiserver is not ready; not removing the registry" >&2
+  oc --context="$target_context" get clusteroperator kube-apiserver || true
+  exit 1
+fi
+
 python3 scripts/render_registry_config.py \
   --management-state Removed \
   --output /tmp/registry-removed.json
@@ -33,7 +48,7 @@ oc --context="$target_context" -n openshift-image-registry get pods -l docker-re
 if oc --context="$target_context" -n openshift-image-registry get pvc image-registry-storage --ignore-not-found -o name | grep -q .; then
   oc --context="$target_context" -n openshift-image-registry wait pvc/image-registry-storage --for=delete --timeout=10m
 fi
-oc --context="$target_context" get pv -o json | python3 -c 'import json,sys; items=json.load(sys.stdin).get("items", []); leftover=[item["metadata"]["name"] for item in items if (item.get("spec") or {}).get("claimRef", {}).get("name")=="image-registry-storage"]; print("\n".join(leftover))'
+oc --context="$target_context" get pv -o json | python3 scripts/registry_pv_audit.py
 ```
 
 Done means all of the following:
@@ -41,7 +56,7 @@ Done means all of the following:
 - `configs.imageregistry.operator.openshift.io/cluster` has `spec.managementState: Removed`.
 - No pod with label `docker-registry=default`.
 - PVC `image-registry-storage` is gone.
-- No PV still bound to that claim.
+- No PV whose `claimRef.name` is `image-registry-storage` and whose `claimRef.namespace` is `openshift-image-registry`. `python3 scripts/registry_pv_audit.py` exits nonzero when one remains. The same claim name in another namespace is not this registry's volume.
 
 The image-registry cluster operator can remain `Available` after a successful removal. `status.conditions` type `Removed` is the config-level signal. The operator, `node-ca` daemon, and image pruner stay in `openshift-image-registry`.
 

@@ -31,11 +31,13 @@ if [ -n "$existing" ]; then
   exit 1
 fi
 oc --context="$target_context" create namespace "$smoke_namespace"
-before=$(oc --context="$target_context" -n openshift-image-registry exec deploy/image-registry -- du -s /registry)
+before=$(oc --context="$target_context" -n openshift-image-registry exec deploy/image-registry -- du -s /registry || true)
+echo "registry filesystem before push (diagnostic): ${before:-unavailable}"
 python3 scripts/render_registry_push.py \
   --namespace "$smoke_namespace" \
   --source registry.access.redhat.com/ubi9/ubi-micro:9.5 \
   --destination "image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:9.5" \
+  --skopeo-image registry.access.redhat.com/ubi9/skopeo:latest \
   --output /tmp/registry-smoke-push.yaml
 oc --context="$target_context" apply -f /tmp/registry-smoke-push.yaml
 wait_smoke_pod() {
@@ -56,18 +58,27 @@ wait_smoke_pod() {
   return 1
 }
 wait_smoke_pod registry-smoke-push
-oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-push | grep registry-push-ok
-after=$(oc --context="$target_context" -n openshift-image-registry exec deploy/image-registry -- du -s /registry)
+oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-push > /tmp/registry-push.log
+grep -q '^registry-push-ok$' /tmp/registry-push.log
+after=$(oc --context="$target_context" -n openshift-image-registry exec deploy/image-registry -- du -s /registry || true)
+echo "registry filesystem after push (diagnostic): ${after:-unavailable}"
 python3 scripts/render_registry_smoke.py \
   --namespace "$smoke_namespace" \
   --image "image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:9.5" \
   --output /tmp/registry-smoke-pod.yaml
 oc --context="$target_context" apply -f /tmp/registry-smoke-pod.yaml
 wait_smoke_pod registry-smoke-pull
-oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-pull
+oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-pull > /tmp/registry-pull.log
+python3 scripts/check_registry_smoke.py \
+  --push-log /tmp/registry-push.log \
+  --pull-log /tmp/registry-pull.log
 oc --context="$target_context" delete namespace "$smoke_namespace" --wait=true
 ```
 
-The push log must contain `registry-push-ok`. Compare the first field of `du -s /registry` as integers; `after` must be greater than `before`. A fresh PVC can report `0`. The pull log must be `registry-smoke-ok`, and the pull pod image must be the `pushed:9.5` tag. Delete only the smoke namespace. Leave `image-registry-storage` in place. Redact any credential that a failed `skopeo` log includes before saving the output.
+The push log must contain `registry-push-ok`. The pull log must be `registry-smoke-ok`, and the pull pod image must be the `pushed:9.5` tag that was just pushed. `du -s /registry` is a diagnostic, not a pass condition. A repeated push of the same blob can leave that number unchanged because the registry stores content-addressed blobs. An `oc import-image` can also leave the filesystem unchanged, for a different reason: it records metadata and does not upload blobs, even with `--reference-policy=local`. `registry-push-ok` from this `skopeo copy` is the upload signal. A later pull of that same tag is the availability signal.
+
+The source image and `--skopeo-image` above are public catalog images passed in as arguments. The destination is only `image-registry.openshift-image-registry.svc:5000` in the smoke namespace. The renderer refuses any other destination before it writes a manifest, and it does not put a token in the manifest or in its errors.
+
+Delete only the smoke namespace. Leave `image-registry-storage` in place. Redact any credential that a failed `skopeo` log includes before saving the output.
 
 A push or pull failure after the PVC is `Bound` is a registry failure, not a storage-class failure. Inspect the image-registry pod logs before changing storage.

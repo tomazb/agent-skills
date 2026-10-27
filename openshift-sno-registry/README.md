@@ -1,6 +1,6 @@
 # OpenShift SNO Internal Registry
 
-Current version: **0.1.0**
+Current version: **0.1.1**
 
 Lifecycle skill for the OpenShift/OKD internal image registry on Single Node OpenShift. It selects a filesystem StorageClass, pre-creates a 100Gi ReadWriteOnce PVC, and runs one `Recreate` replica. When no filesystem class exists, it hands off to `openshift-lvm-storage`.
 
