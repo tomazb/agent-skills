@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Decide whether to create, keep, or refuse the registry PVC.
 
-``create`` means no claim exists. ``reuse`` means the existing claim is
-compatible and must not be replaced or shrunk. ``stop`` means the claim is
-present but unsafe to adopt; the caller must not apply and must not delete it.
+``create`` means the caller established that no claim exists. ``reuse`` means
+the existing claim is compatible and must not be replaced or shrunk. ``stop``
+means the document is missing, malformed, or unsafe to adopt. The caller must
+not apply and must not delete it.
 """
 
 from __future__ import annotations
@@ -55,9 +56,9 @@ def parse_quantity(value: object) -> int | None:
 def decide_registry_pvc(pvc: dict | None, storage_class: str) -> dict[str, str]:
     if not isinstance(storage_class, str) or not storage_class:
         raise ValueError("storage class is required")
-    if not pvc:
+    if pvc is None:
         return {"action": "create", "reason": "no claim exists"}
-    if not isinstance(pvc, dict):
+    if not isinstance(pvc, dict) or pvc == {}:
         return {"action": "stop", "reason": "claim document is not an object"}
 
     metadata = pvc.get("metadata")
@@ -109,13 +110,17 @@ def main(argv: list[str] | None = None) -> int:
     source.add_argument("--missing", action="store_true")
     args = parser.parse_args(argv)
 
-    pvc = None
-    if args.input is not None:
-        loaded = json.loads(args.input.read_text(encoding="utf-8"))
-        if not isinstance(loaded, dict):
-            print(json.dumps({"action": "stop", "reason": "claim document is not an object"}))
+    if args.missing:
+        pvc = None
+    else:
+        try:
+            loaded = json.loads(args.input.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            loaded = None
+        if not isinstance(loaded, dict) or loaded == {}:
+            print(json.dumps({"action": "stop", "reason": "claim document is not an object"}, sort_keys=True))
             return 1
-        pvc = loaded or None
+        pvc = loaded
 
     decision = decide_registry_pvc(pvc, args.storage_class)
     print(json.dumps(decision, sort_keys=True))

@@ -50,7 +50,7 @@ If the claim is still there, do not apply the 100Gi manifest over it. `python3 s
 
 - `create`: no claim. Apply the rendered manifest.
 - `reuse`: the claim is `image-registry-storage` in `openshift-image-registry`, `ReadWriteOnce`, filesystem, the selected StorageClass, and at least 100Gi. Skip apply. Leave its data, requested capacity, StorageClass, and access modes as they are. A request larger than 100Gi is reusable; applying 100Gi would try to shrink it.
-- `stop`: the claim exists but is smaller than 100Gi, is already being deleted, is a block volume, has another access mode, uses another class, or is in a bad phase. Exit. Do not apply and do not delete the claim.
+- `stop`: the claim exists but is smaller than 100Gi, is already being deleted, is a block volume, has another access mode, uses another class, or is in a bad phase. An empty object, JSON `null`, a list, or any other document that is not a PVC is also `stop`. The command exits nonzero. Do not apply and do not delete the claim.
 
 ```bash
 python3 scripts/render_registry_pvc.py \

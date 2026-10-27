@@ -111,8 +111,35 @@ def test_decide_cli_exits_nonzero_for_a_smaller_claim(tmp_path: Path, capsys: py
     payload = json.loads(capsys.readouterr().out)
     assert payload["action"] == "stop"
 
+
+def test_decide_cli_creates_only_for_explicit_absence_and_stops_on_bad_documents(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+):
     assert decide_registry_pvc.main(["--storage-class", "lvms-vg1", "--missing"]) == 0
     assert json.loads(capsys.readouterr().out)["action"] == "create"
+
+    for storage, expected in (("100Gi", "reuse"), ("200Gi", "reuse")):
+        path = tmp_path / f"{storage}.json"
+        path.write_text(json.dumps(claim(storage)), encoding="utf-8")
+        assert decide_registry_pvc.main(["--storage-class", "lvms-vg1", "--input", str(path)]) == 0
+        assert json.loads(capsys.readouterr().out)["action"] == expected
+
+    invalid = {
+        "empty.json": "{}",
+        "null.json": "null",
+        "list.json": "[]",
+        "metadata.json": json.dumps({"metadata": {}}),
+        "incomplete.json": json.dumps({"kind": "PersistentVolumeClaim"}),
+    }
+    for name, body in invalid.items():
+        path = tmp_path / name
+        path.write_text(body, encoding="utf-8")
+        assert decide_registry_pvc.main(["--storage-class", "lvms-vg1", "--input", str(path)]) == 1
+        decision = json.loads(capsys.readouterr().out)
+        assert decision["action"] == "stop"
+
+    assert decide_registry_pvc.decide_registry_pvc({}, "lvms-vg1")["action"] == "stop"
+    assert decide_registry_pvc.decide_registry_pvc(None, "lvms-vg1")["action"] == "create"
 
 
 def operator(available: str, progressing: str, degraded: str, message: str = "") -> dict:

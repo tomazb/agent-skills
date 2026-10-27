@@ -9,6 +9,7 @@
 - Match leftover registry PVs on both claim name and claim namespace.
 - Parse skill frontmatter with YAML, and ignore Markdown headings inside fences indented by up to three spaces.
 - Stop when the registry claim is already being deleted.
+- Treat an empty or malformed PVC document as a refusal. Create a claim only after an explicit NotFound.
 - Leave the smoke namespace in place when the push or pull check fails.
 
 ## 0.1.0
