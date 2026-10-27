@@ -90,6 +90,14 @@ def test_malformed_claim_stops_instead_of_raising():
     assert decide_registry_pvc.decide_registry_pvc({"metadata": "nope"}, "lvms-vg1")["action"] == "stop"
 
 
+def test_deleting_claim_is_not_reused():
+    deleting = claim("200Gi")
+    deleting["metadata"]["deletionTimestamp"] = "2026-10-27T00:00:00Z"
+    decision = decide_registry_pvc.decide_registry_pvc(deleting, "lvms-vg1")
+    assert decision["action"] == "stop"
+    assert decision["reason"] == "claim is being deleted"
+
+
 def test_claim_identity_must_match_name_and_namespace():
     renamed = claim("200Gi")
     renamed["metadata"]["namespace"] = "other-namespace"

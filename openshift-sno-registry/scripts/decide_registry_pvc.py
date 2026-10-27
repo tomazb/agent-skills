@@ -63,6 +63,8 @@ def decide_registry_pvc(pvc: dict | None, storage_class: str) -> dict[str, str]:
     metadata = pvc.get("metadata")
     if not isinstance(metadata, dict):
         return {"action": "stop", "reason": "claim document is not an object"}
+    if metadata.get("deletionTimestamp"):
+        return {"action": "stop", "reason": "claim is being deleted"}
     if metadata.get("name") != CLAIM_NAME or metadata.get("namespace") != CLAIM_NAMESPACE:
         return {
             "action": "stop",

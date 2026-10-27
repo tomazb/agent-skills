@@ -26,6 +26,11 @@ def test_indented_fence_hides_an_unindented_heading():
     assert any("## Routing" in issue for issue in issues)
 
 
+def test_four_space_backticks_do_not_hide_a_heading():
+    text = "    ```\n## Routing\n    ```\n"
+    assert "## Routing" in validator.heading_lines(text)
+
+
 def test_frontmatter_rejects_invalid_yaml_and_non_strings():
     invalid = "---\nname: openshift-sno-registry\ndescription: Use when: deploying\n---\n"
     assert validator.parse_frontmatter(invalid) is None

@@ -57,21 +57,21 @@ wait_smoke_pod() {
   echo "timed out waiting for ${name} phase=${phase}" >&2
   return 1
 }
-wait_smoke_pod registry-smoke-push
-oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-push > /tmp/registry-push.log
-grep -q '^registry-push-ok$' /tmp/registry-push.log
+wait_smoke_pod registry-smoke-push || exit 1
+oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-push > /tmp/registry-push.log || exit 1
+grep -q '^registry-push-ok$' /tmp/registry-push.log || { echo "push marker missing" >&2; exit 1; }
 after=$(oc --context="$target_context" -n openshift-image-registry exec deploy/image-registry -- du -s /registry || true)
 echo "registry filesystem after push (diagnostic): ${after:-unavailable}"
 python3 scripts/render_registry_smoke.py \
   --namespace "$smoke_namespace" \
   --image "image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:9.5" \
   --output /tmp/registry-smoke-pod.yaml
-oc --context="$target_context" apply -f /tmp/registry-smoke-pod.yaml
-wait_smoke_pod registry-smoke-pull
-oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-pull > /tmp/registry-pull.log
+oc --context="$target_context" apply -f /tmp/registry-smoke-pod.yaml || exit 1
+wait_smoke_pod registry-smoke-pull || exit 1
+oc --context="$target_context" -n "$smoke_namespace" logs pod/registry-smoke-pull > /tmp/registry-pull.log || exit 1
 python3 scripts/check_registry_smoke.py \
   --push-log /tmp/registry-push.log \
-  --pull-log /tmp/registry-pull.log
+  --pull-log /tmp/registry-pull.log || exit 1
 oc --context="$target_context" delete namespace "$smoke_namespace" --wait=true
 ```
 
@@ -79,6 +79,6 @@ The push log must contain `registry-push-ok`. The pull log must be `registry-smo
 
 The source image and `--skopeo-image` above are public catalog images passed in as arguments. The destination is only `image-registry.openshift-image-registry.svc:5000` in the smoke namespace. The renderer refuses any other destination before it writes a manifest, and it does not put a token in the manifest or in its errors.
 
-Delete only the smoke namespace. Leave `image-registry-storage` in place. Redact any credential that a failed `skopeo` log includes before saving the output.
+After the checker passes, delete only the smoke namespace. A failed wait, marker check, or checker exits before that delete and leaves the namespace in place. Leave `image-registry-storage` in place. Redact any credential that a failed `skopeo` log includes before saving the output.
 
 A push or pull failure after the PVC is `Bound` is a registry failure, not a storage-class failure. Inspect the image-registry pod logs before changing storage.

@@ -19,7 +19,7 @@ Use this skill to run one replica of the OpenShift internal image registry on a 
 - Confirm the `oc` context before creating the PVC or patching the registry config.
 - Apply this single-replica ReadWriteOnce layout only after confirming the cluster has one node, unless the user explicitly asks for that layout on a larger cluster.
 - Pre-create `image-registry-storage` as a filesystem ReadWriteOnce PVC of at least 100Gi. On OpenShift 4.18 a blank `spec.storage.pvc.claim` makes the operator create a ReadWriteMany 100Gi claim, which does not bind on LVM Storage. When a compatible claim already exists, keep it, including one larger than 100Gi. Do not apply a smaller request over it.
-- Wait until `kube-apiserver` is Available and not Progressing before the `Managed` patch. Do not patch when that check fails.
+- Require `kube-apiserver` to be Available, not Progressing, and not Degraded before a `Managed` or `Removed` patch. Do not patch when that check fails.
 - Set `rolloutStrategy: Recreate` and `replicas: 1` in the same change that points the registry at that PVC. ReadWriteOnce with `RollingUpdate` fails operator validation.
 - Set `spec.storage.managementState: Managed` so a later `Removed` deletes the PVC. Undeploy changes only `spec.managementState`. Clearing storage in that patch skips PVC deletion.
 - `Removed` deletes registry contents when storage is Managed and the StorageClass reclaim policy is Delete. Require explicit confirmation before undeploy.

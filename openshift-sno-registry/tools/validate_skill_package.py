@@ -8,7 +8,7 @@ from pathlib import Path
 import yaml
 
 EXPECTED_NAME = "openshift-sno-registry"
-FENCE_RE = re.compile(r"^\s*```")
+FENCE_RE = re.compile(r"^[ ]{0,3}```")
 FRONTMATTER_RE = re.compile(r"\A---\n(?P<body>.*?)\n---\n", re.DOTALL)
 README_VERSION_RE = re.compile(r"Current version:\s*\*\*(?P<version>[^*]+)\*\*")
 

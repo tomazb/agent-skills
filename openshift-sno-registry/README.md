@@ -12,7 +12,7 @@ The skill routes work through focused reference runbooks:
 
 ## Validation
 
-The package self-check ships with the skill:
+The package self-check ships with the skill. It imports PyYAML, which the repository installs from `requirements-dev.txt`.
 
 ```bash
 bash tools/validate_skill_package.sh

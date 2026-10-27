@@ -2,12 +2,14 @@
 
 ## 0.1.1
 
-- Send registry push credentials only to `image-registry.openshift-image-registry.svc:5000` in the smoke namespace. Take the source and skopeo images as arguments, and keep tokens out of manifests and validator errors.
+- Send registry push credentials only to the internal image-registry service in the smoke namespace. Take the source and skopeo images as arguments, and keep tokens out of manifests and validator errors.
 - Keep an existing compatible registry PVC, including one larger than 100Gi, and refuse to apply a smaller claim over it.
 - Judge the smoke by `registry-push-ok` and the pull-back marker. Filesystem growth is a diagnostic, so a repeated push of the same blob can pass.
 - Wait until `kube-apiserver` is available and not progressing before setting the registry to `Managed` or `Removed`.
 - Match leftover registry PVs on both claim name and claim namespace.
-- Parse skill frontmatter with YAML, and ignore Markdown headings inside indented fences.
+- Parse skill frontmatter with YAML, and ignore Markdown headings inside fences indented by up to three spaces.
+- Stop when the registry claim is already being deleted.
+- Leave the smoke namespace in place when the push or pull check fails.
 
 ## 0.1.0
 
