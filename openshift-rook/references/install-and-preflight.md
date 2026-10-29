@@ -139,7 +139,7 @@ oc -n rook-ceph rollout restart deploy/ceph-csi-controller-manager
 oc -n rook-ceph rollout status deploy/ceph-csi-controller-manager --timeout=3m
 ```
 
-After each enabled plugin Deployment exists (RBD and CephFS from the shipped `Driver` CRs; NFS only when NFS is enabled), each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` and the RBD plugin reports Ceph `v20.2.4` or newer:
+After each enabled plugin Deployment exists (RBD and CephFS from the shipped `Driver` CRs; NFS only when NFS is enabled), each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` or newer and the RBD plugin reports Ceph `v20.2.4` or newer:
 
 ```bash
 oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
