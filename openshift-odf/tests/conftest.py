@@ -220,7 +220,7 @@ Use `references/vm-storage-profiles.md` for CDI/KubeVirt VM storage defaults.
 
 ## Core Safety Rules
 
-Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. SSDs often support cryptographic erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. With Ceph `v19.2.1` or later, `ceph-bluestore-tool zap-device` zeros every BlueStore label copy. See `references/local-storage-disks.md`.
+Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. SSDs often support cryptographic erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. For disk reuse, require explicit destructive confirmation for the exact stable `/dev/disk/by-id/*` target. With Ceph `v19.2.1` or later, run `ceph-bluestore-tool zap-device`, then `wipefs -af` and `sgdisk --zap-all`; with `v19.2.0` or earlier, use the offset wipe before the same signature cleanup. Verify `ceph-volume raw list` returns `{}`. Reserve full-disk zeroing for explicit sanitization intent. See `references/local-storage-disks.md`.
 
 ## Required Source Checks
 

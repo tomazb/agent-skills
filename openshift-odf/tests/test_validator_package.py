@@ -657,6 +657,20 @@ def test_missing_zap_device_guidance_fails(validator, package_factory, rel, need
             "partition cleanup removed",
             "older-version offset cleanup and verification",
         ),
+        (
+            "references/cluster-expand-shrink.md",
+            "Replacing a Failed Disk",
+            "v19.2.0",
+            "older version",
+            "version-specific disk replacement cleanup",
+        ),
+        (
+            "references/maintenance-uninstall.md",
+            "Disk Cleanup (Data Loss)",
+            "sanitization intent",
+            "general cleanup",
+            "version-specific uninstall disk cleanup",
+        ),
     ],
 )
 def test_missing_blue_store_cleanup_safety_relationship_fails(
@@ -665,10 +679,14 @@ def test_missing_blue_store_cleanup_safety_relationship_fails(
     root = package_factory()
     path = root / rel
     text = path.read_text(encoding="utf-8")
-    start = text.index(f"### {heading}")
-    end = text.find("\n### ", start + 1)
+    heading_line = next(
+        line for line in text.splitlines(keepends=True)
+        if line.lstrip("# ").strip() == heading
+    )
+    start = text.index(heading_line)
+    end = text.find("\n## ", start + len(heading_line))
     if end < 0:
-        end = text.find("\n## ", start + 1)
+        end = text.find("\n# ", start + len(heading_line))
     section = text[start:end]
     assert old in section
     section = section.replace(old, new, 1)
