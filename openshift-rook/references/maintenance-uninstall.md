@@ -775,7 +775,10 @@ Destroying the Ceph cluster destroys all data. Require explicit destructive conf
 
 Set `cleanupPolicy` on the CephCluster **before** deleting it. With the required
 confirmation string, Rook runs a job that zaps each OSD disk and removes
-`dataDirHostPath` automatically, so you do not have to wipe disks by hand. This
+`dataDirHostPath` automatically, so you do not have to wipe disks by hand. With
+Ceph `v19.2.1` or later, that zap runs `ceph-bluestore-tool zap-device`, which
+zeros every BlueStore label copy. On older Ceph it can leave the copies at 1 GiB
+and above, so check the disk with `ceph-volume raw list` before reuse. This
 is irreversible — only apply it when you intend to erase all data. The function
 needs `ROOK_CONFIRM_DESTROY_DATA=yes-really-destroy-data` and a fresh "upstream Rook
 only, in: `$ROOK_NAMESPACE`" verdict, and patches only the `CephCluster`s there:

@@ -212,7 +212,18 @@ Clean a disk only after explicit destructive confirmation for the exact `/dev/di
 
 `wipefs -af` and `sgdisk --zap-all` are not sufficient for a disk that previously held a Ceph BlueStore OSD. BlueStore replicates its block-device label at offsets **0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB** (whichever fit on the device). A wipe of the start of the disk leaves the 10 GiB and 100 GiB copies intact. `lsblk -f` and `wipefs -n` then look clean while OSD prepare fails with `osd.0 belonging to a different ceph cluster "<old-fsid>"`.
 
-When the secure-erase section above does not apply, prefer either:
+When the `cephVersion.image` you plan to deploy is Ceph `v19.2.1` or later, clear the labels with Ceph's own tool. `ceph-bluestore-tool zap-device` zeros the label block at every location that fits: 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB. It does not write past the end of a smaller disk. RHCOS does not ship the tool, so run it from that image. It needs the same exact-disk confirmation as any other wipe, and it refuses to run without `--yes-i-really-really-mean-it`. It clears only those label blocks, not partition tables or other signatures. Ceph `v19.2.0` and earlier have no `zap-device`; use the label wipe below. From `v19.2.1`, `ceph-volume lvm zap` runs `zap-device` too, so Rook's `cleanupPolicy` job clears every label copy.
+
+```bash
+ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v20.2.4"   # the cephVersion.image you plan to deploy; v19.2.1 or later
+oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
+  set -eu
+  mount --rbind /host/dev /dev
+  ceph-bluestore-tool zap-device --dev '"${DISK}"' --yes-i-really-really-mean-it
+'
+```
+
+Without `zap-device`, or when the secure-erase section above does not apply, prefer either:
 
 1. **Targeted label wipe** (fast; enough when you only need to clear BlueStore ownership), or
 2. **full-disk zero** of the whole device (slow; when policy requires total erasure).

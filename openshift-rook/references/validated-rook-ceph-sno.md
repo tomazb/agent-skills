@@ -95,3 +95,15 @@ Observed on one SNO node. The node also had a boot disk and an LVMS disk. Record
 - `status.phase` was `Ready` while `status.ceph.health` was still `HEALTH_WARN`. `ceph health detail` was `HEALTH_OK`, and a two-minute observation stayed `HEALTH_OK` with no new crash records.
 - An RBD snapshot restore matched the source. The optional Rook manager module stayed disabled.
 - `oc apply` of `operator-openshift.yaml` warned about PodSecurity `restricted:latest`. The `rook-ceph` SCC admitted the operator pod.
+
+## OpenShift 4.22.18 SNO Redeploy
+
+Observed on one SNO node with a boot disk, a 500 GiB virtio OSD disk, and an LVMS disk. Record versions and topology only.
+
+- OpenShift 4.22.18, kernel `5.14.0-687.55.1.el9_8`. Rook v1.20.5 with Ceph v20.2.4 was removed with `cleanupPolicy`, then Rook v1.21.1 with Ceph v20.2.4 was installed on the same disk.
+- On the live raw-mode OSD, `ceph-volume lvm list` exited 1 with `No valid Ceph lvm devices found`, `ceph-volume raw list` named `osd.0`, and `lsblk` and `wipefs` reported `ceph_bluestore`. The preflight audit refused the disk.
+- Rook's cleanup job ran `ceph-volume lvm zap`, which ran `ceph-bluestore-tool zap-device` and zeroed the first 10 MiB. Direct reads at 0, 1 GiB, 10 GiB, and 100 GiB then found no BlueStore label. The audit accepted the disk, and the v1.21.1 OSD prepare used it.
+- `ceph-bluestore-tool zap-device` from `quay.io/ceph/ceph:v20.2.4` zeroed label markers at all five locations of a sparse 1001 GiB file and the four that fit in a 500 GiB file, without growing either. Without `--yes-i-really-really-mean-it` it refused and changed nothing.
+- The RBD and CephFS plugin Deployments existed before the `CephCluster`, running the built-in `quay.io/cephcsi/cephcsi:v3.18.1` with Ceph `20.2.4`. `driverSpecDefaults.controllerPlugin.replicas` was 1 and no controller replica stayed Pending.
+- `status.phase` reached `Ready` with `MON_DISK_LOW`: the mon store shares the node's `/var`, which was 70% used. Removing unused Ceph images restored `HEALTH_OK`.
+- New NFS installs needed a `CephBlockPool` for the `.nfs` pool. The AES256K probe wrote `ok` through `/dev/rbd0`. RBD, CephFS, and NFS snapshot restores and an RGW S3 roundtrip passed, and a two-minute observation stayed `HEALTH_OK` with no new crash records.

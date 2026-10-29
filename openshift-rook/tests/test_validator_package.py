@@ -239,6 +239,23 @@ def test_missing_bluestore_label_cleanup_fails(validator, package_factory, rel, 
     assert any("BlueStore label cleanup" in issue and rel in issue for issue in issues)
 
 
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        ("references/osd-disk-prep.md", "--yes-i-really-really-mean-it"),
+        ("references/osd-disk-prep.md", "v19.2.0"),
+        ("references/maintenance-uninstall.md", "ceph-bluestore-tool zap-device"),
+        ("SKILL.md", "v19.2.1"),
+    ],
+)
+def test_missing_zap_device_guidance_fails(validator, package_factory, rel, needle):
+    root = package_factory()
+    path = root / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "removed"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("zap-device label reset" in issue and rel in issue for issue in issues)
+
+
 def test_missing_stale_krbd_guidance_fails(validator, package_factory, reference_text):
     root = package_factory(reference_content=reference_text())
     uninstall = root / "references" / "maintenance-uninstall.md"

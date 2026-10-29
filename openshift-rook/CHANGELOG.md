@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.20.4
+
+- Prefer `ceph-bluestore-tool zap-device` from the Ceph image to clear BlueStore labels when the target Ceph is `v19.2.1` or later. It zeros every label location that fits and refuses without `--yes-i-really-really-mean-it`. Keep the manual offset wipe for `v19.2.0` and earlier, and list `zap-device` among the commands that need exact-disk confirmation.
+- Note that Rook's `cleanupPolicy` zap clears every label copy from Ceph `v19.2.1`, and record a 4.22.18 SNO redeploy from Rook v1.20.5 to v1.21.1 on Ceph v20.2.4.
+
 ## 1.20.3
 
 - Treat `ceph-volume lvm list` exit 1 with `No valid Ceph lvm devices found` as an empty LVM inventory, and still run `ceph-volume raw list`. Reuse a disk only when that list is `{}` and `wipefs` / `lsblk` no longer report `ceph_bluestore`; the preflight audit now fails on either condition, and on any `ceph-volume lvm list` success (an LVM OSD), instead of only printing the output. The stale krbd listing no longer fails the node inspection on a node without RBD devices, and the AES256K probe's mount-device check exits 0 when it finds `/data` and 1 when it does not.
