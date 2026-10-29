@@ -440,6 +440,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "invalid candidate disk",
             "node leftover inspection failed; do not reuse the disk",
             "BlueStore signature remains on $d; do not reuse the disk",
+            "LVM OSD metadata found on $d; do not reuse the disk",
             "Raw Ceph inventory is not empty for $d; do not reuse the disk",
         ],
     )

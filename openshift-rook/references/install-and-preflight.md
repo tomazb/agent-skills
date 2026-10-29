@@ -68,7 +68,8 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
 # RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
 # container that carries it and bind the host device/LVM paths into that container.
 # `ceph-volume lvm list` exits 1 and prints "No valid Ceph lvm devices found" when the
-# disk has no LVM OSD. That is an empty inventory. Fail closed when the helper cannot
+# disk has no LVM OSD. That is an empty inventory. Exit 0 means ceph-volume found an
+# LVM OSD on the disk, so reject it. Fail closed when the helper cannot
 # run: image pull, mount, missing ceph-volume, or an unreadable device. Run the raw
 # list in the same helper and require it to print {}. Do not use set -e here: the
 # empty-inventory exit would skip it.
@@ -84,12 +85,14 @@ oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
     lvm_rc=0
     lvm_out=$(ceph-volume lvm list "$d" 2>&1) || lvm_rc=$?
     printf "%s\n" "$lvm_out"
-    if [ "$lvm_rc" -ne 0 ]; then
-      stripped=$(printf "%s\n" "$lvm_out" | sed "/^$/d")
-      if [ "$stripped" != "No valid Ceph lvm devices found" ]; then
-        echo "LVM residue audit failed; do not reuse the disk" >&2
-        exit 1
-      fi
+    if [ "$lvm_rc" -eq 0 ]; then
+      echo "LVM OSD metadata found on $d; do not reuse the disk" >&2
+      exit 1
+    fi
+    stripped=$(printf "%s\n" "$lvm_out" | sed "/^$/d")
+    if [ "$stripped" != "No valid Ceph lvm devices found" ]; then
+      echo "LVM residue audit failed; do not reuse the disk" >&2
+      exit 1
     fi
     echo "== raw list =="
     raw_out=$(ceph-volume raw list "$d" --format json) || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
