@@ -45,39 +45,69 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   echo "== stale mon/OSD dataDirHostPath =="
   if [ ! -d /var/lib/rook ]; then echo "/var/lib/rook absent (clean)"
   else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
-  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
+  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] || continue; echo "stale dir: $p"; done
   echo "== OSD disk still carries a raw BlueStore label? =="
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
+  # lsblk -f and wipefs -n show TYPE "ceph_bluestore" for a raw BlueStore label.
   [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
   for d in '"$DISKS"'; do
     [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
-    lsblk -f "$d" || exit 1
+    lsblk_out=$(lsblk -f "$d") || exit 1
+    printf "%s\n" "$lsblk_out"
+    wipefs_out=$(wipefs -n "$d") || exit 1
+    printf "%s\n" "$wipefs_out"
+    if printf "%s\n%s\n" "$lsblk_out" "$wipefs_out" | grep -Fq ceph_bluestore; then
+      echo "BlueStore signature remains on $d; do not reuse the disk" >&2
+      exit 1
+    fi
   done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
-  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] || continue; echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 ' || { echo "node leftover inspection failed; do not reuse the disk" >&2; exit 1; }
 
 # RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
 # container that carries it and bind the host device/LVM paths into that container.
-# If this command fails, fail closed and do not reuse the disk.
+# `ceph-volume lvm list` exits 1 and prints "No valid Ceph lvm devices found" when the
+# disk has no LVM OSD. That is an empty inventory. Exit 0 means ceph-volume found an
+# LVM OSD on the disk, so reject it. Fail closed when the helper cannot
+# run: image pull, mount, missing ceph-volume, or an unreadable device. Run the raw
+# list in the same helper and require it to print {}. Do not use set -e here: the
+# empty-inventory exit would skip it.
 ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v19.2.2"   # or the cephVersion.image you plan to deploy
-oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -ceu '
+oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
   mkdir -p /run/lvm /etc/lvm
-  mount --rbind /host/dev /dev
-  mount --rbind /host/run/lvm /run/lvm
-  mount --rbind /host/etc/lvm /etc/lvm
+  mount --rbind /host/dev /dev || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+  mount --rbind /host/run/lvm /run/lvm || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+  mount --rbind /host/etc/lvm /etc/lvm || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
   [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
   for d in '"$DISKS"'; do
     [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
-    ceph-volume lvm list "$d"
+    lvm_rc=0
+    lvm_out=$(ceph-volume lvm list "$d" 2>&1) || lvm_rc=$?
+    printf "%s\n" "$lvm_out"
+    if [ "$lvm_rc" -eq 0 ]; then
+      echo "LVM OSD metadata found on $d; do not reuse the disk" >&2
+      exit 1
+    fi
+    stripped=$(printf "%s\n" "$lvm_out" | sed "/^$/d")
+    if [ "$stripped" != "No valid Ceph lvm devices found" ]; then
+      echo "LVM residue audit failed; do not reuse the disk" >&2
+      exit 1
+    fi
+    echo "== raw list =="
+    raw_out=$(ceph-volume raw list "$d" --format json) || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+    printf "%s\n" "$raw_out"
+    if [ "$(printf "%s" "$raw_out" | tr -d "[:space:]")" != "{}" ]; then
+      echo "Raw Ceph inventory is not empty for $d; do not reuse the disk" >&2
+      exit 1
+    fi
   done
 ' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
 ```
 
 **Stale krbd devices are a silent killer.** If a prior Rook/ODF teardown deleted an RBD-backed PVC (or its whole namespace) *before* the volume was unmapped, or deleted the Ceph pool out from under a mapped image, the node keeps a wedged `/dev/rbdN` device pointing at a pool that no longer exists. A fresh Rook OSD prepare then hangs **forever** at `ceph-volume raw list` (it probes every block device, including the dead `/dev/rbdN`). The device cannot be force-removed from userspace — `/sys/bus/rbd/remove*` blocks uninterruptibly, and it can even wedge a node shutdown. Clear it before installing (see `maintenance-uninstall.md`, "Stale krbd Devices"); a wedged device may require a node reboot or hypervisor power-cycle.
 
-If any of these exist and the target node is not running an intended storage system, remove them before installing — follow `maintenance-uninstall.md` (orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, `/var/lib/rook` clearing, stale krbd unmap) and `references/osd-disk-prep.md` for a leftover BlueStore OSD. `wipefs -af` and `sgdisk --zap-all` are not sufficient: the label is also stored at 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. Do not reuse the disk until `ceph-volume raw list` prints `{}`. Full-disk zeroing is only for when the whole device must be erased. A Rook cleanup handoff is required when the leftover is upstream Rook; an ODF cleanup handoff (`openshift-odf`) is required when the leftover is ODF-owned. Only after the leftover audit is clean should you proceed.
+If any of these exist and the target node is not running an intended storage system, remove them before installing — follow `maintenance-uninstall.md` (orphaned StorageClasses/CSIDrivers, stuck `clientprofiles.csi.ceph.io` finalizers, `/var/lib/rook` clearing, stale krbd unmap) and `references/osd-disk-prep.md` for a leftover BlueStore OSD. `wipefs -af` and `sgdisk --zap-all` are not sufficient: the label is also stored at 1 GiB, 10 GiB, 100 GiB, and 1000 GiB, whichever fit. Reuse the disk only when `ceph-volume raw list` prints `{}` and `wipefs -n` and `lsblk -f` no longer report `ceph_bluestore`. An empty raw list can still leave a signature that OSD prepare skips with `Has BlueStore device label`. A clean `lsblk` can still leave a foreign OSD that raw list names. Either result alone is incomplete. Full-disk zeroing is only for when the whole device must be erased. A Rook cleanup handoff is required when the leftover is upstream Rook; an ODF cleanup handoff (`openshift-odf`) is required when the leftover is ODF-owned. Only after the leftover audit is clean should you proceed.
 
 ## Ceph Version And ceph-csi Compatibility
 
@@ -87,7 +117,7 @@ AES256K keys use key byte `0x02` and the base64 prefix `Ag`. Classic AES keys us
 
 The secure default is `spec.security.cephx.allowedCiphers: [aes256k]` plus `spec.security.cephx.csi.keyType: aes256k`. Leave `spec.security.cephx.daemon.keyType` unset. Setting it adds `--mon-auth-emergency-allowed-ciphers` to the monitors and raises `AUTH_EMERGENCY_CIPHERS_SET`. Rook selects the daemon key type itself. An empty `allowedCiphers` list allows every cipher, which raises `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE`. Allow `aes` only when the user asks for classic AES, or when the volume probe cannot mount an AES256K key.
 
-**Reported field evidence (not independently reproduced):** An OpenShift 4.20 RHCOS node running kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. A compact three-node OpenShift 4.21.34 cluster running RHCOS kernel `5.14.0-570.141.1.el9_6`, Rook `v1.21.0`, and ceph-csi `v3.18.1` reportedly wrote through an AES256K RBD mapping at `/dev/rbd0` on every schedulable node. These observations are not a compatibility guarantee for all 5.14 kernels or FIPS configurations. Capture the kernel, FIPS state, Ceph/Rook/CSI versions, effective MonMap policy, audited key types, and per-node `/dev/rbd*` write/read results. The live volume probe, not the kernel release string, decides.
+**Reported field evidence (not independently reproduced):** An OpenShift 4.20 RHCOS node running kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. A compact three-node OpenShift 4.21.34 cluster running RHCOS kernel `5.14.0-570.141.1.el9_6`, Rook `v1.21.0`, and ceph-csi `v3.18.1` reportedly wrote through an AES256K RBD mapping at `/dev/rbd0` on every schedulable node. An OpenShift 4.18.56 SNO node running RHCOS kernel `5.14.0-427.151.1.el9_4` with FIPS off, Rook `v1.21.1`, Ceph `v20.2.4`, and ceph-csi `v3.18.1` wrote through an AES256K RBD mapping at `/dev/rbd0`. A full `ceph auth dump-keys` audit on that cluster reported 25 `aes256k` keys, and `lvms-vg1` stayed the only default StorageClass. These observations are not a compatibility guarantee for all 5.14 kernels or FIPS configurations. Capture the kernel, FIPS state, Ceph/Rook/CSI versions, effective MonMap policy, audited key types, and per-node `/dev/rbd*` write/read results. The live volume probe, not the kernel release string, decides.
 
 **Discover the ceph-csi image before the CephCluster.** The CSI Deployment may not exist yet. Read the operator image-set, or the manifest about to be applied:
 
@@ -95,6 +125,8 @@ The secure default is `spec.security.cephx.allowedCiphers: [aes256k]` plus `spec
 oc -n rook-ceph get cm rook-csi-operator-image-set-configmap -o jsonpath='{.data.plugin}{"\n"}' 2>/dev/null \
   || grep -E 'cephcsi/cephcsi:|ROOK_CSI_CEPH_IMAGE' /tmp/rook-ceph-operator.yaml
 ```
+
+An empty `plugin` value is not `v3.17.0`. Rook v1.21 leaves that field empty so the ceph-csi-operator uses its built-in default. ceph-csi-operator v1.1.0's built-in plugin is `quay.io/cephcsi/cephcsi:v3.18.1`. `operator-openshift.yaml` applies the RBD and CephFS `Driver` CRs with the operator, so the plugin Deployments exist before the CephCluster. Read the running `csi-rbdplugin` image and `ceph --version` before creating the cluster. Continue with AES256K when that client is Ceph `v20.2.4` or newer. Patch the image-set when the running plugin is older than `v3.17.1`.
 
 ceph-csi **v3.17.0** bundles a librados that cannot decode AES256K. Claims stay `Pending` with `failed to decode key` and `rados: ret=-22, Invalid argument`. ceph-csi **v3.17.1** bundles Ceph `v20.2.4` and decodes those keys. RGW and ObjectBucketClaim provisioning skip this librados path, so an object-store check can succeed while every RBD, CephFS, and NFS claim fails.
 
@@ -107,7 +139,7 @@ oc -n rook-ceph rollout restart deploy/ceph-csi-controller-manager
 oc -n rook-ceph rollout status deploy/ceph-csi-controller-manager --timeout=3m
 ```
 
-After the RBD, CephFS, and NFS plugin Deployments exist, each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` and the RBD plugin reports Ceph `v20.2.4` or newer:
+After each enabled plugin Deployment exists (RBD and CephFS from the shipped `Driver` CRs; NFS only when NFS is enabled), each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` or newer and the RBD plugin reports Ceph `v20.2.4` or newer:
 
 ```bash
 oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
@@ -184,7 +216,7 @@ oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
 oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-aes256k-probe get pod rbd-smoke-writer -o jsonpath='{.spec.nodeName}{"\n"}'  # confirm requested node
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
+oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do if [ "$mp" = /data ]; then echo "$dev"; exit 0; fi; done < /proc/mounts; echo "no /data mount" >&2; exit 1'
 ```
 
 Only after the `ok` write and the `/dev/rbd` mount device are recorded for this node, delete the probe namespace:
@@ -283,6 +315,8 @@ oc adm policy add-scc-to-user privileged -z rook-ceph-mgr -n rook-ceph
 oc adm policy add-scc-to-user privileged -z rook-ceph-rgw -n rook-ceph
 ```
 
+`oc apply` of `operator-openshift.yaml` can warn that the operator container would violate PodSecurity `restricted:latest` (`allowPrivilegeEscalation`, capabilities, and `seccompProfile`). OpenShift admits that pod through the `rook-ceph` SCC. Continue when the Deployment is created and the SCC lists the Rook service accounts. Stop when the pod stays pending with an SCC admission error.
+
 ## Install Path
 
 ### Helm Install (Recommended)
@@ -314,6 +348,8 @@ curl -fsSLo /tmp/rook-ceph-csi-operator.yaml \
 curl -fsSLo /tmp/rook-ceph-operator.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 ```
+
+On SNO, edit `/tmp/rook-ceph-operator.yaml` now, before its first apply: add `replicas: 1` under `spec.driverSpecDefaults.controllerPlugin` of the `ceph-csi-operator-config` `OperatorConfig`, and keep its `imageSet` and other fields. See the SNO section below for why and how to verify it.
 
 Create the namespace before `common.yaml` on a fresh cluster. Apply CRDs first (required before common, CSI, and operator manifests), then common, then `csi-operator.yaml`, then the OpenShift operator. Apply the CRDs server-side — the Rook CRDs are large and client-side `oc apply` can fail with a `metadata.annotations: Too long` error:
 
@@ -479,6 +515,19 @@ Do not copy `mon.count: 1`, `allowMultiplePerNode: true`, or
 `mon_max_pg_per_osd: "500"` into multi-node production plans without explicit
 direction.
 
+The ceph-csi-operator built-in controller replica count is 2, and the controller Deployment uses required pod anti-affinity on `kubernetes.io/hostname`. On SNO the second replica stays Pending. Set one replica on the shared driver defaults before the CephCluster, and do not copy `replicas: 1` into a multi-node plan without explicit direction.
+
+`operator-openshift.yaml` already creates `ceph-csi-operator-config` with `driverSpecDefaults.imageSet` and the other driver defaults. Add the replica count to that object. Do not `oc apply` a standalone `OperatorConfig` that carries only `replicas`: client-side apply prunes the fields it omits, including the image-set link. On a direct-manifest install, make that edit in `/tmp/rook-ceph-operator.yaml` before its first apply, as the Direct Manifest Install step says. When the object already exists, merge-patch it and keep the same field in any manifest you reapply:
+
+```bash
+oc -n rook-ceph patch operatorconfig.csi.ceph.io ceph-csi-operator-config --type=merge \
+  -p '{"spec":{"driverSpecDefaults":{"controllerPlugin":{"replicas":1}}}}'
+oc -n rook-ceph get operatorconfig.csi.ceph.io ceph-csi-operator-config \
+  -o jsonpath='{.spec.driverSpecDefaults.controllerPlugin.replicas} {.spec.driverSpecDefaults.imageSet.name}{"\n"}'
+```
+
+Continue when the second command prints `1 rook-csi-operator-image-set-configmap`. Stop when the image-set name is empty.
+
 When preparing version-pinned example manifests, prefer the packaged helper and
 pass explicit Rook/Ceph versions from live discovery (do not treat helper defaults
 as the install target). The helper only substitutes exact placeholder tokens such
@@ -586,6 +635,8 @@ oc apply -f /tmp/rook-ceph-toolbox.yaml
 oc -n rook-ceph rollout status deploy/rook-ceph-tools --timeout=5m
 ```
 
+The example toolbox image is the floating tag `quay.io/ceph/ceph:v20`. Before apply, set that container image to the CephCluster `cephVersion.image`, for example `quay.io/ceph/ceph:v20.2.4`.
+
 ## Install Validation
 
 Wait for the operator and cluster to reach a healthy state:
@@ -604,11 +655,13 @@ oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph -s
 oc -n rook-ceph exec deploy/rook-ceph-tools -- ceph health detail
 ```
 
+`status.phase: Ready` can arrive while `status.ceph.health` is still `HEALTH_WARN` because the crash collector and exporter restart during bootstrap. Read `ceph health detail` before changing ciphers, pools, or OSDs. Declare success only after `scripts/check_rook_health.py` records sustained `HEALTH_OK`.
+
 Before declaring success, verify:
 
 - All mons are in quorum.
 - All OSDs are `up` and `in`.
-- Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings. `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE` are absent unless the user requested classic AES or the volume probe had to allow it.
+- `scripts/check_rook_health.py` records sustained `HEALTH_OK`. `HEALTH_WARN` is a bootstrap state to diagnose with `ceph health detail`, not a pass. `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE` are absent unless the user requested classic AES or the volume probe had to allow it.
 - The AES256K probe in **Ceph Version And ceph-csi Compatibility** has finished: either `allowedCiphers` is `aes256k` alone because every schedulable node wrote through `/dev/rbd`, or CSI keys are classic AES after a confirmed key-mapping `FailedMount`.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - Exactly one default StorageClass exists when defaulting is expected.

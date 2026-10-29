@@ -264,7 +264,7 @@ oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
 '
 ```
 
-Do not call the disk clean until `ceph-volume raw list` prints `{}`. OSD prepare runs the same check and CrashLoopBackOffs on a foreign-cluster label. `rook_wipe_osd_disk` in `references/maintenance-uninstall.md` zeroes the same offsets during uninstall; run this check after it too, because the host has no `ceph-volume`.
+Do not call the disk clean until `ceph-volume raw list` prints `{}` and `wipefs -n` and `lsblk -f` no longer report `ceph_bluestore`. Either result alone is incomplete. An empty raw list can still leave a signature that OSD prepare skips with `Has BlueStore device label`. A clean `lsblk` can still leave a foreign OSD that raw list names; OSD prepare runs that check and CrashLoopBackOffs on the foreign-cluster label. `rook_wipe_osd_disk` in `references/maintenance-uninstall.md` zeroes the same offsets during uninstall; run this check after it too, because the host has no `ceph-volume`.
 
 ## FileStore (Legacy)
 
