@@ -456,6 +456,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "kubernetes.io/hostname",
             "restricted:latest",
             "status.ceph.health",
+            "`HEALTH_WARN` is a bootstrap state to diagnose with `ceph health detail`, not a pass.",
             "5.14.0-427.151.1.el9_4",
             "cephVersion.image",
         ],

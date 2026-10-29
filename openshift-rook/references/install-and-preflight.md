@@ -139,7 +139,7 @@ oc -n rook-ceph rollout restart deploy/ceph-csi-controller-manager
 oc -n rook-ceph rollout status deploy/ceph-csi-controller-manager --timeout=3m
 ```
 
-After the RBD, CephFS, and NFS plugin Deployments exist, each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` and the RBD plugin reports Ceph `v20.2.4` or newer:
+After each enabled plugin Deployment exists (RBD and CephFS from the shipped `Driver` CRs; NFS only when NFS is enabled), each plugin image is `quay.io/cephcsi/cephcsi:v3.17.1` and the RBD plugin reports Ceph `v20.2.4` or newer:
 
 ```bash
 oc -n rook-ceph exec deploy/rook-ceph.rbd.csi.ceph.com-ctrlplugin -c csi-rbdplugin -- ceph --version
@@ -661,7 +661,7 @@ Before declaring success, verify:
 
 - All mons are in quorum.
 - All OSDs are `up` and `in`.
-- Ceph cluster health is `HEALTH_OK` or `HEALTH_WARN` with known, documented warnings. `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE` are absent unless the user requested classic AES or the volume probe had to allow it.
+- `scripts/check_rook_health.py` records sustained `HEALTH_OK`. `HEALTH_WARN` is a bootstrap state to diagnose with `ceph health detail`, not a pass. `AUTH_INSECURE_KEYS_ALLOWED` and `AUTH_INSECURE_KEYS_CREATABLE` are absent unless the user requested classic AES or the volume probe had to allow it.
 - The AES256K probe in **Ceph Version And ceph-csi Compatibility** has finished: either `allowedCiphers` is `aes256k` alone because every schedulable node wrote through `/dev/rbd`, or CSI keys are classic AES after a confirmed key-mapping `FailedMount`.
 - No PGs are stuck in `creating`, `degraded`, or `peering`.
 - Exactly one default StorageClass exists when defaulting is expected.
