@@ -522,6 +522,23 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         ],
     )
     require(
+        "references/local-storage-disks.md",
+        "zap-device label reset",
+        [
+            "ceph-bluestore-tool zap-device",
+            "v19.2.1",
+            "--yes-i-really-really-mean-it",
+            "v19.2.0",
+            "19.2.1-405",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "zap-device label reset",
+        ["ceph-bluestore-tool zap-device", "v19.2.1"],
+    )
+    require("SKILL.md", "zap-device label reset", ["ceph-bluestore-tool zap-device", "v19.2.1"])
+    require(
         "references/upgrade.md",
         "OLM upgrade guidance",
         [

@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.29.2
+
+- Prefer `ceph-bluestore-tool zap-device` from a Ceph `v19.2.1` or later image to clear BlueStore labels. It zeros every label location that fits and refuses without `--yes-i-really-really-mean-it`. Keep the manual offset wipe for older Ceph, and list `zap-device` among the commands that need exact-disk confirmation.
+- Note that `cleanup-policy=delete` zaps through `ceph-volume lvm zap`, which runs `zap-device` in ODF 4.20.20's Red Hat Ceph `19.2.1-405`, and record that read-only check.
+
 ## 1.29.1
 
 - Support read-only Ceph observation through the installed operator when no toolbox is deployed, and accept dotted StorageClass/CA ConfigMap names.

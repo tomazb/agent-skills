@@ -427,7 +427,19 @@ If a disk still carries old signatures and must be reused for a new OSD, clean i
 osd.0 belonging to a different ceph cluster "<old-fsid>"
 ```
 
-even when `lsblk -f` and `wipefs -n` look clean. When NVMe or SATA secure erase does not apply, prefer either:
+even when `lsblk -f` and `wipefs -n` look clean.
+
+With a Ceph image of `v19.2.1` or later, clear the labels with Ceph's own tool. `ceph-bluestore-tool zap-device` zeros the label block at every location that fits: 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB. It does not write past the end of a smaller disk, and it refuses to run without `--yes-i-really-really-mean-it`. RHCOS does not ship the tool, so run it from a Ceph image: the upstream image used for `ceph-volume raw list` below, or the image your ODF release ships. ODF 4.20.20 ships Red Hat Ceph `19.2.1-405`, which has `zap-device`. The tool only writes zeros at fixed offsets, so the Ceph version that wrote the labels does not matter. It clears only those label blocks, not partition tables or other signatures, and it needs the same exact-disk confirmation as any other wipe. Ceph `v19.2.0` and earlier have no `zap-device`; use the label wipe below.
+
+```bash
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  set -eu
+  mount --rbind /host/dev /dev
+  ceph-bluestore-tool zap-device --dev '"${DISK}"' --yes-i-really-really-mean-it
+'
+```
+
+Without `zap-device`, or when NVMe or SATA secure erase does not apply, prefer either:
 
 1. **Targeted label wipe** (fast; enough when you only need to clear BlueStore ownership), or
 2. **Full-disk zeroing** (slow; when policy requires total erasure).

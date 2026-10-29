@@ -607,3 +607,20 @@ def test_missing_clean_cluster_uninstall_guidance_fails(validator, package_facto
     )
     issues = validator.validate_root(root)
     assert any("clean-cluster uninstall residue" in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        ("references/local-storage-disks.md", "--yes-i-really-really-mean-it"),
+        ("references/local-storage-disks.md", "19.2.1-405"),
+        ("references/maintenance-uninstall.md", "ceph-bluestore-tool zap-device"),
+        ("SKILL.md", "v19.2.1"),
+    ],
+)
+def test_missing_zap_device_guidance_fails(validator, package_factory, rel, needle):
+    root = package_factory()
+    path = root / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "removed"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("zap-device label reset" in issue and rel in issue for issue in issues)

@@ -67,7 +67,7 @@ Use `FORCE_OSD_REMOVAL=true` only when the OSD is already down and you accept th
 
 1. Verify the OSD is down and the disk is truly failed.
 2. Run the `ocs-osd-removal` job above for the failed OSD id.
-3. After the OSD is fully removed, delete the released local PV and clean the disk if reusing it (only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target). Choose the fastest proper erase with `scripts/select_erase_method.py` (`references/local-storage-disks.md`). For a disk that previously held a BlueStore OSD and has neither, `wipefs -af` and `sgdisk --zap-all` do not clear labels at the midpoint and end; use the offset wipe or a full-disk zero:
+3. After the OSD is fully removed, delete the released local PV and clean the disk if reusing it (only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target). Choose the fastest proper erase with `scripts/select_erase_method.py` (`references/local-storage-disks.md`). For a disk that previously held a BlueStore OSD and has neither, `wipefs -af` and `sgdisk --zap-all` do not clear labels at the midpoint and end; use `ceph-bluestore-tool zap-device` from a Ceph `v19.2.1` or later image (**Raw Block Cleanup** in `references/local-storage-disks.md`), the offset wipe, or a full-disk zero:
 
 ```bash
 oc debug "node/<node>" -- chroot /host bash -c "

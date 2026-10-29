@@ -1081,3 +1081,11 @@ and keep the override in place until a later upgrade.
 The manual MDS/RGW `topologyKey` and CSI `Driver` replica patches are reverted
 automatically once reconciliation is handed back, so re-check that MDS, RGW,
 and the CSI controller pods are still scheduled after step 3.
+
+## ODF 4.20.20 SNO: `ceph-bluestore-tool zap-device`
+
+Checked read-only on one SNO node running OpenShift 4.20.37 and ODF 4.20.20 (`HEALTH_OK`). Record versions and topology only.
+
+- The `CephCluster` image was `registry.redhat.io/rhceph/rhceph-8-rhel9`, reporting `ceph version 19.2.1-405.el9cp ... squid (stable)`.
+- In a running mon container, `ceph-bluestore-tool --help` listed `zap-device`, and that image's `ceph-volume` `lvm zap` runs `ceph-bluestore-tool zap-device --dev <path>`. So a disk zap through that image should clear every label location, as upstream `v19.2.1` and later do.
+- The command was not run against a disk on this cluster. The offset coverage was tested with upstream `quay.io/ceph/ceph:v20.2.4` on sparse files: all five locations of a 1001 GiB file, and the four that fit in a 500 GiB file.
