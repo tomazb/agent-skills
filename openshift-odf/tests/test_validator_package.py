@@ -145,9 +145,14 @@ def test_missing_validated_sno_routing_fails(validator, package_factory, make_sk
     assert any("validated ODF SNO routing" in issue for issue in issues)
 
 
-def test_missing_destructive_confirmation_language_fails(validator, package_factory, reference_text):
+def test_missing_destructive_confirmation_language_fails(
+    validator, package_factory, reference_text, make_skill_text
+):
     text = reference_text().replace("explicit destructive confirmation", "operator approval")
-    root = package_factory(reference_content=text)
+    skill_text = make_skill_text().replace(
+        "explicit destructive confirmation", "operator approval"
+    )
+    root = package_factory(skill_text=skill_text, reference_content=text)
     issues = validator.validate_root(root)
     assert any("destructive disk safety" in issue for issue in issues)
 
