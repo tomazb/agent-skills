@@ -104,10 +104,21 @@ ceph-volume raw list "${DISK}" --format json   # must print {}
 
 After exact-disk confirmation:
 ```bash
-dd if=/dev/zero of="${DISK}" bs=4096 seek=0 count=256
+CEPH_VOLUME_IMAGE="<available-ceph-image>"
+BYTES=$(blockdev --getsize64 "${DISK}")
+G=$((1024*1024*1024))
+for mult in 0 1 10 100 1000; do
+  off=$((mult * G))
+  [ "$off" -ge "$BYTES" ] && continue
+  dd if=/dev/zero of="${DISK}" bs=4096 seek=$((off/4096)) count=256
+done
 wipefs -af "${DISK}"
 sgdisk --zap-all "${DISK}"
-ceph-volume raw list "${DISK}" --format json   # must print {}
+oc debug "node/${NODE}" --image="${CEPH_VOLUME_IMAGE}" -- bash -c '
+  set -eu
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json   # must print {}
+'
 ```
 
 ## Replacing a Failed Disk

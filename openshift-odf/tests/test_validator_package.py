@@ -663,6 +663,13 @@ def test_missing_zap_device_guidance_fails(validator, package_factory, rel, need
             "older-version offset cleanup and verification",
         ),
         (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
+            '--image="${CEPH_VOLUME_IMAGE}"',
+            "--image=quay.io/ceph/ceph:v19.2.2",
+            "older-version offset cleanup and verification",
+        ),
+        (
             "references/cluster-expand-shrink.md",
             "Replacing a Failed Disk",
             "v19.2.0",
@@ -698,3 +705,26 @@ def test_missing_blue_store_cleanup_safety_relationship_fails(
     path.write_text(text[:start] + section + text[end:], encoding="utf-8")
     issues = validator.validate_root(root)
     assert any(expected in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "for mult in 1 10 100 1000; do",
+        "for mult in 0 10 100 1000; do",
+        "for mult in 0 1 100 1000; do",
+        "for mult in 0 1 10 1000; do",
+        "for mult in 0 1 10 100; do",
+    ],
+)
+def test_missing_fallback_bluestore_offset_fails(validator, package_factory, loop):
+    root = package_factory()
+    path = root / "references" / "local-storage-disks.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "for mult in 0 1 10 100 1000; do", loop
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("older-version offset cleanup and verification" in issue for issue in issues)

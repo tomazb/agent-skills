@@ -463,7 +463,11 @@ oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
 
 After the same exact-disk confirmation, clear every BlueStore label offset that fits, then clear partition and signature metadata. Verify with `ceph-volume raw list` and proceed only when it returns `{}`:
 
+Set `CEPH_VOLUME_IMAGE` to an available Ceph image that provides `ceph-volume raw list`, such as the installed ODF Ceph image or a reachable internal mirror. Verification does not require `zap-device` or Ceph `v19.2.1` or later. If no suitable verification image is available, stop; do not reuse the disk without the required `{}` result.
+
 ```bash
+CEPH_VOLUME_IMAGE="<available-ceph-image>"
+
 oc debug "node/${NODE}" -- chroot /host bash -ceu "
   DISK='${DISK}'
   BYTES=\$(blockdev --getsize64 \"\$DISK\")
@@ -477,7 +481,8 @@ oc debug "node/${NODE}" -- chroot /host bash -ceu "
   sgdisk --zap-all \"\$DISK\"
   sync
 "
-oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+oc debug "node/${NODE}" --image="${CEPH_VOLUME_IMAGE}" -- bash -c '
+  set -eu
   mount --rbind /host/dev /dev
   ceph-volume raw list '"${DISK}"' --format json   # must print {}
 '

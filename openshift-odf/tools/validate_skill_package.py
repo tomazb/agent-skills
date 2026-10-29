@@ -614,8 +614,10 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         "references/local-storage-disks.md",
         "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
         "older-version offset cleanup and verification",
-        ["exact-disk confirmation", "dd if=/dev/zero", "wipefs -af",
-         "sgdisk --zap-all", "ceph-volume raw list", "must print {}"],
+        ["exact-disk confirmation", "CEPH_VOLUME_IMAGE=",
+         "for mult in 0 1 10 100 1000; do", "dd if=/dev/zero", "wipefs -af",
+         "sgdisk --zap-all", '--image="${CEPH_VOLUME_IMAGE}"',
+         "ceph-volume raw list", "must print {}"],
     )
     require_section_order(
         "references/cluster-expand-shrink.md",
