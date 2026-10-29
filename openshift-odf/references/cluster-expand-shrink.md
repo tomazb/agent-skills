@@ -67,25 +67,33 @@ Use `FORCE_OSD_REMOVAL=true` only when the OSD is already down and you accept th
 
 1. Verify the OSD is down and the disk is truly failed.
 2. Run the `ocs-osd-removal` job above for the failed OSD id.
-3. After the OSD is fully removed, delete the released local PV and clean the disk if reusing it (only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target). Choose the fastest proper erase with `scripts/select_erase_method.py` (`references/local-storage-disks.md`). For a disk that previously held a BlueStore OSD and has neither, `wipefs -af` and `sgdisk --zap-all` do not clear labels at the midpoint and end; use `ceph-bluestore-tool zap-device` from a Ceph `v19.2.1` or later image (**Raw Block Cleanup** in `references/local-storage-disks.md`), the offset wipe, or a full-disk zero:
+3. After the OSD is fully removed, delete the released local PV. Reuse the disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target and the required `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` checks. For a previous BlueStore OSD disk, follow the complete version-specific reuse sequence in **Raw Block Cleanup** in `references/local-storage-disks.md`: use `ceph-bluestore-tool zap-device` from a Ceph `v19.2.1` or later image, or the targeted offset wipe when only Ceph `v19.2.0` or earlier (or no suitable `zap-device` image) is available. After either label-cleanup path, run `wipefs -af` and `sgdisk --zap-all`, then require `ceph-volume raw list` to return `{}` before reuse. Full-disk zeroing belongs only to explicit whole-device sanitization intent; it is not the normal BlueStore reuse path.
 
 ```bash
-oc debug "node/<node>" -- chroot /host bash -c "
-  set -e
-  wipefs -af '/dev/disk/by-id/<disk>'
-  sgdisk --zap-all '/dev/disk/by-id/<disk>'
-"
+NODE="<node>"
+DISK="/dev/disk/by-id/<stable-disk-id>"
 
-# Required only when the disk previously held a BlueStore OSD:
-oc debug "node/<node>" -- chroot /host bash -c "
+# Ceph v19.2.1+ label cleanup. Then clear signatures and verify:
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  set -eu
+  mount --rbind /host/dev /dev
+  ceph-bluestore-tool zap-device --dev '"${DISK}"' --yes-i-really-really-mean-it
+'
+oc debug "node/${NODE}" -- chroot /host bash -c "
   set -e
-  dd if=/dev/zero of='/dev/disk/by-id/<disk>' bs=4M status=progress
-  sync
-  lsblk -f '/dev/disk/by-id/<disk>'
+  wipefs -af '${DISK}'
+  sgdisk --zap-all '${DISK}'
 "
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json   # must print {}
+'
+
+# Ceph v19.2.0 and earlier, or when zap-device is unavailable: use the
+# targeted offset wipe in Raw Block Cleanup, then clean signatures and verify.
 ```
 
-Full-disk zeroing can take a long time; see `references/local-storage-disks.md` for rationale and post-wipe checks.
+For explicit sanitization intent, follow the whole-device workflow in `references/local-storage-disks.md`; full-disk zeroing can take a long time. Do not substitute it for label cleanup.
 
 4. Let the Local Storage Operator rediscover and reprovision the replacement disk into `localblock`.
 5. Wait for `ocs-operator` to create a new OSD and for the cluster to rebalance.

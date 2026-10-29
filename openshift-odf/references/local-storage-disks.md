@@ -429,31 +429,41 @@ osd.0 belonging to a different ceph cluster "<old-fsid>"
 
 even when `lsblk -f` and `wipefs -n` look clean.
 
-With a Ceph image of `v19.2.1` or later, clear the labels with Ceph's own tool. `ceph-bluestore-tool zap-device` zeros the label block at every location that fits: 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB. It does not write past the end of a smaller disk, and it refuses to run without `--yes-i-really-really-mean-it`. RHCOS does not ship the tool, so run it from a Ceph image: the upstream image used for `ceph-volume raw list` below, or the image your ODF release ships. ODF 4.20.20 ships Red Hat Ceph `19.2.1-405`, which has `zap-device`. The tool only writes zeros at fixed offsets, so the Ceph version that wrote the labels does not matter. It clears only those label blocks, not partition tables or other signatures, and it needs the same exact-disk confirmation as any other wipe. Ceph `v19.2.0` and earlier have no `zap-device`; use the label wipe below.
+With a Ceph image of `v19.2.1` or later, `ceph-bluestore-tool zap-device` clears the label block at every location that fits: 0, 1 GiB, 10 GiB, 100 GiB, and 1000 GiB. It does not write past the end of a smaller disk, and it refuses to run without `--yes-i-really-really-mean-it`. RHCOS does not ship the tool, so use a Ceph image; ODF 4.20.20 ships Red Hat Ceph `19.2.1-405`, which has `zap-device`. The tool only writes zeros at fixed offsets, so the version that wrote the labels does not matter. It clears label blocks only; partition tables and filesystem signatures require separate cleanup. Ceph `v19.2.0` and earlier have no `zap-device` and use the targeted offset wipe below.
+
+### Ceph v19.2.1+ reuse cleanup
+
+After explicit destructive confirmation for the exact stable disk path, clear BlueStore labels, then remove partition-table and filesystem-signature metadata. Finally, verify that Ceph no longer detects an OSD on the disk:
 
 ```bash
+DISK="/dev/disk/by-id/<stable-disk-id>"
+
+# Clear BlueStore labels with a Ceph v19.2.1+ image:
 oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
   set -eu
   mount --rbind /host/dev /dev
   ceph-bluestore-tool zap-device --dev '"${DISK}"' --yes-i-really-really-mean-it
 '
-```
 
-Without `zap-device`, or when NVMe or SATA secure erase does not apply, prefer either:
-
-1. **Targeted label wipe** (fast; enough when you only need to clear BlueStore ownership), or
-2. **Full-disk zeroing** (slow; when policy requires total erasure).
-
-```bash
-# Standard wipe (removes filesystem signatures and GPT; sufficient for non-Ceph disks)
+# Clear partition-table and filesystem-signature metadata:
 oc debug "node/${NODE}" -- chroot /host bash -c "
   set -e
   wipefs -af '${DISK}'
   sgdisk --zap-all '${DISK}'
 "
 
-# Fast BlueStore label wipe — clear every official main-device label offset
-# that fits on the disk (0 / 1GiB / 10GiB / 100GiB / 1000GiB):
+# Verify; do not reuse unless raw list returns {}:
+oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json   # must print {}
+'
+```
+
+### Ceph v19.2.0 and earlier (or no suitable zap-device image)
+
+After the same exact-disk confirmation, clear every BlueStore label offset that fits, then clear partition and signature metadata. Verify with `ceph-volume raw list` and proceed only when it returns `{}`:
+
+```bash
 oc debug "node/${NODE}" -- chroot /host bash -ceu "
   DISK='${DISK}'
   BYTES=\$(blockdev --getsize64 \"\$DISK\")
@@ -463,30 +473,19 @@ oc debug "node/${NODE}" -- chroot /host bash -ceu "
     [ \"\$off\" -ge \"\$BYTES\" ] && continue
     dd if=/dev/zero of=\"\$DISK\" bs=4096 seek=\$((off/4096)) count=256 status=none conv=fsync
   done
-  wipefs -af \"\$DISK\" || true
-  sgdisk --zap-all \"\$DISK\" || true
+  wipefs -af \"\$DISK\"
+  sgdisk --zap-all \"\$DISK\"
   sync
 "
-
-# Full-disk zero only when policy requires total erasure (can take a long time):
-oc debug "node/${NODE}" -- chroot /host bash -c "
-  set -euo pipefail
-  dd if=/dev/zero of='${DISK}' bs=4M status=progress
-  sync
-  echo 'Full-disk zero complete'
-"
-```
-
-Verify with **`ceph-volume raw list`** (not only `wipefs -n`). RHCOS has no `ceph-volume`; run it from a Ceph image:
-
-```bash
 oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
   mount --rbind /host/dev /dev
   ceph-volume raw list '"${DISK}"' --format json   # must print {}
-  lsblk -f '"${DISK}"'
-  wipefs -n '"${DISK}"' || true
 '
 ```
+
+### Explicit whole-device sanitization
+
+A full-device zero is only one possible method when policy explicitly requires sanitization. Use the **Choose reuse or sanitization first** workflow above to select the device-wide erase method; do not use full-disk zeroing for ordinary BlueStore label cleanup.
 
 Do not call the disk clean until `ceph-volume raw list` returns `{}`. The OSD prepare job runs the same check and CrashLoopBackOffs on a foreign-cluster label.
 

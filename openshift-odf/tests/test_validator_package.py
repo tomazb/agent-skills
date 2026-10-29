@@ -624,3 +624,54 @@ def test_missing_zap_device_guidance_fails(validator, package_factory, rel, need
     path.write_text(path.read_text(encoding="utf-8").replace(needle, "removed"), encoding="utf-8")
     issues = validator.validate_root(root)
     assert any("zap-device label reset" in issue and rel in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    ("rel", "heading", "old", "new", "expected"),
+    [
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            'ceph-bluestore-tool zap-device --dev \'"${DISK}"\'',
+            "ceph-bluestore-tool zap-device --dev /dev/sdb",
+            "zap-device target must use the confirmed",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            "wipefs -af",
+            "wipefs removed",
+            "zap-device exact-disk cleanup and verification",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            "ceph-volume raw list",
+            "ceph-volume list removed",
+            "zap-device exact-disk cleanup and verification",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
+            "sgdisk --zap-all",
+            "partition cleanup removed",
+            "older-version offset cleanup and verification",
+        ),
+    ],
+)
+def test_missing_blue_store_cleanup_safety_relationship_fails(
+    validator, package_factory, rel, heading, old, new, expected
+):
+    root = package_factory()
+    path = root / rel
+    text = path.read_text(encoding="utf-8")
+    start = text.index(f"### {heading}")
+    end = text.find("\n### ", start + 1)
+    if end < 0:
+        end = text.find("\n## ", start + 1)
+    section = text[start:end]
+    assert old in section
+    section = section.replace(old, new, 1)
+    path.write_text(text[:start] + section + text[end:], encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any(expected in issue for issue in issues)

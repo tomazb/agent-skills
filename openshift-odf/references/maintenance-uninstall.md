@@ -1159,40 +1159,9 @@ Repeat for each stuck namespace (`rook-ceph`, `openshift-local-storage`, smoke/t
 
 ## Disk Cleanup (Data Loss)
 
-An uninstall with `cleanup-policy="delete"` wipes OSD metadata automatically. That job is not an NVMe sanitize or a media-key change. Rook's cleanup job zaps each OSD disk with `ceph-volume lvm zap`, using the cluster's Ceph image. In ODF 4.20.20's Red Hat Ceph `19.2.1-405`, that command runs `ceph-bluestore-tool zap-device`, which zeros every BlueStore label copy. With a Ceph build older than `v19.2.1`, the copies at 1 GiB and above can remain, so check `ceph-volume raw list` either way. If the policy was not set, or you need to reclaim disks after the fact, clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target. Default to the guarded metadata reset for reuse. Only explicit sanitization intent selects `scripts/plan_osd_disk_prep.py --intent sanitize` with the discovered `fna` / `sanicap` capabilities, as `references/local-storage-disks.md` describes. Otherwise `wipefs -af` and `sgdisk --zap-all` are sufficient for non-Ceph disks, but a disk that previously held a BlueStore OSD must clear labels at **0 / 1 GiB / 10 GiB / 100 GiB / 1000 GiB** (or be fully zeroed). With a Ceph image of `v19.2.1` or later, `ceph-bluestore-tool zap-device` clears all of them; see **Raw Block Cleanup** in `references/local-storage-disks.md`. Head/tail-only wipes leave the 10 GiB and 100 GiB copies and break the next install:
+An uninstall with `cleanup-policy="delete"` wipes OSD metadata automatically. That job is not an NVMe sanitize or a media-key change. Rook's cleanup job uses `ceph-volume lvm zap` with the cluster's Ceph image. In ODF 4.20.20, Red Hat Ceph `19.2.1-405` runs `ceph-bluestore-tool zap-device` and clears all BlueStore label copies. Older Ceph builds can leave labels at 1 GiB and above, so verify the disk after cleanup either way.
 
-```bash
-NODE="<node>"
-DISK="/dev/disk/by-id/<stable-disk-id>"
-
-# Standard signature and partition-table cleanup:
-oc debug "node/${NODE}" -- chroot /host bash -c "
-  set -e
-  wipefs -af '${DISK}'
-  sgdisk --zap-all '${DISK}'
-"
-
-# Required when the disk previously held a BlueStore OSD (fast path):
-oc debug "node/${NODE}" -- chroot /host bash -ceu "
-  DISK='${DISK}'
-  BYTES=\$(blockdev --getsize64 \"\$DISK\")
-  G=\$((1024*1024*1024))
-  for mult in 0 1 10 100 1000; do
-    off=\$((mult * G))
-    [ \"\$off\" -ge \"\$BYTES\" ] && continue
-    dd if=/dev/zero of=\"\$DISK\" bs=4096 seek=\$((off/4096)) count=256 status=none conv=fsync
-  done
-  sync
-"
-
-# Authoritative check — must print {}:
-oc debug "node/${NODE}" --image=quay.io/ceph/ceph:v19.2.2 -- bash -c '
-  mount --rbind /host/dev /dev
-  ceph-volume raw list '"${DISK}"' --format json
-'
-```
-
-Full-disk zeroing remains valid when policy requires total erasure; it can take a long time. See `references/local-storage-disks.md` for the BlueStore cleanup rationale.
+If the policy was not set, or a disk needs additional cleanup after uninstall, use the version-specific sequence in **Raw Block Cleanup** in `references/local-storage-disks.md`: with Ceph `v19.2.1` or later, use `zap-device`; with Ceph `v19.2.0` or earlier (or no suitable tool image), use the targeted offset wipe. After either label-cleanup path, run `wipefs -af` and `sgdisk --zap-all`, then require `ceph-volume raw list` to return `{}` before reuse. Keep full-disk zeroing or another whole-device method for explicit sanitization intent only. Clean each OSD disk only after explicit destructive confirmation for the exact `/dev/disk/by-id/*` target and the required identity checks. For sanitization, use `scripts/plan_osd_disk_prep.py --intent sanitize` and the discovered `fna` / `sanicap` capabilities.
 
 ## MachineConfig Cleanup
 
