@@ -497,19 +497,18 @@ Do not copy `mon.count: 1`, `allowMultiplePerNode: true`, or
 `mon_max_pg_per_osd: "500"` into multi-node production plans without explicit
 direction.
 
-The ceph-csi-operator built-in controller replica count is 2, and the controller Deployment uses required pod anti-affinity on `kubernetes.io/hostname`. On SNO the second replica stays Pending. Set one replica on the shared driver defaults before the CephCluster, and do not copy `replicas: 1` into a multi-node plan without explicit direction:
+The ceph-csi-operator built-in controller replica count is 2, and the controller Deployment uses required pod anti-affinity on `kubernetes.io/hostname`. On SNO the second replica stays Pending. Set one replica on the shared driver defaults before the CephCluster, and do not copy `replicas: 1` into a multi-node plan without explicit direction.
 
-```yaml
-apiVersion: csi.ceph.io/v1
-kind: OperatorConfig
-metadata:
-  name: ceph-csi-operator-config
-  namespace: rook-ceph
-spec:
-  driverSpecDefaults:
-    controllerPlugin:
-      replicas: 1
+`operator-openshift.yaml` already creates `ceph-csi-operator-config` with `driverSpecDefaults.imageSet` and the other driver defaults. Add the replica count to that object. Do not `oc apply` a standalone `OperatorConfig` that carries only `replicas`: client-side apply prunes the fields it omits, including the image-set link. On a direct-manifest install, add `replicas: 1` under `spec.driverSpecDefaults.controllerPlugin` in `/tmp/rook-ceph-operator.yaml` before its first apply. When the object already exists, merge-patch it and keep the same field in any manifest you reapply:
+
+```bash
+oc -n rook-ceph patch operatorconfig.csi.ceph.io ceph-csi-operator-config --type=merge \
+  -p '{"spec":{"driverSpecDefaults":{"controllerPlugin":{"replicas":1}}}}'
+oc -n rook-ceph get operatorconfig.csi.ceph.io ceph-csi-operator-config \
+  -o jsonpath='{.spec.driverSpecDefaults.controllerPlugin.replicas} {.spec.driverSpecDefaults.imageSet.name}{"\n"}'
 ```
+
+Continue when the second command prints `1 rook-csi-operator-image-set-configmap`. Stop when the image-set name is empty.
 
 When preparing version-pinned example manifests, prefer the packaged helper and
 pass explicit Rook/Ceph versions from live discovery (do not treat helper defaults

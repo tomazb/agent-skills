@@ -449,6 +449,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "empty `plugin` value",
             "quay.io/cephcsi/cephcsi:v3.18.1",
             "driverSpecDefaults",
+            '{"spec":{"driverSpecDefaults":{"controllerPlugin":{"replicas":1}}}}',
             "kubernetes.io/hostname",
             "restricted:latest",
             "status.ceph.health",
