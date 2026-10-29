@@ -45,7 +45,7 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   echo "== stale mon/OSD dataDirHostPath =="
   if [ ! -d /var/lib/rook ]; then echo "/var/lib/rook absent (clean)"
   else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
-  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
+  for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] || continue; echo "stale dir: $p"; done
   echo "== OSD disk still carries a raw BlueStore label? =="
   # lsblk -f and wipefs -n show TYPE "ceph_bluestore" for a raw BlueStore label.
   [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
@@ -62,7 +62,7 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
-  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] || continue; echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 ' || { echo "node leftover inspection failed; do not reuse the disk" >&2; exit 1; }
 
 # RHCOS does not ship ceph-volume. Run the LVM residue audit from a node-local helper
@@ -216,7 +216,7 @@ oc apply -f /tmp/rook-rbd-aes256k-probe.yaml
 oc -n rook-rbd-aes256k-probe wait pod/rbd-smoke-writer --for=condition=Ready --timeout=5m
 oc -n rook-rbd-aes256k-probe get pod rbd-smoke-writer -o jsonpath='{.spec.nodeName}{"\n"}'  # confirm requested node
 oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'echo ok > /data/probe && cat /data/probe'
-oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do [ "$mp" = /data ] && echo "$dev"; done < /proc/mounts'
+oc -n rook-rbd-aes256k-probe exec rbd-smoke-writer -- sh -c 'while read -r dev mp _; do if [ "$mp" = /data ]; then echo "$dev"; exit 0; fi; done < /proc/mounts; echo "no /data mount" >&2; exit 1'
 ```
 
 Only after the `ok` write and the `/dev/rbd` mount device are recorded for this node, delete the probe namespace:

@@ -477,7 +477,7 @@ Before removing the Ceph pools or a consumer namespace, make sure every RBD-back
 ```bash
 oc debug node/<node> -- chroot /host bash -c '
   ls /dev/rbd[0-9]* 2>/dev/null || echo "no /dev/rbd[0-9]* devices"
-  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] && echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
+  for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] || continue; echo "rbd $(basename $r): pool=$(cat $r/pool 2>/dev/null) image=$(cat $r/name 2>/dev/null)"; done
 '
 ```
 

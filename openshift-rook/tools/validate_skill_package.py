@@ -439,6 +439,8 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "no candidate disks configured",
             "invalid candidate disk",
             "node leftover inspection failed; do not reuse the disk",
+            'for r in /sys/bus/rbd/devices/*; do [ -e "$r" ] || continue;',
+            'then echo "$dev"; exit 0; fi; done < /proc/mounts; echo "no /data mount" >&2; exit 1',
             "BlueStore signature remains on $d; do not reuse the disk",
             "LVM OSD metadata found on $d; do not reuse the disk",
             "Raw Ceph inventory is not empty for $d; do not reuse the disk",
