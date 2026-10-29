@@ -32,7 +32,7 @@ Never run or recommend `wipefs` before explicit destructive confirmation.
 
 Use `readlink -f`, `lsblk -f`, `wipefs -n`, and `ceph-volume lvm list` evidence.
 
-On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`. Fail closed when `DISKS` is empty (`no candidate disks configured`), when a path is not a block device (`invalid candidate disk`), or when node leftover inspection fails (`node leftover inspection failed; do not reuse the disk`).
+On RHCOS, run `ceph-volume lvm list` from a node-local helper container that bind-mounts `mount --rbind /host/dev /dev`, `mount --rbind /host/run/lvm /run/lvm`, and `mount --rbind /host/etc/lvm /etc/lvm` into the ceph image; if that helper cannot inspect the disk, print `LVM residue audit failed; do not reuse the disk`. Fail closed when `DISKS` is empty (`no candidate disks configured`), when a path is not a block device (`invalid candidate disk`), or when node leftover inspection fails (`node leftover inspection failed; do not reuse the disk`, `BlueStore signature remains on $d; do not reuse the disk`, `Raw Ceph inventory is not empty for $d; do not reuse the disk`).
 
 Use stable `/dev/disk/by-id/*` paths.
 
@@ -63,6 +63,7 @@ On OpenShift, install with operator-openshift.yaml for the dedicated rook-ceph S
 Apply `csi-operator.yaml` before `operator-openshift.yaml` or `CephConnection` reconciliation can fail.
 
 Use `curl -fsSLo /tmp/rook-ceph-csi-operator.yaml` before `curl -fsSLo /tmp/rook-ceph-operator.yaml`.
+On SNO, edit `/tmp/rook-ceph-operator.yaml` now, before its first apply.
 
 Create the namespace first with `oc create ns rook-ceph`.
 

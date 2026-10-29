@@ -47,11 +47,18 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
   else n=$(ls -A /var/lib/rook | wc -l); [ "$n" -eq 0 ] && echo "/var/lib/rook present but empty" || { echo "STALE ($n entries):"; ls -A /var/lib/rook; }; fi
   for p in /var/lib/rook/mon-* /var/lib/rook/openshift-storage; do [ -e "$p" ] && echo "stale dir: $p"; done
   echo "== OSD disk still carries a raw BlueStore label? =="
-  # lsblk -f shows FSTYPE "ceph_bluestore" for a raw BlueStore label.
+  # lsblk -f and wipefs -n show TYPE "ceph_bluestore" for a raw BlueStore label.
   [ -n '"$DISKS"' ] || { echo "no candidate disks configured" >&2; exit 1; }
   for d in '"$DISKS"'; do
     [ -b "$d" ] || { echo "invalid candidate disk: $d" >&2; exit 1; }
-    lsblk -f "$d" || exit 1
+    lsblk_out=$(lsblk -f "$d") || exit 1
+    printf "%s\n" "$lsblk_out"
+    wipefs_out=$(wipefs -n "$d") || exit 1
+    printf "%s\n" "$wipefs_out"
+    if printf "%s\n%s\n" "$lsblk_out" "$wipefs_out" | grep -Fq ceph_bluestore; then
+      echo "BlueStore signature remains on $d; do not reuse the disk" >&2
+      exit 1
+    fi
   done
   echo "== stale krbd device mappings (leaked by a prior teardown)? =="
   ls /dev/rbd[0-9]* 2>/dev/null && echo "STALE krbd present" || echo "no /dev/rbd[0-9]* devices"
@@ -63,7 +70,8 @@ oc debug "node/${NODE}" -- chroot /host bash -c '
 # `ceph-volume lvm list` exits 1 and prints "No valid Ceph lvm devices found" when the
 # disk has no LVM OSD. That is an empty inventory. Fail closed when the helper cannot
 # run: image pull, mount, missing ceph-volume, or an unreadable device. Run the raw
-# list in the same helper. Do not use set -e here: the empty-inventory exit would skip it.
+# list in the same helper and require it to print {}. Do not use set -e here: the
+# empty-inventory exit would skip it.
 ROOK_CEPH_IMAGE="quay.io/ceph/ceph:v19.2.2"   # or the cephVersion.image you plan to deploy
 oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
   mkdir -p /run/lvm /etc/lvm
@@ -84,7 +92,12 @@ oc debug "node/${NODE}" --image="${ROOK_CEPH_IMAGE}" -- bash -c '
       fi
     fi
     echo "== raw list =="
-    ceph-volume raw list "$d" --format json || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+    raw_out=$(ceph-volume raw list "$d" --format json) || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
+    printf "%s\n" "$raw_out"
+    if [ "$(printf "%s" "$raw_out" | tr -d "[:space:]")" != "{}" ]; then
+      echo "Raw Ceph inventory is not empty for $d; do not reuse the disk" >&2
+      exit 1
+    fi
   done
 ' || { echo "LVM residue audit failed; do not reuse the disk" >&2; exit 1; }
 ```
@@ -333,6 +346,8 @@ curl -fsSLo /tmp/rook-ceph-operator.yaml \
   "https://raw.githubusercontent.com/rook/rook/${ROOK_VERSION}/deploy/examples/operator-openshift.yaml"
 ```
 
+On SNO, edit `/tmp/rook-ceph-operator.yaml` now, before its first apply: add `replicas: 1` under `spec.driverSpecDefaults.controllerPlugin` of the `ceph-csi-operator-config` `OperatorConfig`, and keep its `imageSet` and other fields. See the SNO section below for why and how to verify it.
+
 Create the namespace before `common.yaml` on a fresh cluster. Apply CRDs first (required before common, CSI, and operator manifests), then common, then `csi-operator.yaml`, then the OpenShift operator. Apply the CRDs server-side — the Rook CRDs are large and client-side `oc apply` can fail with a `metadata.annotations: Too long` error:
 
 ```bash
@@ -499,7 +514,7 @@ direction.
 
 The ceph-csi-operator built-in controller replica count is 2, and the controller Deployment uses required pod anti-affinity on `kubernetes.io/hostname`. On SNO the second replica stays Pending. Set one replica on the shared driver defaults before the CephCluster, and do not copy `replicas: 1` into a multi-node plan without explicit direction.
 
-`operator-openshift.yaml` already creates `ceph-csi-operator-config` with `driverSpecDefaults.imageSet` and the other driver defaults. Add the replica count to that object. Do not `oc apply` a standalone `OperatorConfig` that carries only `replicas`: client-side apply prunes the fields it omits, including the image-set link. On a direct-manifest install, add `replicas: 1` under `spec.driverSpecDefaults.controllerPlugin` in `/tmp/rook-ceph-operator.yaml` before its first apply. When the object already exists, merge-patch it and keep the same field in any manifest you reapply:
+`operator-openshift.yaml` already creates `ceph-csi-operator-config` with `driverSpecDefaults.imageSet` and the other driver defaults. Add the replica count to that object. Do not `oc apply` a standalone `OperatorConfig` that carries only `replicas`: client-side apply prunes the fields it omits, including the image-set link. On a direct-manifest install, make that edit in `/tmp/rook-ceph-operator.yaml` before its first apply, as the Direct Manifest Install step says. When the object already exists, merge-patch it and keep the same field in any manifest you reapply:
 
 ```bash
 oc -n rook-ceph patch operatorconfig.csi.ceph.io ceph-csi-operator-config --type=merge \

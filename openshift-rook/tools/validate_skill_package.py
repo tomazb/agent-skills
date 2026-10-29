@@ -439,6 +439,8 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "no candidate disks configured",
             "invalid candidate disk",
             "node leftover inspection failed; do not reuse the disk",
+            "BlueStore signature remains on $d; do not reuse the disk",
+            "Raw Ceph inventory is not empty for $d; do not reuse the disk",
         ],
     )
     require(
@@ -463,6 +465,7 @@ def check_required_reference_guidance(root: Path) -> list[str]:
         [
             "curl -fsSLo /tmp/rook-ceph-csi-operator.yaml",
             "curl -fsSLo /tmp/rook-ceph-operator.yaml",
+            "On SNO, edit `/tmp/rook-ceph-operator.yaml` now, before its first apply",
             "oc create ns rook-ceph",
             "oc apply --server-side --force-conflicts -f /tmp/rook-ceph-crds.yaml",
             "oc apply -f /tmp/rook-ceph-common.yaml",
