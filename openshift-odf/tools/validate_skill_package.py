@@ -223,6 +223,29 @@ def extract_section(skill_text: str, heading: str) -> str | None:
     return skill_text[start:end]
 
 
+def extract_markdown_section(text: str, heading: str) -> str | None:
+    """Return a heading's body through the next peer or parent Markdown heading."""
+    match = re.search(
+        rf"^(?P<level>#{{1,6}})\s+{re.escape(heading)}\s*#*\s*$",
+        text,
+        re.MULTILINE,
+    )
+    if not match:
+        return None
+    level = len(match.group("level"))
+    end = len(text)
+    offset = match.end()
+    in_fence = False
+    for line in text[offset:].splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            in_fence = not in_fence
+        elif not in_fence and re.match(rf"^#{{1,{level}}}\s+", line):
+            end = offset
+            break
+        offset += len(line)
+    return text[match.end():end]
+
+
 def check_ownership_gate(skill_text: str) -> list[str]:
     """Require an evidence-based ODF vs Rook ownership gate before routing."""
     gate = extract_section(skill_text, "Product Ownership Gate")
@@ -424,6 +447,38 @@ def check_required_reference_guidance(root: Path) -> list[str]:
                 return
             pos = next_pos
 
+    def require_section_order(
+        rel: str, heading: str, label: str, needles: list[str]
+    ) -> None:
+        section = extract_markdown_section(read_reference(rel), heading)
+        if section is None:
+            issues.append(f"{rel}: missing {label} section '{heading}'")
+            return
+        pos = -1
+        for needle in needles:
+            next_pos = section.find(needle, pos + 1)
+            if next_pos == -1:
+                issues.append(f"{rel}: missing ordered {label}: {needle}")
+                return
+            pos = next_pos
+
+    def require_zap_device_target() -> None:
+        rel = "references/local-storage-disks.md"
+        section = extract_markdown_section(
+            read_reference(rel), "Ceph v19.2.1+ reuse cleanup"
+        )
+        if section is None:
+            return
+        command = next(
+            (line for line in section.splitlines()
+             if "ceph-bluestore-tool zap-device --dev" in line),
+            "",
+        )
+        if not re.search(r"--dev.*\$\{DISK\}.*--yes-i-really-really-mean-it", command):
+            issues.append(
+                f"{rel}: zap-device target must use the confirmed ${{DISK}} path and explicit confirmation on the same command"
+            )
+
     require(
         "references/install-and-preflight.md",
         "leftover-install detection (ODF or Rook)",
@@ -520,6 +575,64 @@ def check_required_reference_guidance(root: Path) -> list[str]:
             "select_erase_method.py",
             "references/local-storage-disks.md",
         ],
+    )
+    require(
+        "references/local-storage-disks.md",
+        "zap-device label reset",
+        [
+            "ceph-bluestore-tool zap-device",
+            "v19.2.1",
+            "--yes-i-really-really-mean-it",
+            "v19.2.0",
+            "19.2.1-405",
+        ],
+    )
+    require(
+        "references/maintenance-uninstall.md",
+        "zap-device label reset",
+        ["ceph-bluestore-tool zap-device", "v19.2.1"],
+    )
+    require("SKILL.md", "zap-device label reset", ["ceph-bluestore-tool zap-device", "v19.2.1"])
+    require_section_order(
+        "references/local-storage-disks.md",
+        "Ceph v19.2.1+ reuse cleanup",
+        "zap-device exact-disk cleanup and verification",
+        [
+            "explicit destructive confirmation",
+            'DISK="/dev/disk/by-id/',
+            "ceph-bluestore-tool zap-device --dev",
+            "${DISK}",
+            "--yes-i-really-really-mean-it",
+            "wipefs -af",
+            "sgdisk --zap-all",
+            "ceph-volume raw list",
+            "must print {}",
+        ],
+    )
+    require_zap_device_target()
+    require_section_order(
+        "references/local-storage-disks.md",
+        "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
+        "older-version offset cleanup and verification",
+        ["exact-disk confirmation", "CEPH_VOLUME_IMAGE=",
+         "for mult in 0 1 10 100 1000; do", "dd if=/dev/zero", "wipefs -af",
+         "sgdisk --zap-all", '--image="${CEPH_VOLUME_IMAGE}"',
+         "ceph-volume raw list", "must print {}"],
+    )
+    require_section_order(
+        "references/cluster-expand-shrink.md",
+        "Replacing a Failed Disk",
+        "version-specific disk replacement cleanup",
+        ["explicit destructive confirmation", "v19.2.1", "zap-device",
+         "v19.2.0", "offset wipe", "sanitization intent"],
+    )
+    require_section_order(
+        "references/maintenance-uninstall.md",
+        "Disk Cleanup (Data Loss)",
+        "version-specific uninstall disk cleanup",
+        ["v19.2.1", "zap-device", "v19.2.0", "offset wipe",
+         "wipefs -af", "sgdisk --zap-all", "ceph-volume raw list",
+         "return `{}`", "sanitization intent"],
     )
     require(
         "references/upgrade.md",

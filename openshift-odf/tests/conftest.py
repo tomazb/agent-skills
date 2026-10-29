@@ -81,10 +81,53 @@ ObjectBucket, use `ocs-storagecluster-ceph-rgw`, and manage RGW through
 ## Capacity
 Use the ocs-osd-removal job with FAILED_OSD_IDS and scale the storageDeviceSets
 count.
+storageDevespace.sh --namespace odf-cephfs-smoke
 
 ## BlueStore cleanup
-For a disk that previously held a Ceph BlueStore OSD, use full-disk zeroing.
-NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem. ODF `cleanup-policy=delete` is not this controller command.
+For a disk that previously held a Ceph BlueStore OSD, use targeted label cleanup for reuse; full-disk zeroing is for explicit sanitization intent only.
+NVMe cryptographic erase uses `fna` and `sanicap`: `--sanact=4` for a key change, `--ses=2` for format cryptographic erase, `--sanact=2` for sanitize block erase. Success with Global Data Erased reports `0x101`. Choose the fastest proper erase with `scripts/select_erase_method.py`. A virtio or generic virtual disk with `write_zeroes_max_bytes` set uses `blkdiscard --zeroout`. `fstrim` only trims a mounted filesystem. ODF `cleanup-policy=delete` is not this controller command. From Ceph `v19.2.1` (ODF 4.20.20 ships `19.2.1-405`), `ceph-bluestore-tool zap-device --yes-i-really-really-mean-it` zeros every BlueStore label copy; `v19.2.0` has no `zap-device`.
+
+## Raw Block Cleanup (after explicit confirmation)
+
+### Ceph v19.2.1+ reuse cleanup
+
+After explicit destructive confirmation for the exact target:
+```bash
+DISK="/dev/disk/by-id/<stable-disk-id>"
+ceph-bluestore-tool zap-device --dev '"${DISK}"' --yes-i-really-really-mean-it
+wipefs -af "${DISK}"
+sgdisk --zap-all "${DISK}"
+ceph-volume raw list "${DISK}" --format json   # must print {}
+```
+
+### Ceph v19.2.0 and earlier (or no suitable zap-device image)
+
+After exact-disk confirmation:
+```bash
+CEPH_VOLUME_IMAGE="<available-ceph-image>"
+BYTES=$(blockdev --getsize64 "${DISK}")
+G=$((1024*1024*1024))
+for mult in 0 1 10 100 1000; do
+  off=$((mult * G))
+  [ "$off" -ge "$BYTES" ] && continue
+  dd if=/dev/zero of="${DISK}" bs=4096 seek=$((off/4096)) count=256
+done
+wipefs -af "${DISK}"
+sgdisk --zap-all "${DISK}"
+oc debug "node/${NODE}" --image="${CEPH_VOLUME_IMAGE}" -- bash -c '
+  set -eu
+  mount --rbind /host/dev /dev
+  ceph-volume raw list '"${DISK}"' --format json   # must print {}
+'
+```
+
+## Replacing a Failed Disk
+
+After explicit destructive confirmation for exact `/dev/disk/by-id/*` target and identity checks: Ceph `v19.2.1` uses `zap-device`; Ceph `v19.2.0` uses the offset wipe. After either label-cleanup path, run `wipefs -af` and `sgdisk --zap-all`, then require `ceph-volume raw list` to return `{}` before reuse. Full-disk zeroing only for explicit sanitization intent.
+
+## Disk Cleanup (Data Loss)
+
+With Ceph `v19.2.1`, use `zap-device`; with Ceph `v19.2.0`, use the offset wipe. After either label-cleanup path, run `wipefs -af` and `sgdisk --zap-all`, then require `ceph-volume raw list` to return `{}`. Full-disk zeroing is for explicit sanitization intent only.
 
 ## Uninstall
 Annotate `uninstall.ocs.openshift.io/cleanup-policy` and
@@ -188,7 +231,7 @@ Use `references/vm-storage-profiles.md` for CDI/KubeVirt VM storage defaults.
 
 ## Core Safety Rules
 
-Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. SSDs often support cryptographic erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. See `references/local-storage-disks.md`.
+Safety guidance. Record `PRIOR_DEFAULT_STORAGE_CLASS` before uninstall. If `oc wait --for=jsonpath` fails with `unrecognized condition`, poll the field instead. SSDs often support cryptographic erase; discover `fna` and `sanicap` first, then run `scripts/select_erase_method.py` for the fastest proper erase. Virtio and generic virtual disks use `blkdiscard --zeroout` or writing zeroes; `fstrim` does not blank a raw disk. For disk reuse, require explicit destructive confirmation for the exact stable `/dev/disk/by-id/*` target. With Ceph `v19.2.1` or later, run `ceph-bluestore-tool zap-device`, then `wipefs -af` and `sgdisk --zap-all`; with `v19.2.0` or earlier, use the offset wipe before the same signature cleanup. Verify `ceph-volume raw list` returns `{}`. Reserve full-disk zeroing for explicit sanitization intent. See `references/local-storage-disks.md`.
 
 ## Required Source Checks
 
@@ -262,8 +305,15 @@ def package_factory(tmp_path, make_skill_text, reference_text):
         (root / "scripts" / "check_snapshot_smoke.py").write_text("", encoding="utf-8")
         (root / "scripts" / "cleanup_smoke_namespace.sh").write_text("", encoding="utf-8")
         (root / "scripts" / "select_erase_method.py").write_text("", encoding="utf-8")
-        for helper in ("plan_osd_disk_prep.py", "check_odf_health.py", "check_object_smoke.py",
-                       "rgw_s3_roundtrip.py", "odf_audit_expectations.sh", "odf_common.sh", "classify_rook_ownership.sh"):
+        for helper in (
+            "plan_osd_disk_prep.py",
+            "check_odf_health.py",
+            "check_object_smoke.py",
+            "rgw_s3_roundtrip.py",
+            "odf_audit_expectations.sh",
+            "odf_common.sh",
+            "classify_rook_ownership.sh",
+        ):
             (root / "scripts" / helper).write_text("", encoding="utf-8")
         (root / "scripts" / "render_console_plugin_patch.py").write_text("", encoding="utf-8")
         (root / "tools").mkdir()

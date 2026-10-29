@@ -145,9 +145,14 @@ def test_missing_validated_sno_routing_fails(validator, package_factory, make_sk
     assert any("validated ODF SNO routing" in issue for issue in issues)
 
 
-def test_missing_destructive_confirmation_language_fails(validator, package_factory, reference_text):
+def test_missing_destructive_confirmation_language_fails(
+    validator, package_factory, reference_text, make_skill_text
+):
     text = reference_text().replace("explicit destructive confirmation", "operator approval")
-    root = package_factory(reference_content=text)
+    skill_text = make_skill_text().replace(
+        "explicit destructive confirmation", "operator approval"
+    )
+    root = package_factory(skill_text=skill_text, reference_content=text)
     issues = validator.validate_root(root)
     assert any("destructive disk safety" in issue for issue in issues)
 
@@ -607,3 +612,119 @@ def test_missing_clean_cluster_uninstall_guidance_fails(validator, package_facto
     )
     issues = validator.validate_root(root)
     assert any("clean-cluster uninstall residue" in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    ("rel", "needle"),
+    [
+        ("references/local-storage-disks.md", "--yes-i-really-really-mean-it"),
+        ("references/local-storage-disks.md", "19.2.1-405"),
+        ("references/maintenance-uninstall.md", "ceph-bluestore-tool zap-device"),
+        ("SKILL.md", "v19.2.1"),
+    ],
+)
+def test_missing_zap_device_guidance_fails(validator, package_factory, rel, needle):
+    root = package_factory()
+    path = root / rel
+    path.write_text(path.read_text(encoding="utf-8").replace(needle, "removed"), encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any("zap-device label reset" in issue and rel in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    ("rel", "heading", "old", "new", "expected"),
+    [
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            'ceph-bluestore-tool zap-device --dev \'"${DISK}"\'',
+            "ceph-bluestore-tool zap-device --dev /dev/sdb",
+            "zap-device target must use the confirmed",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            "wipefs -af",
+            "wipefs removed",
+            "zap-device exact-disk cleanup and verification",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.1+ reuse cleanup",
+            "ceph-volume raw list",
+            "ceph-volume list removed",
+            "zap-device exact-disk cleanup and verification",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
+            "sgdisk --zap-all",
+            "partition cleanup removed",
+            "older-version offset cleanup and verification",
+        ),
+        (
+            "references/local-storage-disks.md",
+            "Ceph v19.2.0 and earlier (or no suitable zap-device image)",
+            '--image="${CEPH_VOLUME_IMAGE}"',
+            "--image=quay.io/ceph/ceph:v19.2.2",
+            "older-version offset cleanup and verification",
+        ),
+        (
+            "references/cluster-expand-shrink.md",
+            "Replacing a Failed Disk",
+            "v19.2.0",
+            "older version",
+            "version-specific disk replacement cleanup",
+        ),
+        (
+            "references/maintenance-uninstall.md",
+            "Disk Cleanup (Data Loss)",
+            "sanitization intent",
+            "general cleanup",
+            "version-specific uninstall disk cleanup",
+        ),
+    ],
+)
+def test_missing_blue_store_cleanup_safety_relationship_fails(
+    validator, package_factory, rel, heading, old, new, expected
+):
+    root = package_factory()
+    path = root / rel
+    text = path.read_text(encoding="utf-8")
+    heading_line = next(
+        line for line in text.splitlines(keepends=True)
+        if line.lstrip("# ").strip() == heading
+    )
+    start = text.index(heading_line)
+    end = text.find("\n## ", start + len(heading_line))
+    if end < 0:
+        end = text.find("\n# ", start + len(heading_line))
+    section = text[start:end]
+    assert old in section
+    section = section.replace(old, new, 1)
+    path.write_text(text[:start] + section + text[end:], encoding="utf-8")
+    issues = validator.validate_root(root)
+    assert any(expected in issue for issue in issues)
+
+
+@pytest.mark.parametrize(
+    "loop",
+    [
+        "for mult in 1 10 100 1000; do",
+        "for mult in 0 10 100 1000; do",
+        "for mult in 0 1 100 1000; do",
+        "for mult in 0 1 10 1000; do",
+        "for mult in 0 1 10 100; do",
+    ],
+)
+def test_missing_fallback_bluestore_offset_fails(validator, package_factory, loop):
+    root = package_factory()
+    path = root / "references" / "local-storage-disks.md"
+    path.write_text(
+        path.read_text(encoding="utf-8").replace(
+            "for mult in 0 1 10 100 1000; do", loop
+        ),
+        encoding="utf-8",
+    )
+    issues = validator.validate_root(root)
+    assert any("older-version offset cleanup and verification" in issue for issue in issues)
