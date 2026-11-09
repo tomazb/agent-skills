@@ -26,6 +26,7 @@ Never recommend applying upstream Rook manifests, wiping disks, or editing Ceph 
 ## Routing
 
 - **Discovery, install, or prerequisite planning**: start with `references/install-and-preflight.md`.
+- **OpenShift 4.18 deployment evidence or AES256K kernel-RBD failure**: see `references/ocp-4.18-sno-deployment.md` for the exact tested versions, approved CSI fallback, and warning-qualified acceptance; do not generalize across patches.
 - **Dedicated disk preparation for OSDs**: use `references/osd-disk-prep.md`.
 - **Disk reuse versus sanitization**: run `python3 scripts/plan_osd_disk_prep.py` first. Reinstall defaults to BlueStore metadata reset. Only explicit `--intent sanitize` selects a whole-device erase.
 - **RBD block storage pools and StorageClasses**: use `references/rbd-block-pools.md`.

@@ -119,6 +119,17 @@ The secure default is `spec.security.cephx.allowedCiphers: [aes256k]` plus `spec
 
 **Reported field evidence (not independently reproduced):** An OpenShift 4.20 RHCOS node running kernel `5.14.0-570.134.1.el9_6` mapped an AES256K RBD volume at `/dev/rbd0`. A compact three-node OpenShift 4.21.34 cluster running RHCOS kernel `5.14.0-570.141.1.el9_6`, Rook `v1.21.0`, and ceph-csi `v3.18.1` reportedly wrote through an AES256K RBD mapping at `/dev/rbd0` on every schedulable node. An OpenShift 4.18.56 SNO node running RHCOS kernel `5.14.0-427.151.1.el9_4` with FIPS off, Rook `v1.21.1`, Ceph `v20.2.4`, and ceph-csi `v3.18.1` wrote through an AES256K RBD mapping at `/dev/rbd0`. A full `ceph auth dump-keys` audit on that cluster reported 25 `aes256k` keys, and `lvms-vg1` stayed the only default StorageClass. These observations are not a compatibility guarantee for all 5.14 kernels or FIPS configurations. Capture the kernel, FIPS state, Ceph/Rook/CSI versions, effective MonMap policy, audited key types, and per-node `/dev/rbd*` write/read results. The live volume probe, not the kernel release string, decides.
 
+**Observed OpenShift 4.18.44 exception:** Kernel
+`5.14.0-427.130.1.el9_4.x86_64` (FIPS off), Rook `v1.20.10`, Ceph `v20.2.5`,
+and ceph-csi `v3.17.1` provisioned an RBD PVC but failed krbd mapping with
+`failed to add secret ... to kernel` and error `524`. An explicitly approved
+CSI-only classic-AES rotation then passed `/dev/rbd0` I/O and snapshot restore.
+This is patch-specific evidence, not an OpenShift 4.18-wide prohibition.
+The [redacted deployment record](ocp-4.18-sno-deployment.md) captures configuration,
+cleanup, and the resulting warning-qualified acceptance. Do not infer a supported
+Rook/Kubernetes combination from a field report: Rook v1.20 supports Kubernetes
+1.31, while v1.21 requires 1.32.
+
 **Discover the ceph-csi image before the CephCluster.** The CSI Deployment may not exist yet. Read the operator image-set, or the manifest about to be applied:
 
 ```bash

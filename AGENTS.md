@@ -34,6 +34,7 @@ This repository stores reusable agent skills. Each skill should live in its own 
 - Do not use the legacy frontmatter field `tools`; `allowed-tools` is opt-in — use it only when a tool restriction is genuinely needed, and state the reason in the skill (see `qa-agent`).
 - Keep skill instructions concise and move heavy operational detail into scripts or tests when possible.
 - When changing a skill's behavior, update the skill document and its adjacent validation/tests together.
+- `openshift-rook/references/ocp-4.18-sno-deployment.md` records the redacted SNO configuration and exact-kernel AES256K limitation. Preserve its patch-specific scope, explicit CSI fallback approval, and distinction between warning-qualified acceptance and strict HEALTH_OK.
 
 ## Python Script Conventions
 - Prefer Python 3.9+ compatible code.

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.20.5
+
+- Add a redacted OpenShift 4.18.44 SNO deployment record for Rook v1.20.10 / Ceph v20.2.5, including disk isolation, LVMS coexistence, RBD and snapshot configuration, monitoring, and cleanup evidence.
+- Record the kernel-RBD AES256K rejection on kernel `5.14.0-427.130.1.el9_4.x86_64`, the explicitly approved CSI-only classic-AES fallback, and warning-qualified stability rather than a false HEALTH_OK pass. Keep the limitation patch-specific and distinguish the Rook/Kubernetes support matrix from reported field success.
+- Link the record from skill routing and install guidance, with documentation regression coverage.
+
 ## 1.20.4
 
 - Prefer `ceph-bluestore-tool zap-device` from the Ceph image to clear BlueStore labels when the target Ceph is `v19.2.1` or later. It zeros every label location that fits and refuses without `--yes-i-really-really-mean-it`. Keep the manual offset wipe for `v19.2.0` and earlier, and list `zap-device` among the commands that need exact-disk confirmation.
