@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.3.0
+
+- Discover the catalog-recommended namespace for new installs and the installed namespace for lifecycle work, including the post-uninstall audit.
+- Clarify required and optional disk paths and automatic discovery policy from the LVMS 5.0.0 schema.
+- Record the verified OpenShift 5.0.1 SNO install and both snapshot restores. Check CSI registration and discovered workloads rather than assuming separate CSI pods.
+
 ## 1.2.0
 
 - Fix live-observed CephFS/NFS restore permission failures by allowing SELinux relabeling on newly created filesystem restore mounts; keep reader commands non-mutating, restricted security intact, and raw-block restores read-only.

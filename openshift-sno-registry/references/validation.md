@@ -25,6 +25,8 @@ Poll `.status.phase` instead of `oc wait --for=jsonpath`. That jsonpath conditio
 
 ```bash
 smoke_namespace="registry-smoke"
+skopeo_image="quay.io/skopeo/stable:latest"
+pushed_image="image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:smoke"
 existing=$(oc --context="$target_context" get namespace "$smoke_namespace" --ignore-not-found -o name)
 if [ -n "$existing" ]; then
   echo "refusing to reuse existing namespace ${smoke_namespace}" >&2
@@ -35,9 +37,9 @@ before=$(oc --context="$target_context" -n openshift-image-registry exec deploy/
 echo "registry filesystem before push (diagnostic): ${before:-unavailable}"
 python3 scripts/render_registry_push.py \
   --namespace "$smoke_namespace" \
-  --source registry.access.redhat.com/ubi9/ubi-micro:9.5 \
-  --destination "image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:9.5" \
-  --skopeo-image registry.access.redhat.com/ubi9/skopeo:latest \
+  --source "$skopeo_image" \
+  --destination "$pushed_image" \
+  --skopeo-image "$skopeo_image" \
   --output /tmp/registry-smoke-push.yaml
 oc --context="$target_context" apply -f /tmp/registry-smoke-push.yaml
 wait_smoke_pod() {
@@ -64,7 +66,7 @@ after=$(oc --context="$target_context" -n openshift-image-registry exec deploy/i
 echo "registry filesystem after push (diagnostic): ${after:-unavailable}"
 python3 scripts/render_registry_smoke.py \
   --namespace "$smoke_namespace" \
-  --image "image-registry.openshift-image-registry.svc:5000/${smoke_namespace}/pushed:9.5" \
+  --image "$pushed_image" \
   --output /tmp/registry-smoke-pod.yaml
 oc --context="$target_context" apply -f /tmp/registry-smoke-pod.yaml || exit 1
 wait_smoke_pod registry-smoke-pull || exit 1
@@ -75,10 +77,10 @@ python3 scripts/check_registry_smoke.py \
 oc --context="$target_context" delete namespace "$smoke_namespace" --wait=true
 ```
 
-The push log must contain `registry-push-ok`. The pull log must be `registry-smoke-ok`, and the pull pod image must be the `pushed:9.5` tag that was just pushed. `du -s /registry` is a diagnostic, not a pass condition. A repeated push of the same blob can leave that number unchanged because the registry stores content-addressed blobs. An `oc import-image` can also leave the filesystem unchanged, for a different reason: it records metadata and does not upload blobs, even with `--reference-policy=local`. `registry-push-ok` from this `skopeo copy` is the upload signal. A later pull of that same tag is the availability signal.
+The push log must contain `registry-push-ok`. The pull log must be `registry-smoke-ok`, and the pull pod must use the exact image reference that was just pushed. The pull renderer sets `imagePullPolicy: Always` so the kubelet resolves the tag through the registry even when it already has the layers. `du -s /registry` is a diagnostic, not a pass condition. A repeated push of the same blob can leave that number unchanged because the registry stores content-addressed blobs. An `oc import-image` can also leave the filesystem unchanged, for a different reason: it records metadata and does not upload blobs, even with `--reference-policy=local`. `registry-push-ok` from this `skopeo copy` is the upload signal. A later pull of that same tag is the availability signal.
 
-The source image and `--skopeo-image` above are public catalog images passed in as arguments. The destination is only `image-registry.openshift-image-registry.svc:5000` in the smoke namespace. The renderer refuses any other destination before it writes a manifest, and it does not put a token in the manifest or in its errors.
+The example uses the [Skopeo project's public image](https://github.com/podman-container-tools/skopeo/blob/main/install.md) as both the tool and the source. Both arguments accept a tag or a repository reference pinned by `@sha256:<digest>`. When choosing a different source image, use one that the test pod can pull and that provides `sh` for the pull marker. The destination must be a tag on `image-registry.openshift-image-registry.svc:5000` in the smoke namespace. The renderer refuses any other destination before it writes a manifest, and it does not put a token in the manifest or in its errors.
 
 After the checker passes, delete only the smoke namespace. A failed wait, marker check, or checker exits before that delete and leaves the namespace in place. Leave `image-registry-storage` in place. Redact any credential that a failed `skopeo` log includes before saving the output.
 
-A push or pull failure after the PVC is `Bound` is a registry failure, not a storage-class failure. Inspect the image-registry pod logs before changing storage.
+If the push pod reports `ErrImagePull` or `skopeo` fails while reading the source manifest, check upstream image access and retry with a reachable image. If the failure names the internal destination or occurs during the pull from that destination, inspect the image-registry pod logs before changing storage.

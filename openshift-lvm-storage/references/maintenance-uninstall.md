@@ -1,6 +1,6 @@
 # Maintenance And Uninstall
 
-Use this runbook for node maintenance, disk removal from VGs, LVMS operator uninstall, TopoLVM CSI removal, and cluster cleanup on OpenShift/OKD.
+Use this runbook for node maintenance, disk removal from VGs, LVMS operator uninstall, TopoLVM CSI removal, and cluster cleanup on OpenShift/OKD. Set `lvms_namespace` to the namespace recorded during [LVMS discovery](install-and-preflight.md#live-discovery) before running these commands.
 
 ## Node Maintenance
 
@@ -33,10 +33,10 @@ Check that all LVs show `a` (active) only for pods that are still running, or `o
 After reboot, the `LVMCluster` should reconcile automatically. Verify:
 
 ```bash
-oc -n openshift-storage get lvmcluster lvmcluster -o wide
+oc -n "$lvms_namespace" get lvmcluster lvmcluster -o wide
 oc get nodes <node>
-oc -n openshift-storage get pods -o wide
-oc -n openshift-storage get daemonset,deployment -o wide
+oc -n "$lvms_namespace" get pods -o wide
+oc -n "$lvms_namespace" get daemonset,deployment -o wide
 ```
 
 ## Disk Removal from VG
@@ -65,23 +65,23 @@ Delete all workloads that depend on LVMS volumes. Warn the user that this is des
 Delete the `LVMCluster` CR. The operator will attempt to clean up VGs and thin pools if configured:
 
 ```bash
-oc -n openshift-storage delete lvmcluster lvmcluster
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=delete --timeout=5m || true
+oc -n "$lvms_namespace" delete lvmcluster lvmcluster
+oc -n "$lvms_namespace" wait lvmcluster/lvmcluster --for=delete --timeout=5m || true
 ```
 
 ### Remove the Operator (OLM)
 
 ```bash
-oc -n openshift-storage delete subscription lvms-operator
-oc -n openshift-storage delete csv <lvms-operator-csv-name>
+oc -n "$lvms_namespace" delete subscription lvms-operator
+oc -n "$lvms_namespace" delete csv <lvms-operator-csv-name>
 ```
 
 ### Remove the Namespace Only If Dedicated
 
-Do not delete `openshift-storage` until you prove it is dedicated to LVMS. Clusters commonly share this namespace with ODF or other storage operators.
+Verify that the discovered namespace is dedicated to LVMS before deleting it. Existing installations can share `openshift-storage` with ODF or other operators.
 
 ```bash
-oc -n openshift-storage get all,subscription,csv,operatorgroup
+oc -n "$lvms_namespace" get all,subscription,csv,operatorgroup
 oc api-resources --api-group=topolvm.io --verbs=list -o name
 oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name
 ```
@@ -89,16 +89,16 @@ oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name
 If non-LVMS resources are present, leave the namespace in place and remove only LVMS-owned resources. Delete the namespace only after explicit confirmation that it is dedicated to LVMS:
 
 ```bash
-oc delete namespace openshift-storage --wait=false
-oc get namespace openshift-storage -o yaml | grep -E 'status|phase'
+oc delete namespace "$lvms_namespace" --wait=false
+oc get namespace "$lvms_namespace" -o yaml | grep -E 'status|phase'
 ```
 
 If the namespace is stuck in `Terminating` due to finalizers, check for remaining resources:
 
 ```bash
-oc -n openshift-storage get all
-oc api-resources --api-group=topolvm.io --verbs=list -o name | xargs -I {} oc -n openshift-storage get {} 2>/dev/null || true
-oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name | xargs -I {} oc -n openshift-storage get {} 2>/dev/null || true
+oc -n "$lvms_namespace" get all
+oc api-resources --api-group=topolvm.io --verbs=list -o name | xargs -I {} oc -n "$lvms_namespace" get {} 2>/dev/null || true
+oc api-resources --api-group=lvm.topolvm.io --verbs=list -o name | xargs -I {} oc -n "$lvms_namespace" get {} 2>/dev/null || true
 ```
 
 ## Host-Level Cleanup (Manual)
@@ -149,7 +149,7 @@ oc debug node/<node> -- chroot /host bash -c "
 After uninstall, run the read-only audit script to confirm nothing is left behind:
 
 ```bash
-bash scripts/post_uninstall_audit.sh
+bash scripts/post_uninstall_audit.sh --namespace "$lvms_namespace"
 ```
 
 Or manually verify:
@@ -161,7 +161,7 @@ oc get csidriver topolvm.io 2>/dev/null || true
 oc get sc | grep lvms || true
 oc get pv,pvc -A | grep topolvm || true
 oc get scc | grep topolvm || true
-oc get namespace openshift-storage 2>/dev/null || true
+oc get namespace "$lvms_namespace" 2>/dev/null || true
 oc get csv -A | grep lvms || true
 oc get subscription -A | grep lvms || true
 ```

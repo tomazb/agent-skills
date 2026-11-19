@@ -2,6 +2,14 @@
 
 Use this document as observed evidence from a validated OpenShift SNO + LVMS deployment. Do not turn these host-specific values into defaults without confirming the target cluster.
 
+## OpenShift 5.0.1 with LVMS 5.0.0
+
+On bare-metal SNO, the Red Hat catalog offered LVMS 5.0.0 on `stable-5.0` and recommended the `openshift-lvm-storage` namespace. The install used that namespace and an OLM Subscription. On the RHCOS 10.2 node, `pvs --devices` and `wipefs -n` confirmed an unassigned LVM physical-volume signature on the selected 477 GiB NVMe disk. The disk had no mounted filesystem, holders, VG, or LVs. After explicit approval to erase the signature, the operator initialized that disk using its stable by-id path. The OS and larger disk were excluded by the selector.
+
+The device class used a 90% thin pool, overprovision ratio 1, and XFS. Readback showed one PV in the VG and a 428.82 GiB thin pool. The `LVMCluster` reached `Ready`, and `lvms-vg1` became the sole default StorageClass with `WaitForFirstConsumer`. The observed workloads were the operator and `vg-manager`. The node reported `topolvm.io` in its `CSINode`.
+
+The operator created the matching `lvms-vg1` VolumeSnapshotClass with deletion policy `Delete`. The packaged smoke helper verified original data after snapshot restore for both filesystem and raw-block PVCs. The test namespaces, PVs, snapshot contents, and logical volumes were gone after cleanup. No recurring snapshot schedule was configured.
+
 ## Environment
 
 - OpenShift version: <version>

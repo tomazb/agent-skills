@@ -1,8 +1,18 @@
 # Validated SNO Internal Registry
 
+## OpenShift 5.0.1 with LVMS 5.0.0
+
+- The registry started in `Removed` with no registry PVC. A pre-created 100Gi `Filesystem`, `ReadWriteOnce` claim bound on `lvms-vg1` (`topolvm.io`, `xfs`, `Delete`, `WaitForFirstConsumer`).
+- The explicit claim and `Recreate` rollout produced one ready registry replica. The deployment used the claim, and the default route was absent.
+- `openshift-apiserver` and `kube-apiserver` rolled after the `Managed` patch. The registry replica became ready before the API servers settled. The push and pull ran after both API operators recovered.
+- The upstream registry rejected the previous UBI and Skopeo example image requests. Using `quay.io/skopeo/stable:latest` as both source and tool produced `registry-push-ok`. The pull resolved the pushed tag from the internal registry, ran with `imagePullPolicy: Always`, and logged `registry-smoke-ok`.
+- Registry disk usage grew from 0 to 90,636 KiB after the push. The smoke namespace was deleted and the registry remained ready.
+
+## OpenShift 4.18.56 with LVMS 4.18.5
+
 Observed on OpenShift 4.18.56 with the image registry operator at 4.18.56 and LVM Storage operator 4.18.5. Topology was a single node. The only default StorageClass was `lvms-vg1` (`topolvm.io`, `xfs`, `Delete`, `WaitForFirstConsumer`). These are observed values, not defaults for every cluster.
 
-## Deploy
+### Deploy
 
 The pre-created `image-registry-storage` PVC bound at 100Gi, `Filesystem`, `ReadWriteOnce`, on `lvms-vg1`. The registry deployment was `Recreate` with one ready replica. `default-route` was absent.
 
@@ -12,7 +22,7 @@ Setting `managementState: Managed` rolled `openshift-apiserver`. On the single n
 
 An `oc` 4.9 client rejects `oc wait --for=jsonpath`. Poll `.status.phase` instead. `oc get` prints `Completed` for a pod whose phase is `Succeeded`.
 
-## Remove and redeploy
+### Remove and redeploy
 
 `managementState: Removed`, with storage management left `Managed`, deleted the registry deployment, the PVC, and its PV. The config kept `spec.storage.pvc.claim` and `spec.storage.managementState`. The config condition `Removed` became `True`. The image-registry cluster operator stayed `Available`.
 

@@ -1,18 +1,18 @@
 # Upgrade
 
-Use this runbook for LVMS operator and TopoLVM CSI upgrades on OpenShift/OKD.
+Use this runbook for LVMS operator and TopoLVM CSI upgrades on OpenShift/OKD. Set `lvms_namespace` to the namespace recorded during [LVMS discovery](install-and-preflight.md#live-discovery) before running these commands.
 
 ## Pre-Upgrade Health Check
 
 Run these checks before any upgrade step. Do not proceed unless all `LogicalVolume` CRs are healthy and all PVCs are bound:
 
 ```bash
-oc -n openshift-storage get lvmcluster lvmcluster -o wide
-oc -n openshift-storage get logicalvolumes.topolvm.io -o wide
+oc -n "$lvms_namespace" get lvmcluster lvmcluster -o wide
+oc get logicalvolumes.topolvm.io -o wide
 oc get pv,pvc -A -o wide
 oc get pvc -A --no-headers | awk '$3 != "Bound" { print; bad=1 } END { exit bad }'
 oc get pv --no-headers | awk '$5 !~ /^(Bound|Available)$/ { print; bad=1 } END { exit bad }'
-oc -n openshift-storage get pods -o wide
+oc -n "$lvms_namespace" get pods -o wide
 ```
 
 The two `awk` checks print unhealthy rows and exit nonzero if any PVC is not `Bound` or any PV is not `Bound`/`Available`.
@@ -33,29 +33,29 @@ Back up the `LVMCluster` CR and any custom StorageClasses before proceeding.
 If the cluster was installed via OLM (OperatorHub Subscription), upgrade through OLM:
 
 ```bash
-oc -n openshift-storage get subscription
-oc -n openshift-storage get csv
+oc -n "$lvms_namespace" get subscription
+oc -n "$lvms_namespace" get csv
 ```
 
 To trigger an upgrade, update the Subscription channel if needed, then find and approve the pending InstallPlan:
 
 ```bash
 # Edit the channel if moving to a newer release stream:
-oc -n openshift-storage edit subscription lvms-operator
+oc -n "$lvms_namespace" edit subscription lvms-operator
 
 # Find the pending InstallPlan:
-oc -n openshift-storage get installplan
+oc -n "$lvms_namespace" get installplan
 
 # Approve it:
-oc -n openshift-storage patch installplan <installplan-name> \
+oc -n "$lvms_namespace" patch installplan <installplan-name> \
   --type=merge -p '{"spec":{"approved":true}}'
 ```
 
 Wait for the new CSV to reach `Succeeded`:
 
 ```bash
-oc -n openshift-storage get csv -w
-oc -n openshift-storage get pods -o wide
+oc -n "$lvms_namespace" get csv -w
+oc -n "$lvms_namespace" get pods -o wide
 ```
 
 ## Helm Upgrade (if applicable)
@@ -65,7 +65,7 @@ If the operator was installed via Helm, upgrade the chart:
 ```bash
 helm repo update <repo-name>
 helm upgrade lvms-operator <repo-name>/lvms-operator \
-  --namespace openshift-storage \
+  --namespace "$lvms_namespace" \
   --reuse-values
 ```
 
@@ -74,8 +74,8 @@ helm upgrade lvms-operator <repo-name>/lvms-operator \
 After the operator upgrade, verify the `LVMCluster` CR is still reconciled and `Ready`:
 
 ```bash
-oc -n openshift-storage get lvmcluster lvmcluster -o yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
+oc -n "$lvms_namespace" get lvmcluster lvmcluster -o yaml
+oc -n "$lvms_namespace" wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
 
 If the operator version introduces CR schema changes, the `LVMCluster` may need updating. Check the release notes for any required CR changes.
@@ -85,8 +85,8 @@ If the operator version introduces CR schema changes, the `LVMCluster` may need 
 The TopoLVM CSI driver (node and controller) is typically managed by the operator. After an operator upgrade, verify the CSI driver pods are updated. Workload names and labels vary by LVMS version (for example `vg-manager`, `topolvm-node`, `topolvm-controller`), so list all workloads and read the names from the output rather than assuming a label selector:
 
 ```bash
-oc -n openshift-storage get pods -o wide
-oc -n openshift-storage get daemonset,deployment -o wide
+oc -n "$lvms_namespace" get pods -o wide
+oc -n "$lvms_namespace" get daemonset,deployment -o wide
 ```
 
 ## Upgrade Safety Rules
@@ -105,7 +105,7 @@ After upgrade, confirm:
 
 - Operator pod is running and healthy.
 - `LVMCluster` is `Ready`.
-- TopoLVM CSI driver pods are running on all target nodes.
+- LVMS workloads are ready and `topolvm.io` is registered in each target node's `CSINode`.
 - All PVCs are still `Bound`.
 - All `LogicalVolume` CRs are `Healthy`.
 - Thin pool usage is within expected bounds.

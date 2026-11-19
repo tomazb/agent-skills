@@ -25,6 +25,7 @@ spec:
   containers:
     - name: pull
       image: {image}
+      imagePullPolicy: Always
       command: ["sh", "-c", "echo {marker}"]
       securityContext:
         allowPrivilegeEscalation: false

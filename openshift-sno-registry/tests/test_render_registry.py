@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 
+from internal_image import ImageReferenceError, parse_source_image
 import render_registry_config as config
 import render_registry_pvc as pvc
 import render_registry_push as push
@@ -64,6 +65,7 @@ def test_smoke_pod_is_restricted_and_pulls_the_given_image():
     )
     assert "namespace: registry-smoke" in text
     assert "image: image-registry.openshift-image-registry.svc:5000/registry-smoke/smoke:9.5" in text
+    assert "imagePullPolicy: Always" in text
     assert "echo registry-smoke-ok" in text
     assert "runAsNonRoot: true" in text
     assert "allowPrivilegeEscalation: false" in text
@@ -94,6 +96,29 @@ def test_push_manifest_copies_without_signatures_or_a_baked_token():
     assert "echo registry-push-ok" in text
     assert "runAsNonRoot: true" in text
     assert "set -x" not in text
+
+
+def test_push_accepts_digest_pinned_pull_images():
+    tool = "quay.io/skopeo/stable@sha256:" + "a" * 64
+    source = "registry.example.com/library/smoke@sha256:" + "b" * 64
+    dest = "image-registry.openshift-image-registry.svc:5000/registry-smoke/pushed:smoke"
+    text = push.render_registry_push("registry-smoke", source, dest, tool)
+    assert f"image: {tool}" in text
+    assert f"docker://{source}" in text
+    assert f"docker://{dest}" in text
+
+
+@pytest.mark.parametrize("reference", [
+    "user:private-value@registry.example.com/smoke@sha256:" + "a" * 64,
+    "registry.example.com/smoke@sha256:abcd",
+    "registry.example.com/smoke@sha256:" + "a" * 64 + "?token=private-value",
+    "registry.example.com/smoke@sha256:" + "a" * 64 + "\nextra",
+])
+def test_invalid_pull_references_are_rejected_without_echoing_input(reference: str):
+    with pytest.raises(ImageReferenceError) as caught:
+        parse_source_image(reference)
+    assert "private-value" not in str(caught.value)
+    assert reference not in str(caught.value)
 
 
 def test_push_api_and_cli_reject_other_destinations(tmp_path: Path, capsys: pytest.CaptureFixture[str]):

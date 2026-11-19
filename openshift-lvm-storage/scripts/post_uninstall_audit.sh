@@ -7,6 +7,27 @@ set -euo pipefail
 FAILED=0
 QUERY_RESULT=""
 
+case "$#" in
+  0) namespaces=(openshift-lvm-storage openshift-storage) ;;
+  1)
+    if [[ "$1" == "--help" || "$1" == "-h" ]]; then
+      echo "Usage: post_uninstall_audit.sh [--namespace NAME]"
+      echo "By default, checks openshift-lvm-storage and openshift-storage."
+      exit 0
+    fi
+    echo "Expected --namespace NAME" >&2
+    exit 2
+    ;;
+  2)
+    if [[ "$1" != "--namespace" || ! "$2" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ || ${#2} -gt 63 ]]; then
+      echo "Expected --namespace NAME with a valid namespace name" >&2
+      exit 2
+    fi
+    namespaces=("$2")
+    ;;
+  *) echo "Expected --namespace NAME" >&2; exit 2 ;;
+esac
+
 fail() {
   echo "FAIL: $*"
   FAILED=1
@@ -165,20 +186,21 @@ check_json_list \
   oc get scc
 
 echo
-NAMESPACE_OUTPUT=""
-if NAMESPACE_OUTPUT=$(oc get namespace openshift-storage 2>&1); then
-  warn "openshift-storage namespace still exists"
-  echo "$NAMESPACE_OUTPUT"
-  if ! STORAGE_OUTPUT=$(oc -n openshift-storage get all 2>&1); then
-    fail "openshift-storage workload listing failed: $STORAGE_OUTPUT"
-  elif [ -n "$STORAGE_OUTPUT" ]; then
-    echo "$STORAGE_OUTPUT"
+for namespace in "${namespaces[@]}"; do
+  if NAMESPACE_OUTPUT=$(oc get namespace "$namespace" 2>&1); then
+    warn "$namespace namespace still exists"
+    echo "$NAMESPACE_OUTPUT"
+    if ! STORAGE_OUTPUT=$(oc -n "$namespace" get all 2>&1); then
+      fail "$namespace workload listing failed: $STORAGE_OUTPUT"
+    elif [ -n "$STORAGE_OUTPUT" ]; then
+      echo "$STORAGE_OUTPUT"
+    fi
+  elif is_not_found "$NAMESPACE_OUTPUT"; then
+    ok "$namespace namespace absent"
+  else
+    fail "$namespace namespace lookup failed: $NAMESPACE_OUTPUT"
   fi
-elif is_not_found "$NAMESPACE_OUTPUT"; then
-  ok "openshift-storage namespace absent"
-else
-  fail "openshift-storage namespace lookup failed: $NAMESPACE_OUTPUT"
-fi
+done
 
 echo
 check_json_list \

@@ -40,6 +40,8 @@ On OpenShift 4.18, an empty `spec.storage.pvc.claim` makes the image registry op
 
 Create the claim first, with ReadWriteOnce and `volumeMode: Filesystem`, and set `spec.storage.pvc.claim` to `image-registry-storage`. The operator then uses that claim. It does not recreate an explicitly named claim after `Removed` deletes it, so a redeploy creates the PVC again before returning the config to `Managed`.
 
+The explicit filesystem claim also worked on OpenShift 5.0.1 with LVMS 5.0.0. See the [validated SNO cases](validated-sno.md) for the live deployment and smoke test results.
+
 ## Create the PVC
 
 Confirm `openshift-image-registry` exists. The registry operator creates that namespace; do not invent a replacement.
