@@ -1,6 +1,6 @@
 # OpenShift Versions
 
-Current version: **1.1.1**
+Current version: **1.2.0**
 
 ## TLDR
 
@@ -30,7 +30,7 @@ public and authenticated APIs.
 
 ## Version-Agnostic Workflow (Mandatory)
 
-**Always discover first. Never hardcode versions.**
+Discover the published versions first.
 
 1. Run `--discover` or `--all-latest` first to detect active minors.
 2. Use discovered minors for `--channel` and `--upgrade-path` follow-up queries.
@@ -53,11 +53,11 @@ python3 scripts/query_versions.py --token "$OCM_TOKEN" --enabled --rosa-enabled
 
 ## Script Modes
 
-- `--discover`: Probes channels and lists active minor versions for the selected
-  channel type and architecture.
+- `--discover`: Lists active minors for the selected channel and architecture.
+  Scans 4.x and 5.x by default. Use `--major` to scan one major.
 - `--all-latest`: Returns the latest patch for every discovered active minor.
-- `--upgrade-path`: Resolves valid one-hop upgrade targets from a supplied
-  version.
+- `--upgrade-path`: Checks the current minor, next minor, and next major's
+  initial channel for published one-hop edges from a supplied version.
 - `--channel`: Queries a specific channel and lists versions (or latest when
   paired with `--latest`).
 - `--token`: Uses the authenticated endpoint for lifecycle metadata, ROSA/HCP

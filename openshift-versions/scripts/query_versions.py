@@ -34,10 +34,11 @@ BASE_URL = "https://api.openshift.com"
 GRAPH_ENDPOINT = "/api/upgrades_info/v1/graph"
 VERSIONS_ENDPOINT = "/api/clusters_mgmt/v1/versions"
 
-# Sensible defaults - fully overridable via --floor / --ceiling / --major
+# Discovery starts at these scan floors and reads releases from the API.
 DEFAULT_FLOOR_MINOR = 12
 DEFAULT_CEILING_MINOR = 99
 DEFAULT_MAJOR = 4
+DEFAULT_DISCOVERY_FLOORS = {DEFAULT_MAJOR: DEFAULT_FLOOR_MINOR, 5: 0}
 CHANNELS = ["stable", "fast", "candidate", "eus"]
 CHANNEL_RE = re.compile(r"^(stable|fast|candidate|eus)-\d+\.\d+$")
 MAX_RETRIES = 3
@@ -67,12 +68,13 @@ def is_not_found_error_message(message: str) -> bool:
 
 def validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Validate cross-argument constraints after argparse parsing."""
-    if args.major < 1 or args.major > 20:
+    if args.major is not None and not 1 <= args.major <= 20:
         parser.error("--major must be between 1 and 20")
 
-    if args.floor < 0:
+    floor = args.floor if args.floor is not None else DEFAULT_DISCOVERY_FLOORS.get(args.major, 0)
+    if floor < 0:
         parser.error("--floor must be 0 or greater")
-    if args.ceiling < args.floor:
+    if args.ceiling < floor:
         parser.error("--ceiling must be greater than or equal to --floor")
 
     if args.page < 1:
@@ -289,12 +291,13 @@ def discover_active_minors(
     channel_type: str = "stable",
     arch: str = "amd64",
     major: int = DEFAULT_MAJOR,
-    floor_minor: int = DEFAULT_FLOOR_MINOR,
+    floor_minor: Optional[int] = None,
     ceiling_minor: int = DEFAULT_CEILING_MINOR,
     graph_fetcher=get_graph_versions,
 ) -> list:
     """
     Probe channel_type-{major}.{minor} for minor in [floor..ceiling].
+    Count only releases for that minor, excluding older update-graph nodes.
     Stops after 3 consecutive empty responses to avoid infinite scanning.
     Returns list of dicts: {minor, channel, versions_count, latest, oldest}.
     Raises RuntimeError if ALL probes fail with connection errors (vs empty channels).
@@ -305,14 +308,18 @@ def discover_active_minors(
     connection_errors = 0
     last_conn_error = ""
 
+    if floor_minor is None:
+        floor_minor = DEFAULT_DISCOVERY_FLOORS.get(major, 0)
     for minor in range(floor_minor, ceiling_minor + 1):
-        channel = f"{channel_type}-{major}.{minor}"
+        series = f"{major}.{minor}"
+        channel = f"{channel_type}-{series}"
         total_probed += 1
         try:
             data = graph_fetcher(channel, arch)
             nodes = data.get("nodes", [])
             versions = sorted(
-                [n["version"] for n in nodes if n.get("version")],
+                [version for n in nodes
+                 if isinstance(version := n.get("version"), str) and version.startswith(series + ".")],
                 key=version_key,
             )
             if versions:
@@ -417,42 +424,24 @@ def find_upgrade_paths(
     connection_errors = 0
     last_conn_error = ""
 
+    # A major transition can be published in the next major's initial channel.
+    # A channel probe alone never establishes an upgrade edge.
     for ct in channel_types:
-        # Check same minor channel
-        channel = f"{ct}-{major}.{minor}"
-        total_probed += 1
-        try:
-            targets = upgrade_target_fetcher(channel, from_version, arch)
-            if targets:
-                results[channel] = targets
-        except RuntimeError as e:
-            err_msg = str(e)
-            if is_connection_error_message(err_msg):
-                connection_errors += 1
-                last_conn_error = err_msg
-                continue
-            if is_not_found_error_message(err_msg):
-                pass
-            else:
-                raise
-
-        # Check next minor channel (cross-minor upgrades)
-        next_channel = f"{ct}-{major}.{minor + 1}"
-        total_probed += 1
-        try:
-            targets = upgrade_target_fetcher(next_channel, from_version, arch)
-            if targets:
-                results[next_channel] = targets
-        except RuntimeError as e:
-            err_msg = str(e)
-            if is_connection_error_message(err_msg):
-                connection_errors += 1
-                last_conn_error = err_msg
-                continue
-            if is_not_found_error_message(err_msg):
-                pass
-            else:
-                raise
+        for series in (f"{major}.{minor}", f"{major}.{minor + 1}", f"{major + 1}.0"):
+            channel = f"{ct}-{series}"
+            total_probed += 1
+            try:
+                targets = upgrade_target_fetcher(channel, from_version, arch)
+                if targets:
+                    results[channel] = targets
+            except RuntimeError as e:
+                err_msg = str(e)
+                if is_connection_error_message(err_msg):
+                    connection_errors += 1
+                    last_conn_error = err_msg
+                    continue
+                if not is_not_found_error_message(err_msg):
+                    raise
 
     if total_probed > 0 and connection_errors == total_probed:
         raise RuntimeError(
@@ -512,14 +501,12 @@ Authenticated queries:
     parser.add_argument(
         "--major",
         type=int,
-        default=DEFAULT_MAJOR,
-        help=f"Major version to scan (default: {DEFAULT_MAJOR})"
+        help="Scan one major version (default: scan 4 and 5)"
     )
     parser.add_argument(
         "--floor",
         type=int,
-        default=DEFAULT_FLOOR_MINOR,
-        help=f"Lowest minor version to probe (default: {DEFAULT_FLOOR_MINOR})"
+        help="Lowest minor version to probe per major (default: 12 for 4.x, 0 otherwise)"
     )
     parser.add_argument(
         "--ceiling",
@@ -631,19 +618,25 @@ Authenticated queries:
     try:
         # ---- Discovery mode ----
         if args.discover or args.all_latest:
-            results = discover_active_minors(
-                channel_type=args.channel_type,
-                arch=args.arch,
-                major=args.major,
-                floor_minor=args.floor,
-                ceiling_minor=args.ceiling,
-                graph_fetcher=lambda channel, arch: get_graph_versions(
+            def fetch_graph(channel, arch):
+                return get_graph_versions(
                     channel,
                     arch,
                     max_retries=args.retry_count,
                     retry_base_delay=args.retry_base_delay,
-                ),
-            )
+                )
+
+            majors = DEFAULT_DISCOVERY_FLOORS if args.major is None else (args.major,)
+            results = []
+            for major in majors:
+                results.extend(discover_active_minors(
+                    channel_type=args.channel_type,
+                    arch=args.arch,
+                    major=major,
+                    floor_minor=args.floor,
+                    ceiling_minor=args.ceiling,
+                    graph_fetcher=fetch_graph,
+                ))
 
             if args.output_json:
                 print(json.dumps(results, indent=2))
@@ -651,7 +644,8 @@ Authenticated queries:
                 print(f"Latest patch versions ({args.channel_type}, {args.arch}):")
                 print("-" * 50)
                 for r in results:
-                    print(f"  {args.major}.{r['minor']:<4}  ->  {r['latest']}")
+                    series = r["channel"].split("-", 1)[1]
+                    print(f"  {series:<7} ->  {r['latest']}")
                 print(f"\n{len(results)} active minor version(s) found")
             else:
                 print(f"Active minor versions ({args.channel_type}, {args.arch}):")
@@ -659,15 +653,14 @@ Authenticated queries:
                 print(f"  {'Minor':<8} {'Count':<8} {'Oldest':<16} {'Latest':<16}")
                 print("-" * 70)
                 for r in results:
+                    series = r["channel"].split("-", 1)[1]
                     print(
-                        f"  {args.major}.{r['minor']:<6} "
+                        f"  {series:<8} "
                         f"{r['versions_count']:<8} "
                         f"{r['oldest']:<16} "
                         f"{r['latest']:<16}"
                     )
-                print(f"\n{len(results)} active minor version(s) found "
-                      f"(scanned {args.major}.{args.floor}+, "
-                      f"stopped after 3 consecutive empty)")
+                print(f"\n{len(results)} active minor version(s) found")
 
         # ---- Upgrade path mode ----
         elif args.upgrade_path:

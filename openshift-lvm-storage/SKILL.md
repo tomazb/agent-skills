@@ -48,6 +48,7 @@ For OpenShift channel, patch, or one-hop upgrade-path questions, use `openshift-
 
 - Cluster topology: SNO or multi-node, OpenShift/OKD version, node roles, target MachineConfigPool.
 - Current LVMS state: absent, operator installed, `LVMCluster` CR exists, installed versions, VG health, thin pool usage, StorageClasses, `LogicalVolume` CRs.
+- LVMS namespace: discover the installed Subscription, CSV, or LVMCluster across namespaces. For a fresh install, check the selected catalog CSV's namespace recommendation. Reuse the namespace for lifecycle checks.
 - Target lifecycle action: install, VG provisioning, filesystem volume, block volume, expand/shrink, upgrade, backup/restore, maintenance, uninstall, validation, hardening, or troubleshooting.
 - Target disk inventory by node, preferably `/dev/disk/by-id/*`, plus whether each disk may be destroyed and whether it is raw or already has LVM signatures.
 - Thin provisioning policy (over-provisioning ratio, `thinLvPercent`, `sizePercent`, spare GB), default StorageClass intent, filesystem type (ext4/xfs), volume mode (filesystem vs block), backup/restore requirements, and maintenance window constraints.

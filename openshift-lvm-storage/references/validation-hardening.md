@@ -1,6 +1,6 @@
 # Validation Hardening And Troubleshooting
 
-Use this runbook after install, upgrade, reboot, maintenance, or incident response.
+Use this runbook after install, upgrade, reboot, maintenance, or incident response. Set `lvms_namespace` to the namespace recorded during [LVMS discovery](install-and-preflight.md#live-discovery) before running these commands.
 
 ## Core Validation
 
@@ -8,10 +8,11 @@ Use this runbook after install, upgrade, reboot, maintenance, or incident respon
 oc get nodes -o wide
 oc get mcp -o wide
 oc get sc
-oc -n openshift-storage get pods -o wide
-oc -n openshift-storage get lvmcluster -o wide
-oc -n openshift-storage get logicalvolumes.topolvm.io -o wide
-oc get csidriver
+oc -n "$lvms_namespace" get pods -o wide
+oc -n "$lvms_namespace" get lvmcluster -o wide
+oc get logicalvolumes.topolvm.io -o wide
+oc get csidriver topolvm.io
+oc get csinode <node-name> -o jsonpath='{.spec.drivers[*].name}{"\n"}'
 ```
 
 Confirm exactly one default StorageClass when defaulting is expected.
@@ -84,7 +85,7 @@ trap cleanup_smoke EXIT
 
 oc --context="$target_context" apply -f /tmp/lvms-fs-smoke.yaml
 oc --context="$target_context" -n lvms-fs-smoke wait pod/lvms-smoke-writer --for=condition=Ready --timeout=5m
-oc --context="$target_context" -n openshift-storage get logicalvolumes.topolvm.io -o wide
+oc --context="$target_context" get logicalvolumes.topolvm.io -o wide
 python3 scripts/check_snapshot_smoke.py \
   --context "$target_context" \
   --namespace lvms-fs-smoke \
@@ -123,7 +124,7 @@ trap cleanup_smoke EXIT
 
 oc --context="$target_context" apply -f /tmp/lvms-block-smoke.yaml
 oc --context="$target_context" -n lvms-block-smoke wait pod/lvms-smoke-writer --for=condition=Ready --timeout=5m
-oc --context="$target_context" -n openshift-storage get logicalvolumes.topolvm.io -o wide
+oc --context="$target_context" get logicalvolumes.topolvm.io -o wide
 python3 scripts/check_snapshot_smoke.py \
   --context "$target_context" \
   --namespace lvms-block-smoke \
@@ -141,7 +142,7 @@ On OpenShift, make smoke pods compatible with restricted PodSecurity by setting 
 After a node reboot, check:
 
 - `LVMCluster` is `Ready`.
-- TopoLVM CSI node pods are running on all nodes.
+- LVMS workloads are ready and `topolvm.io` is registered in each selected node's `CSINode`.
 - VGs and thin pools exist (`vgs`, `lvs`).
 - Thin pool capacity is within bounds.
 - `LogicalVolume` CRs are `Healthy`.
@@ -153,7 +154,7 @@ After a node reboot, check:
 
 After uninstall, confirm:
 
-- `openshift-storage` namespace is absent (or empty if reused).
+- The recorded LVMS namespace is absent if deleted, or has no LVMS workloads if retained.
 - `oc api-resources --api-group=topolvm.io` and `oc api-resources --api-group=lvm.topolvm.io` return no resources.
 - `csidriver/topolvm.io` is absent.
 - No StorageClass uses `provisioner: topolvm.io`.
@@ -189,11 +190,11 @@ For incidents, answer with:
 Collect support data when needed:
 
 ```bash
-oc -n openshift-storage get events --sort-by=.lastTimestamp
+oc -n "$lvms_namespace" get events --sort-by=.lastTimestamp
 # Workload names vary by LVMS version. Discover them first, then tail logs by the observed names:
-oc -n openshift-storage get deployment,daemonset -o wide
-oc -n openshift-storage logs deployment/<controller-deployment> --tail=200
-oc -n openshift-storage logs daemonset/<node-daemonset> --tail=200
-oc -n openshift-storage get logicalvolumes.topolvm.io -o yaml
+oc -n "$lvms_namespace" get deployment,daemonset -o wide
+oc -n "$lvms_namespace" logs deployment/<controller-deployment> --tail=200
+oc -n "$lvms_namespace" logs daemonset/<node-daemonset> --tail=200
+oc get logicalvolumes.topolvm.io -o yaml
 oc get node <node> -o yaml | grep -A 20 "topolvm.io/capacity"
 ```

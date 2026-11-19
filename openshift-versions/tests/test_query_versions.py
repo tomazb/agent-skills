@@ -113,6 +113,19 @@ def test_discover_active_minors_connection_errors_do_not_count_as_empty() -> Non
     ]
 
 
+def test_discovery_counts_releases_for_the_channel_minor_only() -> None:
+    def fake_graph(channel: str, arch: str) -> dict:
+        return {"nodes": [
+            {"version": "4.22.22"}, {"version": "5.0.0"}, {"version": "5.0.1"},
+        ]}
+
+    result, = query_versions.discover_active_minors(
+        major=5, ceiling_minor=0, graph_fetcher=fake_graph,
+    )
+
+    assert (result["oldest"], result["latest"], result["versions_count"]) == ("5.0.0", "5.0.1", 2)
+
+
 def test_discover_active_minors_raises_when_all_probes_fail_with_connection_errors() -> None:
     def fake_fetcher(channel: str, arch: str) -> dict:
         raise RuntimeError("Connection error: timed out")
@@ -157,7 +170,7 @@ def test_find_upgrade_paths_checks_next_minor_channel() -> None:
     )
 
     assert result == {"stable-4.19": ["4.19.0"]}
-    assert calls == ["stable-4.18", "stable-4.19"]
+    assert calls == ["stable-4.18", "stable-4.19", "stable-5.0"]
 
 
 def test_main_rejects_invalid_discovery_channel_type(
@@ -351,6 +364,72 @@ def test_main_rejects_nonpositive_retry_base_delay(
 # ---------------------------------------------------------------------------
 # End-to-end CLI tests
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["--discover", "--all-latest"])
+def test_discovery_includes_both_default_major_lines(
+    mode: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    graphs = {
+        "stable-4.12": {"nodes": [{"version": "4.12.10"}]},
+        "stable-5.0": {"nodes": [{"version": "5.0.1"}]},
+    }
+    monkeypatch.setattr(
+        query_versions, "get_graph_versions",
+        lambda channel, arch, **kwargs: graphs.get(channel, {"nodes": []}),
+    )
+
+    assert run_main_ok(monkeypatch, [mode]).code == 0
+    out = capsys.readouterr().out
+    assert any(line.split()[0] == "4.12" and "4.12.10" in line for line in out.splitlines() if line.strip())
+    assert any(line.split()[0] == "5.0" and "5.0.1" in line for line in out.splitlines() if line.strip())
+    assert "2 active minor" in out
+
+
+def test_discovery_can_scan_only_5_0_with_a_ceiling_of_zero(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = []
+
+    def fake_graph(channel: str, arch: str, **kwargs) -> dict:
+        calls.append(channel)
+        return {"nodes": [{"version": "5.0.1"}]}
+
+    monkeypatch.setattr(query_versions, "get_graph_versions", fake_graph)
+
+    assert run_main_ok(monkeypatch, [
+        "--discover", "--major", "5", "--ceiling", "0", "--json",
+    ]).code == 0
+    assert calls == ["stable-5.0"]
+    results = json.loads(capsys.readouterr().out)
+    assert [item["channel"] for item in results] == ["stable-5.0"]
+
+
+@pytest.mark.parametrize("edges,expected", [
+    ([[0, 1]], {"stable-5.0": ["5.0.1"]}),
+    ([], {}),
+])
+def test_upgrade_path_uses_only_published_edges_in_next_major(
+    edges: list,
+    expected: dict,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def fake_graph(channel: str, arch: str, **kwargs) -> dict:
+        if channel == "stable-5.0":
+            return {
+                "nodes": [{"version": "4.22.18"}, {"version": "5.0.1"}],
+                "edges": edges,
+            }
+        raise RuntimeError("HTTP 404: Not Found")
+
+    monkeypatch.setattr(query_versions, "get_graph_versions", fake_graph)
+
+    assert run_main_ok(monkeypatch, ["--upgrade-path", "4.22.18", "--json"]).code == 0
+    assert json.loads(capsys.readouterr().out) == expected
 
 
 def test_all_latest_mode_end_to_end(

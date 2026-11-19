@@ -6,7 +6,7 @@ description: Use when users ask about available OpenShift versions, latest patch
 # OpenShift Versions Skill
 
 Query OpenShift Container Platform versions from Red Hat's public APIs.
-**No version numbers are hardcoded.** All examples use dynamic discovery so the skill stays current as new OCP minors ship.
+Discover released versions from the graph at runtime. The default scan covers the 4.x and 5.x release lines, with a separate starting minor for each.
 
 ## IMPORTANT — Version-Agnostic Workflow
 
@@ -51,8 +51,11 @@ python3 scripts/query_versions.py --discover --channel-type eus
 # One-liner: latest patch for every active minor
 python3 scripts/query_versions.py --all-latest
 
-# Narrow the scan range (e.g., only check 4.14–4.18)
-python3 scripts/query_versions.py --discover --floor 14 --ceiling 18
+# Narrow the scan to 4.14–4.18
+python3 scripts/query_versions.py --discover --major 4 --floor 14 --ceiling 18
+
+# Scan only 5.x, starting at 5.0
+python3 scripts/query_versions.py --discover --major 5
 
 # ARM64
 python3 scripts/query_versions.py --all-latest --arch arm64
@@ -88,7 +91,10 @@ python3 scripts/query_versions.py --upgrade-path {FULL_VERSION} --channel-type s
 python3 scripts/query_versions.py --upgrade-path {FULL_VERSION} --arch arm64
 ```
 
-The script checks both the same-minor and next-minor channels for cross-minor upgrade edges.
+The script checks the source minor, the next minor, and the next major's `X.0`
+channel for published one-hop edges. A matching release in a channel alone does
+not establish an upgrade path. Check the cluster's own upgrade recommendations
+before acting.
 
 ### Raw curl (no script)
 
@@ -212,10 +218,12 @@ python3 scripts/query_versions.py --channel stable-4.18 --latest --retry-count 0
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--major` | `4` | Major version to scan |
-| `--floor` | `12` | Lowest minor to probe |
-| `--ceiling` | `99` | Highest minor to probe (auto-stops after 3 empty) |
+| `--major` | 4 and 5 | Restrict the scan to one major version |
+| `--floor` | 12 for 4.x, 0 otherwise | Lowest minor to probe in each selected major |
+| `--ceiling` | `99` | Highest minor to probe in each major. Stops that major after three consecutive empty channels. |
 | `--channel-type` | `stable` | Channel type to probe (`stable`, `fast`, `candidate`, `eus`) |
+
+Discovery counts releases for the channel's minor. An upgrade graph can also contain older source releases.
 
 Validation rules:
 - `--channel-type` must be a single value for `--discover` and `--all-latest`

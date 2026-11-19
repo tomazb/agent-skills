@@ -11,13 +11,25 @@ oc version
 oc get nodes -o wide
 oc get mcp -o wide
 oc get sc
-oc get ns openshift-storage || true
-oc -n openshift-storage get operatorgroup 2>/dev/null || true
-oc -n openshift-storage get subscription,csv 2>/dev/null || true
-oc -n openshift-storage get pods 2>/dev/null || true
-oc -n openshift-storage get lvmclusters.lvm.topolvm.io 2>/dev/null || true
-oc -n openshift-storage get logicalvolumes.topolvm.io 2>/dev/null || true
+oc get subscription,csv -A
+oc api-resources --api-group=lvm.topolvm.io
+# If the API serves LVMCluster:
+oc get lvmclusters.lvm.topolvm.io -A
 ```
+
+Locate the installed LVMS Subscription or owning CSV and any existing LVMCluster across namespaces. Record their namespace as `lvms_namespace`. Ignore OLM copies of the CSV and resolve conflicting installation evidence before proceeding. Keep an existing deployment in its namespace, including `openshift-storage` when shared with ODF. For a fresh install, use the [catalog discovery](#olm-install-recommended) below.
+
+After selecting the namespace, inspect its OperatorGroup, workloads, and LVM resources:
+
+```bash
+lvms_namespace="<discovered-lvms-namespace>"
+oc get ns "$lvms_namespace" --ignore-not-found
+oc -n "$lvms_namespace" get operatorgroup,subscription,csv,pods
+oc -n "$lvms_namespace" get lvmclusters.lvm.topolvm.io
+oc get logicalvolumes.topolvm.io
+```
+
+Run the LVM resource queries only if their APIs are served.
 
 Also discover leftovers from a previous lifecycle before reinstalling:
 
@@ -72,51 +84,55 @@ LVMS on OpenShift requires the LVM Storage Operator (also known as the TopoLVM o
 
 ### OLM Install (Recommended)
 
-Install the operator via the OperatorHub or a Subscription. The resources must be created in order: the `openshift-storage` namespace first, then an `OperatorGroup`, then the `Subscription`. A `Subscription` created in a namespace with no `OperatorGroup` never produces a CSV — OLM reports `no operator group found`.
-
-First ensure the namespace exists:
-
-```bash
-oc create namespace openshift-storage || true
-```
-
-Then create an `OperatorGroup` (skip this if one already exists in `openshift-storage`, for example from a prior ODF install — `oc -n openshift-storage get operatorgroup`):
-
-```yaml
-apiVersion: operators.coreos.com/v1
-kind: OperatorGroup
-metadata:
-  name: openshift-storage-operatorgroup
-  namespace: openshift-storage
-spec:
-  targetNamespaces:
-    - openshift-storage
-```
-
-Then discover the real Subscription channel. LVMS channels in the catalog are version-pinned (for example `stable-4.21`, `stable-4.22`); a Subscription with a channel the catalog does not serve (such as a bare `stable`) sits forever with no CSV. Do not guess the channel — read it from the catalog:
+Install the operator via OperatorHub or a Subscription. Before creating anything, discover the package, channel, catalog source, and suggested installation namespace:
 
 ```bash
 oc get packagemanifest lvms-operator -n openshift-marketplace \
   -o jsonpath='{.status.defaultChannel}{"\n"}{.status.channels[*].name}{"\n"}{.status.catalogSource}{"\n"}{.status.catalogSourceNamespace}{"\n"}'
+
+oc get packagemanifest lvms-operator -n openshift-marketplace -o json | jq -r '
+  .status | .defaultChannel as $channel | .channels[]
+  | select(.name == $channel)
+  | .currentCSVDesc.annotations
+  | .["operatorframework.io/suggested-namespace"],
+    .["operatorframework.io/suggested-namespace-template"]
+  | select(. != null)'
 ```
 
-Use the `defaultChannel` output as `<default-channel>` below unless the user pins a different served channel. The Subscription examples below assume the Red Hat catalog (`redhat-operators` in `openshift-marketplace`); if the discovery output shows the package resolving from a community or custom catalog, set `spec.source` and `spec.sourceNamespace` from the discovered `catalogSource` and `catalogSourceNamespace` instead. Then create the Subscription:
+Use the catalog's default channel unless a different served channel was requested. If selecting a different channel, look up its CSV annotations. Use the chosen CSV's `operatorframework.io/suggested-namespace` for a fresh installation and inspect its `operatorframework.io/suggested-namespace-template` for required settings. If the catalog lacks guidance, check the installed release's documentation before choosing. The catalog on OpenShift 5.0.1 served `stable-5.0` and suggested `openshift-lvm-storage` for LVMS 5.0.0.
 
-```yaml
-apiVersion: operators.coreos.com/v1alpha1
-kind: Subscription
+Use one catalog consistently for the channel, namespace recommendation, and Subscription. Create the namespace, then reuse its existing suitable OperatorGroup or create one, then create the Subscription. OLM reports `no operator group found` if the namespace lacks one. Substitute discovered values and apply the catalog's namespace settings:
+
+```bash
+lvms_namespace="<discovered-lvms-namespace>"
+lvms_channel="<served-channel>"
+lvms_catalog="<discovered-catalog-source>"
+lvms_catalog_namespace="<discovered-catalog-namespace>"
+oc get namespace "$lvms_namespace" --ignore-not-found
+```
+
+If absent, save the catalog's namespace template to `lvms-namespace.json`, review its settings and name, then run `oc create -f lvms-namespace.json`. When there is no template, use the release documentation to prepare the namespace. Check for an existing OperatorGroup:
+
+```bash
+oc -n "$lvms_namespace" get operatorgroup
+```
+
+If the namespace has no OperatorGroup, create one scoped to that namespace:
+
+```bash
+oc create -f - <<EOF
+apiVersion: operators.coreos.com/v1
+kind: OperatorGroup
 metadata:
-  name: lvms-operator
-  namespace: openshift-storage
+  name: lvms-operatorgroup
+  namespace: ${lvms_namespace}
 spec:
-  channel: <default-channel>
-  name: lvms-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
-  installPlanApproval: Automatic
+  targetNamespaces:
+    - ${lvms_namespace}
+EOF
 ```
 
-Or via CLI:
+Create the Subscription:
 
 ```bash
 oc create -f - <<EOF
@@ -124,30 +140,21 @@ apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
   name: lvms-operator
-  namespace: openshift-storage
+  namespace: ${lvms_namespace}
 spec:
-  channel: <default-channel>
+  channel: ${lvms_channel}
   name: lvms-operator
-  source: redhat-operators
-  sourceNamespace: openshift-marketplace
+  source: ${lvms_catalog}
+  sourceNamespace: ${lvms_catalog_namespace}
   installPlanApproval: Automatic
 EOF
 ```
 
-Wait for the operator CSV to reach `Succeeded`:
+Wait for the operator CSV to reach `Succeeded` and its workloads to be ready:
 
 ```bash
-oc -n openshift-storage get csv -w
-oc -n openshift-storage get pods -o wide
-```
-
-### Namespace and Project
-
-The LVMS operator typically runs in `openshift-storage`. The namespace and its `OperatorGroup` are created as the first steps of the OLM install above. Confirm both exist before troubleshooting a stuck Subscription:
-
-```bash
-oc get namespace openshift-storage
-oc -n openshift-storage get operatorgroup
+oc -n "$lvms_namespace" get csv -w
+oc -n "$lvms_namespace" get pods -o wide
 ```
 
 ## LVMCluster CR
@@ -195,7 +202,7 @@ oc patch sc lvms-vg1 \
 # (Kubernetes is laxer than the RFC here - measured on OCP 4.22.12, a "replace"
 # of an absent member succeeds - but that is an implementation detail of the
 # apiserver's JSON Patch library, not a guarantee. "add" is correct on both.)
-oc -n openshift-storage patch lvmcluster <name> --type json \
+oc -n "$lvms_namespace" patch lvmcluster <name> --type json \
   -p '[{"op":"add","path":"/spec/storage/deviceClasses/0/default","value":true}]'
 ```
 
@@ -222,12 +229,14 @@ If the cluster has no default StorageClass at all, a PVC that omits `storageClas
 
 ### Minimal LVMCluster for SNO
 
+Replace `<lvms-namespace>` with the discovered namespace in both templates.
+
 ```yaml
 apiVersion: lvm.topolvm.io/v1alpha1
 kind: LVMCluster
 metadata:
   name: lvmcluster
-  namespace: openshift-storage
+  namespace: <lvms-namespace>
 spec:
   storage:
     deviceClasses:
@@ -256,7 +265,7 @@ apiVersion: lvm.topolvm.io/v1alpha1
 kind: LVMCluster
 metadata:
   name: lvmcluster
-  namespace: openshift-storage
+  namespace: <lvms-namespace>
 spec:
   storage:
     deviceClasses:
@@ -266,7 +275,7 @@ spec:
           overprovisionRatio: 10
           sizePercent: 90
         deviceSelector:
-          paths:
+          optionalPaths:
             - /dev/disk/by-id/<disk-node-1>
             - /dev/disk/by-id/<disk-node-2>
             - /dev/disk/by-id/<disk-node-3>
@@ -278,7 +287,7 @@ spec:
                   operator: Exists
 ```
 
-`deviceSelector.paths` is evaluated independently on every node matched by `nodeSelector`. A path that does not exist on a given node is skipped on that node (it does not fail the whole cluster). The `<disk-node-1>`, `<disk-node-2>`, `<disk-node-3>` placeholders above are not "one disk per node" routing — list every `/dev/disk/by-id/*` path that should be claimed on any matched node, and use a stable naming convention that resolves correctly per node. If nodes have genuinely different disk layouts, define a separate `deviceClass` with its own `nodeSelector` per group.
+Check the installed schema before using the multi-node template. In LVMS 5.0.0, every entry in `deviceSelector.paths` must resolve on each node matched by that device class. With `optionalPaths`, each matched node must resolve at least one listed path. If the installed version lacks `optionalPaths`, use a stable path that resolves on every matched node, or create separate device classes with node selectors and required paths for each group. See [device discovery policy](volume-group-provisioning.md#automatic-device-discovery).
 
 When adjusting an existing `LVMCluster` manifest before apply, prefer the packaged
 YAML-aware helper for thin-pool and device-selector edits. Apply the patched
@@ -295,7 +304,7 @@ python3 scripts/patch_lvms_manifest.py \
 
 oc apply --dry-run=server -f /tmp/lvmcluster-patched.yaml
 oc apply -f /tmp/lvmcluster-patched.yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
+oc -n "$lvms_namespace" wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
 
 The `LVMCluster` CR has no condition named `Ready` (its conditions are `ResourcesAvailable` and `VolumeGroupsReady`; readiness is reported in `.status.state`), so `oc wait --for=condition=Ready` hangs until timeout even on a healthy install. Wait on `.status.state` as shown above.
@@ -308,16 +317,17 @@ manifest path consistently for dry-run, apply, and wait.
 Wait for the TopoLVM CSI components and verify the StorageClass was created:
 
 ```bash
-oc -n openshift-storage get pods -o wide
-oc -n openshift-storage get lvmcluster -o wide
+oc -n "$lvms_namespace" get pods -o wide
+oc -n "$lvms_namespace" get lvmcluster -o wide
 oc get sc
-oc get csidriver
+oc get csidriver topolvm.io
+oc get csinode <node-name> -o jsonpath='{.spec.drivers[*].name}{"\n"}'
 ```
 
 Before declaring success, verify:
 
 - The `LVMCluster` status is `Ready`.
-- TopoLVM CSI driver pods are running on all target nodes.
+- LVMS workloads are ready and `topolvm.io` is registered in the `CSINode` for each target node. In LVMS 5.0.0, the observed workloads were the operator and `vg-manager`.
 - The default StorageClass was created by the operator (if `default: true` was set in the `LVMCluster`).
 - Exactly one default StorageClass exists when defaulting is expected.
 
@@ -352,7 +362,7 @@ The LVMS/TopoLVM operator and CSI node plugin require privileged access to manag
 
 ```bash
 oc get scc | grep topolvm || true
-oc -n openshift-storage get serviceaccount
+oc -n "$lvms_namespace" get serviceaccount
 ```
 
 Do not grant broad `privileged` SCC manually unless the operator's dedicated SCCs are absent and the docs explicitly require it.

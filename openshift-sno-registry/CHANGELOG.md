@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- Record the validated OpenShift 5.0.1 SNO deployment with an LVMS 5.0.0 filesystem claim and API readiness checks.
+- Refresh the smoke runbook with a public Skopeo image and separate upstream image failures from internal registry failures.
+- Allow SHA-256 digests for source and tool images, keep credentialed destinations restricted to internal registry tags in the smoke namespace, and resolve the pushed tag with `imagePullPolicy: Always`.
+
 ## 0.1.1
 
 - Send registry push credentials only to the internal image-registry service in the smoke namespace. Take the source and skopeo images as arguments, and keep tokens out of manifests and validator errors.

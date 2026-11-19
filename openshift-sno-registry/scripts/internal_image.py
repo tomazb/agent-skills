@@ -15,7 +15,7 @@ _TAG_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
 _SOURCE_RE = re.compile(
     r"^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?(?::[0-9]{2,5})?"
     r"(?:/[a-z0-9](?:[a-z0-9._-]*[a-z0-9])?)+"
-    r":[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$"
+    r"(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}|@sha256:[0-9a-f]{64})$"
 )
 
 
@@ -47,7 +47,8 @@ def parse_source_image(reference: str) -> str:
 
     if not isinstance(reference, str) or _SOURCE_RE.fullmatch(reference) is None:
         raise ImageReferenceError(
-            "image must be host[:port]/repository:tag with no scheme or credentials"
+            "image must be host[:port]/repository:tag or host[:port]/repository@sha256:<digest>, "
+            "with no scheme or credentials"
         )
     return reference
 

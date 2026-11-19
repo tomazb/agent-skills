@@ -1,6 +1,6 @@
 # Expand And Shrink
 
-Use this runbook for expanding volume groups, adding or removing disks, thin pool expansion, and node-level disk management for LVMS on OpenShift/OKD.
+Use this runbook for expanding volume groups, adding or removing disks, thin pool expansion, and node-level disk management for LVMS on OpenShift/OKD. Set `lvms_namespace` to the namespace recorded during [LVMS discovery](install-and-preflight.md#live-discovery) before running these commands.
 
 ## Volume Group Expansion
 
@@ -11,7 +11,7 @@ To add a new disk to an existing volume group, update the `LVMCluster` CR's `dev
 Verify the current state:
 
 ```bash
-oc -n openshift-storage get lvmcluster lvmcluster -o yaml
+oc -n "$lvms_namespace" get lvmcluster lvmcluster -o yaml
 NODE="<node>"
 oc debug "node/${NODE}" -- chroot /host bash -c "vgs; pvs; lvs"
 ```
@@ -21,7 +21,7 @@ oc debug "node/${NODE}" -- chroot /host bash -c "vgs; pvs; lvs"
 Before editing, read `default:` per DeviceClass from the live CR and keep it as it is — a bare list of booleans does not say which class each value belongs to:
 
 ```bash
-oc -n openshift-storage get lvmcluster lvmcluster \
+oc -n "$lvms_namespace" get lvmcluster lvmcluster \
   -o jsonpath='{range .spec.storage.deviceClasses[*]}{.name}{"\t"}{.default}{"\n"}{end}'
 ```
 
@@ -32,7 +32,7 @@ apiVersion: lvm.topolvm.io/v1alpha1
 kind: LVMCluster
 metadata:
   name: lvmcluster
-  namespace: openshift-storage
+  namespace: <lvms-namespace>
 spec:
   storage:
     deviceClasses:
@@ -52,7 +52,7 @@ Apply and wait:
 
 ```bash
 oc apply -f /tmp/lvmcluster-updated.yaml
-oc -n openshift-storage wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
+oc -n "$lvms_namespace" wait lvmcluster/lvmcluster --for=jsonpath='{.status.state}'=Ready --timeout=10m
 ```
 
 On an `LVMCluster` that was already `Ready`, this wait can pass immediately on stale status before the controller observes the spec change — `LVMCluster` exposes no usable `observedGeneration` to wait on. Do not report the expansion complete on this wait alone; the node-level verification below (new PV in `pvs`, VG size increase in `vgs`) is the authoritative signal that the new disk was reconciled. If it has not appeared yet, re-check after a short delay rather than re-applying.
@@ -77,7 +77,7 @@ The LVMS operator does not automatically expand the thin pool when the VG grows.
 
 ### Manual Thin Pool Expansion (Not Reconciled)
 
-The LV path is `<vg-name>/<thin-pool-name>`, where `<vg-name>` is the `deviceClasses[].name` field from the `LVMCluster` CR (for example `vg1`), **not** the `openshift-storage` namespace. Confirm both names with `vgs` and `lvs` before running this:
+The LV path is `<vg-name>/<thin-pool-name>`. The VG name comes from the LVMCluster device class name, such as `vg1`. Confirm both names with `vgs` and `lvs` before running this:
 
 ```bash
 NODE="<node>"

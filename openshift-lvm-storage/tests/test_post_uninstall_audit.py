@@ -46,9 +46,9 @@ def _write_oc(bin_dir: Path, body: str) -> None:
     )
 
 
-def _run_audit(bin_dir: Path) -> subprocess.CompletedProcess[str]:
+def _run_audit(bin_dir: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["/bin/bash", str(SCRIPT)],
+        ["/bin/bash", str(SCRIPT), *args],
         check=False,
         capture_output=True,
         text=True,
@@ -118,6 +118,35 @@ def test_audit_checks_lvms_api_group(tmp_path):
     assert result.returncode == 0
     assert "WARN: lvm.topolvm.io API resources still exist:" in result.stdout
     assert "lvmclusters.lvm.topolvm.io" in result.stdout
+
+
+@pytest.mark.parametrize(
+    ("args", "namespace"),
+    [((), "openshift-lvm-storage"), (("--namespace", "custom-lvms"), "custom-lvms")],
+)
+def test_audit_checks_workloads_in_lvms_namespace(tmp_path, args, namespace):
+    _write_jq_proxy(tmp_path)
+    _write_oc(
+        tmp_path,
+        f"""\
+        args = sys.argv[1:]
+        if args == ["get", "namespace", {namespace!r}]:
+            print({namespace!r})
+        elif args[:2] in (["get", "csidriver"], ["get", "namespace"]):
+            print("NotFound", file=sys.stderr)
+            raise SystemExit(1)
+        elif args == ["-n", {namespace!r}, "get", "all"]:
+            print("daemonset.apps/vg-manager")
+        elif args[:1] == ["get"] and "json" in args:
+            print(json.dumps({{"items": []}}))
+        """,
+    )
+
+    result = _run_audit(tmp_path, *args)
+
+    assert result.returncode == 0
+    assert f"WARN: {namespace} namespace still exists" in result.stdout
+    assert "daemonset.apps/vg-manager" in result.stdout
 
 
 def test_audit_reports_jq_failures_without_false_ok(tmp_path):

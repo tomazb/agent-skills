@@ -46,9 +46,16 @@ deviceSelector:
 
 **Warning**: `forceWipeDevicesAndDestroyAllData` is destructive. It runs `wipefs` and `pvcreate` on the specified disks, destroying any existing data. Require explicit destructive confirmation before enabling this flag.
 
-### Omitting deviceSelector (use all available disks)
+### Automatic device discovery
 
-If `deviceSelector` is omitted, the operator attempts to use all available unpartitioned disks on matching nodes. This is risky on multi-purpose nodes. Prefer explicit `paths`.
+Without explicit paths, LVMS 5.0.0 defaults new device classes to `deviceDiscoveryPolicy: Static`. Static uses eligible devices present at initial provisioning. `Dynamic` keeps discovering and adding eligible devices. Older classes upgraded with this field unset retain dynamic behavior. Explicit paths take precedence over either policy.
+
+Prefer explicit stable paths on multi-purpose nodes. Check the installed schema before using automatic discovery:
+
+```bash
+oc explain lvmcluster.spec.storage.deviceClasses.deviceDiscoveryPolicy
+oc explain lvmcluster.spec.storage.deviceClasses.deviceSelector
+```
 
 ## Thin Pool Configuration
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.0
+
+- Discover OpenShift 4.x and 5.x by default, starting at 5.0 for the 5.x scan and preserving single-major and minor range controls.
+- Count releases for the probed minor only when graphs also contain older upgrade sources.
+- Check the next major's initial channel for published one-hop upgrade edges.
+
 ## 1.1.1
 
 - Normalized frontmatter description to trigger-only Use-when form.
